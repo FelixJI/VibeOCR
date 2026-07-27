@@ -15,7 +15,7 @@ import html as html_lib
 import json
 import logging
 import time
-from dataclasses import fields, is_dataclass, replace
+from dataclasses import is_dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QMimeData, QObject, QTimer, QUrl, Signal, Slot
@@ -143,13 +143,32 @@ def _render_table(block: dict, index: int) -> str:
         parts.append(
             f'<p style="color:#888;font-size:12px;">{html_lib.escape(captions[0])}</p>'
         )
+    canonical_table = ""
+    if isinstance(block.get("table"), dict):
+        from vibeocr.tables.blocks import table_model_from_block
+        from vibeocr.tables.html_adapter import table_model_to_html
+
+        try:
+            canonical_table = table_model_to_html(table_model_from_block(block))
+        except (KeyError, TypeError, ValueError):
+            parts.append(
+                '<p class="table-schema-warning" '
+                'style="color:#b45309;font-size:12px;">'
+                "表格结构版本不受支持，已使用兼容视图。</p>"
+            )
+            try:
+                canonical_table = table_model_to_html(
+                    table_model_from_block(block, strict_canonical=False)
+                )
+            except (KeyError, TypeError, ValueError):
+                canonical_table = ""
     table_body = block.get("table_body", "")
     html_content = block.get("html", "")
-    raw_table = table_body or html_content
+    raw_table = canonical_table or table_body or html_content
     if raw_table:
         # 规整化：剥离 PaddleX 自带的 inline style（避免复制带底纹），
         # 并补齐空单元格（避免 Excel 粘贴错位）。
-        clean_table = normalize_table_html(raw_table)
+        clean_table = raw_table if canonical_table else normalize_table_html(raw_table)
         parts.append(f'<div class="ocr-table">{clean_table}</div>')
     else:
         text = html_lib.escape(block.get("text", ""))
@@ -525,6 +544,7 @@ function renderAllMath() {{
 // 编辑状态
 var _bridge = null;
 var _editOriginals = {{}};
+var _tableCellOriginals = {{}};
 var _NON_EDITABLE = ['image', 'figure', 'chart', 'seal'];
 
 function _finishTextEdit(block) {{
@@ -547,7 +567,8 @@ function _finishTableEdit(block) {{
     block.querySelectorAll('.ocr-table td, .ocr-table th').forEach(function(cell) {{
         cell.removeAttribute('contenteditable');
     }});
-    if (newHtml !== _editOriginals[index]) {{
+    var semanticTable = tableEl ? tableEl.querySelector('table[data-table-id]') : null;
+    if (!semanticTable && newHtml !== _editOriginals[index]) {{
         block.classList.add('manually-edited');
         if (_bridge) _bridge.onBlockEditedForDocument(_documentToken, index, newHtml);
     }}
@@ -643,13 +664,40 @@ if (typeof QWebChannel !== 'undefined') {{
     }});
 }}
 
+document.addEventListener('focusin', function(e) {{
+    if (!e.target.matches || !e.target.matches('.ocr-table td[contenteditable], .ocr-table th[contenteditable]')) return;
+    var table = e.target.closest('table[data-table-id]');
+    var cellId = e.target.getAttribute('data-cell-id');
+    if (!table || !cellId) return;
+    var key = table.getAttribute('data-table-id') + '\\n' + cellId;
+    if (!Object.prototype.hasOwnProperty.call(_tableCellOriginals, key)) {{
+        _tableCellOriginals[key] = e.target.innerText;
+    }}
+}});
+
 // 全局 blur 处理
 document.addEventListener('focusout', function(e) {{
     if (e.target.matches && e.target.matches('.ocr-table td[contenteditable], .ocr-table th[contenteditable]')) {{
         var block = e.target.closest('.ocr-block');
         if (block) {{
             var table = e.target.closest('.ocr-table');
+            var semanticTable = e.target.closest('table[data-table-id]');
+            var tableId = semanticTable ? semanticTable.getAttribute('data-table-id') : '';
+            var cellId = e.target.getAttribute('data-cell-id') || '';
+            var editedCell = e.target;
             setTimeout(function() {{
+                if (tableId && cellId) {{
+                    var key = tableId + '\\n' + cellId;
+                    var original = _tableCellOriginals[key];
+                    var newText = editedCell.innerText;
+                    if (newText !== original) {{
+                        block.classList.add('manually-edited');
+                        if (_bridge) _bridge.onTableCellEditedForDocument(
+                            _documentToken, tableId, cellId, newText
+                        );
+                    }}
+                    delete _tableCellOriginals[key];
+                }}
                 if (!table.contains(document.activeElement)) {{
                     _finishTableEdit(block);
                 }}
@@ -1033,9 +1081,17 @@ def _stable_values_equal(left: Any, right: Any, cancel_event: Event) -> bool:
             if type(a) is float and a != a and b != b:
                 return True
             return a == b
-        if is_dataclass(a) and not isinstance(a, type):
-            return all(equal(getattr(a, field.name), getattr(b, field.name)) for field in fields(a))
-        if type(a) is dict:
+        dataclass_fields = getattr(a, "__dataclass_fields__", None)
+        if (
+            is_dataclass(a)
+            and not isinstance(a, type)
+            and isinstance(dataclass_fields, dict)
+        ):
+            return all(
+                equal(getattr(a, str(name)), getattr(b, str(name)))
+                for name in dataclass_fields
+            )
+        if isinstance(a, dict) and isinstance(b, dict):
             if len(a) != len(b):
                 return False
             if any(type(key) not in scalar_types for key in a):
@@ -1046,7 +1102,7 @@ def _stable_values_equal(left: Any, right: Any, cancel_event: Event) -> bool:
                 if key not in b or not equal(value, b[key]):
                     return False
             return True
-        if type(a) in (list, tuple):
+        if isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):
             return len(a) == len(b) and all(
                 equal(a_item, b_item) for a_item, b_item in zip(a, b, strict=True)
             )
@@ -1119,6 +1175,7 @@ class _Bridge(QObject):
     blockUnhovered = Signal()
     blockClicked = Signal(int)
     blockEdited = Signal(int, str)  # (block_index, new_text)
+    tableCellEdited = Signal(str, str, str)  # (table_id, cell_id, new_text)
 
     def __init__(self, parent: QObject | None = None):
         super().__init__(parent)
@@ -1145,6 +1202,17 @@ class _Bridge(QObject):
         if token == self._active_document_token:
             self.blockEdited.emit(index, text)
 
+    @Slot(str, str, str, str)
+    def onTableCellEditedForDocument(
+        self,
+        token: str,
+        table_id: str,
+        cell_id: str,
+        text: str,
+    ) -> None:
+        if token == self._active_document_token:
+            self.tableCellEdited.emit(table_id, cell_id, text)
+
 
 class ResultViewWidget(QWidget):
     """OCR 结果显示组件（QWebEngineView 版本）"""
@@ -1153,6 +1221,7 @@ class ResultViewWidget(QWidget):
     block_unhovered = Signal()
     block_clicked = Signal(int)
     block_edited = Signal(int, str)  # 新增：(block_index, new_text)
+    table_cell_edited = Signal(str, str, str)
     # WebEngine 不可用时触发（保留信号：内置打包后通常不会触发，
     # 但作为 import 失败时的防御性通知机制保留）。
     webengine_missing = Signal()
@@ -1272,6 +1341,7 @@ class ResultViewWidget(QWidget):
         self._bridge.blockUnhovered.connect(self.block_unhovered.emit)
         self._bridge.blockClicked.connect(self.block_clicked.emit)
         self._bridge.blockEdited.connect(self.block_edited.emit)
+        self._bridge.tableCellEdited.connect(self.table_cell_edited.emit)
 
         layout = self.layout()
         assert layout is not None
@@ -1385,6 +1455,9 @@ class ResultViewWidget(QWidget):
 
     def _on_copy_job_completed(self, payload: object) -> None:
         if not self._is_current_copy_signal():
+            return
+        if not isinstance(payload, tuple) or len(payload) != 3:
+            logger.error("忽略无效的复制准备 payload")
             return
         kind, html, text = payload
         if html and text:
@@ -1650,6 +1723,9 @@ class ResultViewWidget(QWidget):
 
     def _on_render_completed(self, payload: object) -> None:
         if not self._is_current_render_signal():
+            return
+        if not isinstance(payload, tuple) or len(payload) != 3:
+            logger.error("忽略无效的结果渲染 payload")
             return
         full_html, resources_path, snapshot = payload
         self._current_snapshot = snapshot

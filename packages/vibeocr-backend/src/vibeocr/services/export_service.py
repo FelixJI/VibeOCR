@@ -9,7 +9,11 @@ import logging
 import re
 from pathlib import Path
 
+from vibeocr.contracts.tables import TableModelV1
 from vibeocr.models.ocr_result import DISCARDED_BLOCK_TYPES, OCRResult
+from vibeocr.tables.blocks import table_model_from_block
+from vibeocr.tables.projections import table_model_to_grid
+from vibeocr.tables.reducer import build_result_projections
 from vibeocr.utils.html_tables import tables_from_result
 from vibeocr.utils.markdown_converter import HTML_STYLE
 
@@ -108,6 +112,27 @@ class ExportService:
     def _export_html(result: OCRResult, output_path: Path) -> bool:
         """导出为 HTML（内嵌 base64 图片）"""
         html_body = result.html_text or result.raw_text
+        content_list = list(getattr(result, "content_list", []) or [])
+        has_structured_table = any(
+            isinstance(block, dict)
+            and block.get("type") == "table"
+            and (
+                block.get("table")
+                or block.get("table_body")
+                or block.get("html")
+                or (block.get("source") or {}).get("source_html")
+            )
+            for block in content_list
+        )
+        if has_structured_table:
+            projections = build_result_projections(
+                result,
+                include_raw=False,
+                include_markdown=False,
+            )
+            if projections is None:
+                raise RuntimeError("structured HTML projection was cancelled")
+            html_body = projections[2]
 
         # 将 markdown 中的图片引用替换为 base64 内嵌
         if result.images:
@@ -176,10 +201,14 @@ class ExportService:
                     if table_captions:
                         doc.add_paragraph(" ".join(table_captions), style="Caption")
                     html = block.get("table_body", "") or block.get("html", "")
-                    if html:
+                    if block.get("table") or html:
                         written_table_htmls.add(html)
-                        table_written = ExportService._add_html_table_to_docx(
-                            doc, html
+                        table_written = ExportService._add_table_model_to_docx(
+                            doc,
+                            ExportService._table_model_from_block(
+                                block,
+                                fallback_table_id=f"table-{len(written_table_htmls)}",
+                            ),
                         ) or table_written
                     table_footnotes = block.get("table_footnote") or []
                     for fn in table_footnotes:
@@ -235,7 +264,13 @@ class ExportService:
                 if html in written_table_htmls:
                     continue
                 written_table_htmls.add(html)
-                ExportService._add_html_table_to_docx(doc, html)
+                ExportService._add_table_model_to_docx(
+                    doc,
+                    ExportService._table_model_from_block(
+                        {"type": "table", "table_body": html},
+                        fallback_table_id=f"table-{len(written_table_htmls)}",
+                    ),
+                )
 
         if not content_list and not written_table_htmls:
             # 既无结构化块也无表格：写纯文本（清洗裸 HTML 标签）。
@@ -250,37 +285,31 @@ class ExportService:
         return True
 
     @staticmethod
-    def _add_html_table_to_docx(doc, html: str) -> bool:
-        """从 HTML 表格提取数据并添加到 docx。
+    def _add_table_model_to_docx(doc, table_model: TableModelV1) -> bool:
+        """把 canonical 表格写成带原生合并单元格的 docx 表格。
 
         Returns:
             是否成功写入了至少一个表格（无有效行时返回 False）。
         """
-        rows_data: list[list[str]] = []
-
-        # 提取行
-        tr_pattern = re.compile(r"<tr[^>]*>(.*?)</tr>", re.DOTALL | re.IGNORECASE)
-        td_pattern = re.compile(r"<t[dh][^>]*>(.*?)</t[dh]>", re.DOTALL | re.IGNORECASE)
-
-        for tr_match in tr_pattern.finditer(html):
-            cells = []
-            for td_match in td_pattern.finditer(tr_match.group(1)):
-                cell_text = re.sub(r"<[^>]+>", "", td_match.group(1)).strip()
-                cells.append(cell_text)
-            if cells:
-                rows_data.append(cells)
-
-        if not rows_data:
+        if table_model.row_count == 0 or table_model.column_count == 0:
             return False
 
-        max_cols = max(len(row) for row in rows_data)
-        table = doc.add_table(rows=len(rows_data), cols=max_cols)
+        table = doc.add_table(
+            rows=table_model.row_count,
+            cols=table_model.column_count,
+        )
         table.style = "Table Grid"
 
-        for i, row in enumerate(rows_data):
-            for j, cell_text in enumerate(row):
-                if j < max_cols:
-                    table.rows[i].cells[j].text = cell_text
+        for cell in table_model.cells:
+            anchor = table.cell(cell.row, cell.column)
+            if cell.rowspan > 1 or cell.colspan > 1:
+                anchor = anchor.merge(
+                    table.cell(
+                        cell.row + cell.rowspan - 1,
+                        cell.column + cell.colspan - 1,
+                    )
+                )
+            anchor.text = cell.text
         return True
 
     @staticmethod
@@ -313,10 +342,23 @@ class ExportService:
                             ws_text.title = "文本汇总"
                         ws_text.append([f"[表格标题] {' '.join(table_captions)}"])
                     html = block.get("table_body", "") or block.get("html", "")
-                    if html:
+                    if block.get("table") or html:
                         written_table_htmls.add(html)
                         table_count = ExportService._write_xlsx_table_sheet(
-                            wb, html, table_count
+                            wb,
+                            ExportService._table_model_from_block(
+                                block,
+                                fallback_table_id=f"table-{table_count + 1}",
+                            ),
+                            table_count,
+                        )
+                    table_footnotes = block.get("table_footnote") or []
+                    if table_footnotes:
+                        if not has_text:
+                            has_text = True
+                            ws_text.title = "文本汇总"
+                        ws_text.append(
+                            [f"[表格脚注] {' '.join(table_footnotes)}"]
                         )
 
                 elif block_type == "title" and text:
@@ -377,7 +419,12 @@ class ExportService:
                     continue
                 written_table_htmls.add(html)
                 table_count = ExportService._write_xlsx_table_sheet(
-                    wb, html, table_count
+                    wb,
+                    ExportService._table_model_from_block(
+                        {"type": "table", "table_body": html},
+                        fallback_table_id=f"table-{table_count + 1}",
+                    ),
+                    table_count,
                 )
 
         if not content_list and table_count == 0:
@@ -400,13 +447,13 @@ class ExportService:
 
     @staticmethod
     def _write_xlsx_table_sheet(
-        wb, html: str, table_count: int
+        wb, table_model: TableModelV1, table_count: int
     ) -> int:
-        """把单个表格 HTML 写成一个「表格 N」工作表，返回新的 table_count。
+        """把 canonical 表格写成一个「表格 N」工作表，返回新的 table_count。
 
         无有效行时计数不变（也不创建空工作表）。
         """
-        rows_data = ExportService._parse_html_table(html)
+        rows_data = table_model_to_grid(table_model)
         if not rows_data:
             return table_count
         table_count += 1
@@ -414,28 +461,41 @@ class ExportService:
         for row_idx, row in enumerate(rows_data):
             for col_idx, cell_text in enumerate(row):
                 ws.cell(row=row_idx + 1, column=col_idx + 1, value=cell_text)
+        for min_row, min_col, max_row, max_col in table_model.merged_ranges():
+            ws.merge_cells(
+                start_row=min_row + 1,
+                start_column=min_col + 1,
+                end_row=max_row + 1,
+                end_column=max_col + 1,
+            )
         return table_count
+
+    @staticmethod
+    def _table_model_from_block(
+        block: dict, *, fallback_table_id: str
+    ) -> TableModelV1:
+        if isinstance(block.get("table"), dict):
+            return table_model_from_block(
+                block,
+                fallback_table_id=fallback_table_id,
+            )
+
+        html = (
+            block.get("table_body")
+            or block.get("html")
+            or (block.get("source") or {}).get("source_html")
+        )
+        if isinstance(html, str) and "<table" not in html.lower():
+            normalized_block = dict(block)
+            normalized_block["table_body"] = f"<table>{html}</table>"
+            block = normalized_block
+        return table_model_from_block(
+            block,
+            fallback_table_id=fallback_table_id,
+        )
 
     @staticmethod
     def _strip_html_tags(text: str) -> str:
         """剥离 HTML 标签并规整空白（用于纯文本回退，避免裸标签进单元格）。"""
         stripped = re.sub(r"<[^>]+>", " ", text or "")
         return re.sub(r"[ \t]+", " ", stripped).strip()
-
-    @staticmethod
-    def _parse_html_table(html: str) -> list[list[str]]:
-        """从 HTML 表格提取数据"""
-        rows_data: list[list[str]] = []
-
-        tr_pattern = re.compile(r"<tr[^>]*>(.*?)</tr>", re.DOTALL | re.IGNORECASE)
-        td_pattern = re.compile(r"<t[dh][^>]*>(.*?)</t[dh]>", re.DOTALL | re.IGNORECASE)
-
-        for tr_match in tr_pattern.finditer(html):
-            cells = []
-            for td_match in td_pattern.finditer(tr_match.group(1)):
-                cell_text = re.sub(r"<[^>]+>", "", td_match.group(1)).strip()
-                cells.append(cell_text)
-            if cells:
-                rows_data.append(cells)
-
-        return rows_data

@@ -231,6 +231,7 @@ class TextBlock:
     page_idx: int | None = None  # 页码（0 起始），PDF 多页时使用
     is_manually_edited: bool = False  # 是否被手动修改过
     content_index: int | None = None  # 对应 content_list 中的索引（MinerU 管道）
+    content_id: str | None = None  # 对应 content_list block_id 的稳定标识
     label: str = "text"  # 元素类型: text/table/formula/image/doc_title...
     order: int = -1  # 阅读顺序
 

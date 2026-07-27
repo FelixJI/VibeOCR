@@ -426,6 +426,60 @@ def test_old_document_edit_is_rejected_after_result_switch(qapp, qtbot, monkeypa
     qtbot.waitUntil(lambda: not widget._render_jobs, timeout=2000)
 
 
+def test_stable_table_cell_bridge_rejects_stale_document(qapp):
+    module = import_module("vibeocr.widgets.result_view_widget")
+    bridge = module._Bridge()
+    edits = []
+    bridge.tableCellEdited.connect(
+        lambda table_id, cell_id, text: edits.append((table_id, cell_id, text))
+    )
+    bridge.set_active_document("current")
+
+    bridge.onTableCellEditedForDocument(
+        "stale", "table-a", "cell-a", "wrong"
+    )
+    bridge.onTableCellEditedForDocument(
+        "current", "table-a", "cell-a", "right"
+    )
+
+    assert edits == [("table-a", "cell-a", "right")]
+
+
+def test_snapshot_detaches_and_validates_canonical_table():
+    from vibeocr.contracts.tables import TableCellV1, TableModelV1
+    from vibeocr.models.ocr_result import OCRResult
+    from vibeocr.utils.export_jobs import snapshot_ocr_result
+
+    table = TableModelV1(
+        table_id="snapshot",
+        row_count=1,
+        column_count=1,
+        cells=(TableCellV1(cell_id="cell", row=0, column=0, text="before"),),
+    )
+    result = OCRResult(
+        content_list=[{"type": "table", "table": table.to_payload()}]
+    )
+
+    snapshot = snapshot_ocr_result(result)
+    result.content_list[0]["table"]["cells"][0]["text"] = "after"
+
+    assert snapshot.content_list[0]["table"]["cells"][0]["text"] == "before"
+
+    invalid = OCRResult(
+        content_list=[
+            {
+                "type": "table",
+                "table": {
+                    **table.to_payload(),
+                    "schema_version": 999,
+                },
+            }
+        ]
+    )
+    with pytest.raises(ValueError, match="schema_version"):
+        snapshot_ocr_result(invalid)
+
+
 def test_rendered_token_waits_for_loaded_document_confirmation(
     qapp, qtbot, monkeypatch
 ):

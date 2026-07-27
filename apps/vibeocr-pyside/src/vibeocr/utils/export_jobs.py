@@ -48,6 +48,7 @@ class TextBlockSnapshot:
     page_idx: int | None = None
     is_manually_edited: bool = False
     content_index: int | None = None
+    content_id: str | None = None
     label: str = "text"
     order: int = -1
 
@@ -109,6 +110,7 @@ def snapshot_ocr_result(
                     getattr(block, "is_manually_edited", False)
                 ),
                 content_index=getattr(block, "content_index", None),
+                content_id=getattr(block, "content_id", None),
                 label=str(getattr(block, "label", "text") or "text"),
                 order=int(getattr(block, "order", -1)),
             )
@@ -122,6 +124,10 @@ def snapshot_ocr_result(
         if include_content_list
         else ()
     )
+    if include_content_list:
+        from vibeocr.tables.blocks import validate_table_blocks
+
+        validate_table_blocks(content)
     images = (
         _detached_value(_result_value(result, "images", {}) or {})
         if include_images

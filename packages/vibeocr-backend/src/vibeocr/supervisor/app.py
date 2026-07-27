@@ -332,13 +332,16 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
         from pathlib import Path
 
         from vibeocr.application.contracts import OcrExportRequest
+        from vibeocr.tables.blocks import validate_table_blocks
 
         try:
+            raw_blocks = list(body.get("raw_blocks", []))
+            validate_table_blocks(raw_blocks)
             req = OcrExportRequest(
                 raw_text=str(body.get("raw_text", "")),
                 markdown_text=str(body.get("markdown_text", "")),
                 html_text=str(body.get("html_text", "")),
-                raw_blocks=list(body.get("raw_blocks", [])),
+                raw_blocks=raw_blocks,
                 output_path=Path(str(body.get("output_path", ""))),
                 format=str(body.get("format", "")),
                 overwrite=bool(body.get("overwrite", False)),

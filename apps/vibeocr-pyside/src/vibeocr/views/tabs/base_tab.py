@@ -421,52 +421,30 @@ class BaseOcrTab(QWidget):
 
     def _schedule_table_result_rebuild(self, result) -> None:
         """Rebuild large table Markdown/HTML aggregates in a worker."""
-        text_blocks = result.text_blocks
-        content = result.content_list
-
         def rebuild(cancel_event):
-            from vibeocr.utils.html_tables import (
-                _extract_table_html,
-                _html_table_to_markdown,
-            )
-            from vibeocr.utils.markdown_converter import markdown_to_html
+            from vibeocr.tables.reducer import build_result_projections
 
-            raw_parts: list[str] = []
-            for index in range(len(text_blocks)):
-                if index % 256 == 0 and cancel_event.is_set():
-                    return result, "", "", ""
-                text = text_blocks[index].text
-                if text:
-                    raw_parts.append(text)
-            raw = "\n".join(raw_parts)
-            md_parts: list[str] = []
-            for index in range(len(content)):
-                if index % 128 == 0 and cancel_event.is_set():
-                    return result, "", "", ""
-                block = content[index]
-                if block.get("type") == "table":
-                    md = _html_table_to_markdown(
-                        _extract_table_html(block.get("table_body", ""))
-                    )
-                    if md:
-                        md_parts.append(md)
-                else:
-                    text = block.get("text", "")
-                    if text:
-                        md_parts.append(text)
-            markdown = "\n\n".join(md_parts)
-            return result, raw, markdown, markdown_to_html(markdown) if markdown else ""
+            projections = build_result_projections(
+                result,
+                is_cancelled=cancel_event.is_set,
+            )
+            if projections is None:
+                return result, "", "", ""
+            return result, *projections
 
         self._result_rebuild_jobs.submit(rebuild)
 
     @Slot(int, object)
     def _on_result_rebuild_ready(self, _generation: int, payload: object) -> None:
+        if not isinstance(payload, tuple) or len(payload) != 4:
+            logger.warning("忽略无效的结果重建 payload")
+            return
         result, raw, markdown, html = payload
         if result is not self._current_ocr_result:
             return
-        result.raw_text = raw
-        result.markdown_text = markdown
-        result.html_text = html
+        result.raw_text = str(raw)
+        result.markdown_text = str(markdown)
+        result.html_text = str(html)
         if self._result_widget:
             if self._preview_widget:
                 self._preview_widget.setEnabled(False)
@@ -590,9 +568,36 @@ class BaseOcrTab(QWidget):
         if old_html == new_html:
             return
 
-        # 更新 content_list 的 table_body，并从新 HTML 提取纯文本回填 text 字段
-        cl_block["table_body"] = new_html
-        cl_block["text"] = self._table_html_to_plain_text(new_html)
+        from dataclasses import replace
+
+        from vibeocr.tables.blocks import table_model_from_block
+        from vibeocr.tables.html_adapter import (
+            table_model_from_html,
+            table_model_to_html,
+        )
+        from vibeocr.tables.projections import (
+            table_model_to_markdown,
+            table_model_to_plain_text,
+        )
+
+        old_table = table_model_from_block(
+            cl_block,
+            fallback_table_id=str(
+                cl_block.get("block_id") or f"table-{content_index}"
+            ),
+            strict_canonical=False,
+        )
+        edited_table = table_model_from_html(new_html, table_id=old_table.table_id)
+        if old_table.provenance is not None:
+            edited_table = replace(edited_table, provenance=old_table.provenance)
+        canonical_html = table_model_to_html(edited_table)
+        plain_text = table_model_to_plain_text(edited_table)
+        cl_block["table"] = edited_table.to_payload()
+        cl_block["table_body"] = canonical_html
+        cl_block["text"] = plain_text
+        cl_block["projection_warnings"] = list(
+            table_model_to_markdown(edited_table).warnings
+        )
 
         # 同步匹配的 text_block（按 content_index 反查）
         is_large_result = (
@@ -600,73 +605,89 @@ class BaseOcrTab(QWidget):
             > _ASYNC_CONTENT_THRESHOLD
         )
         matched_block = None
+        matched_text_index = None
         mapped_index = None
         if self._content_index_result is result:
             mapped_index = self._text_index_by_content.get(content_index)
         if mapped_index is not None and mapped_index < len(result.text_blocks):
             matched_block = result.text_blocks[mapped_index]
+            matched_text_index = mapped_index
         elif content_index < len(result.text_blocks):
             candidate = result.text_blocks[content_index]
             if getattr(candidate, "content_index", None) == content_index:
                 matched_block = candidate
+                matched_text_index = content_index
         if matched_block is None and not is_large_result:
-            matched_block = next(
-                (
-                    block
-                    for block in result.text_blocks
-                    if getattr(block, "content_index", None) == content_index
-                ),
-                None,
-            )
+            for text_index, block in enumerate(result.text_blocks):
+                if getattr(block, "content_index", None) == content_index:
+                    matched_block = block
+                    matched_text_index = text_index
+                    break
         if matched_block is not None:
-            matched_block.text = new_html
+            matched_block.text = plain_text
             matched_block.is_manually_edited = True
-            if content_index < len(result.text_with_scores):
-                score = result.text_with_scores[content_index][1]
-                result.text_with_scores[content_index] = (new_html, score)
+            if (
+                matched_text_index is not None
+                and matched_text_index < len(result.text_with_scores)
+            ):
+                score = result.text_with_scores[matched_text_index][1]
+                result.text_with_scores[matched_text_index] = (plain_text, score)
 
         if is_large_result:
             if self._preview_widget:
                 self._preview_widget.set_content_list(result.content_list)
             if self._result_widget:
                 self._result_widget.invalidate_snapshot()
-                self._result_widget.update_block_text(content_index, new_html)
+                self._result_widget.update_block_text(content_index, canonical_html)
             self._schedule_table_result_rebuild(result)
             return
 
-        result.raw_text = "\n".join(b.text for b in result.text_blocks if b.text)
+        from vibeocr.tables.reducer import rebuild_result_projections
 
-        # markdown/html 难以精确替换单个表格，全量重建最稳妥
-        if result.has_content_list:
-            from vibeocr.utils.html_tables import (
-                _extract_table_html,
-                _html_table_to_markdown,
-            )
-
-            md_parts = []
-            for blk in result.content_list:
-                if blk.get("type") == "table":
-                    md = _html_table_to_markdown(
-                        _extract_table_html(blk.get("table_body", ""))
-                    )
-                    if md:
-                        md_parts.append(md)
-                else:
-                    t = blk.get("text", "")
-                    if t:
-                        md_parts.append(t)
-            result.markdown_text = "\n\n".join(md_parts)
-            from vibeocr.utils.markdown_converter import markdown_to_html
-
-            result.html_text = (
-                markdown_to_html(result.markdown_text) if result.markdown_text else ""
-            )
+        rebuild_result_projections(result)
 
         if self._preview_widget:
             self._preview_widget.set_content_list(result.content_list)
         if self._result_widget:
             # update_block_text 现已支持 table 块的 DOM 重建
-            self._result_widget.update_block_text(content_index, new_html)
+            self._result_widget.update_block_text(content_index, canonical_html)
+            self._result_widget.display_result(result)
+
+    @Slot(str, str, str)
+    def _on_table_cell_edited(
+        self, table_id: str, cell_id: str, new_text: str
+    ) -> None:
+        """Apply one canonical table edit by stable IDs and refresh projections."""
+
+        if not self._current_ocr_result:
+            return
+        from vibeocr.tables.reducer import update_result_table_cell
+
+        try:
+            content_index = update_result_table_cell(
+                self._current_ocr_result,
+                table_id=table_id,
+                cell_id=cell_id,
+                new_text=new_text,
+            )
+        except (KeyError, TypeError, ValueError) as error:
+            logger.warning(
+                "忽略无法定位的表格单元格编辑 table=%s cell=%s: %s",
+                table_id,
+                cell_id,
+                error,
+            )
+            return
+
+        result = self._current_ocr_result
+        if self._preview_widget:
+            self._preview_widget.set_content_list(result.content_list)
+        if self._result_widget:
+            self._result_widget.invalidate_snapshot()
+            self._result_widget.update_block_text(
+                content_index,
+                result.content_list[content_index]["table_body"],
+            )
             self._result_widget.display_result(result)
 
     @staticmethod

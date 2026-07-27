@@ -181,6 +181,7 @@ class SingleRecognitionTab(BaseOcrTab):
         self._preview_widget.block_text_edited.connect(self._on_block_text_edited)
         self._preview_widget.block_clicked.connect(self._result_widget.highlight_block)
         self._result_widget.block_edited.connect(self._on_result_block_edited)
+        self._result_widget.table_cell_edited.connect(self._on_table_cell_edited)
         # 文本块处理选项变化 → 实时重排当前结果（仅纯文本结果生效）。
         self._text_options_widget.options_changed.connect(self._on_text_options_changed)
 
@@ -1183,6 +1184,8 @@ class SingleRecognitionTab(BaseOcrTab):
 
     @classmethod
     def _is_low_confidence(cls, score: object) -> bool:
+        if not isinstance(score, (int, float, str)):
+            return False
         try:
             return float(score) < cls._LOW_CONFIDENCE_THRESHOLD
         except (TypeError, ValueError):

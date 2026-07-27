@@ -32,6 +32,7 @@ _TEXT_BLOCK_KEYS = (
     "page_idx",
     "is_manually_edited",
     "content_index",
+    "content_id",
     "label",
     "order",
 )
@@ -55,6 +56,7 @@ def text_block_to_dict(block: Any) -> dict[str, Any]:
         "page_idx": getattr(block, "page_idx", None),
         "is_manually_edited": bool(getattr(block, "is_manually_edited", False)),
         "content_index": getattr(block, "content_index", None),
+        "content_id": getattr(block, "content_id", None),
         "label": getattr(block, "label", "text"),
         "order": getattr(block, "order", -1),
     }
@@ -73,6 +75,7 @@ def ocr_result_to_payload(result: Any) -> dict[str, Any]:
     than raising during result storage.
     """
     if isinstance(result, dict):
+        _validate_table_blocks(result.get("content_list", ()))
         return result
 
     # Duck-type an OCRResult: it must expose the core text fields. We avoid a
@@ -106,6 +109,8 @@ def ocr_result_to_payload(result: Any) -> dict[str, Any]:
             else:
                 images_summary[name] = {"present": True}
 
+    content_list = list(getattr(result, "content_list", []) or [])
+    _validate_table_blocks(content_list)
     payload: dict[str, Any] = {
         "raw_text": getattr(result, "raw_text", "") or "",
         "markdown_text": getattr(result, "markdown_text", "") or "",
@@ -113,7 +118,7 @@ def ocr_result_to_payload(result: Any) -> dict[str, Any]:
         "avg_score": float(getattr(result, "avg_score", 0.0) or 0.0),
         "pipeline_type": getattr(result, "pipeline_type", "OCR") or "OCR",
         "preproc_angle": int(getattr(result, "preproc_angle", 0) or 0),
-        "content_list": list(getattr(result, "content_list", []) or []),
+        "content_list": content_list,
         "text_with_scores": text_with_scores,
         "low_confidence_items": low_confidence_items,
         "text_blocks": text_blocks,
@@ -128,6 +133,7 @@ def ocr_result_from_payload(payload: dict[str, Any]) -> Any:
     """Rebuild the stable client model from one typed ``ocr.v1`` payload."""
     from vibeocr.models.ocr_result import OCRResult, TextBlock
 
+    _validate_table_blocks(payload.get("content_list", ()))
     blocks: list[TextBlock] = []
     for raw in payload.get("text_blocks", []) or []:
         if not isinstance(raw, dict):
@@ -147,6 +153,11 @@ def ocr_result_from_payload(payload: dict[str, Any]) -> Any:
                     raw.get("is_manually_edited", False)
                 ),
                 content_index=raw.get("content_index"),
+                content_id=(
+                    str(raw["content_id"])
+                    if raw.get("content_id") is not None
+                    else None
+                ),
                 label=str(raw.get("label", "text")),
                 order=int(raw.get("order", -1)),
             )
@@ -173,6 +184,14 @@ def ocr_result_from_payload(payload: dict[str, Any]) -> Any:
         image_height=int(payload.get("image_height", 0)),
         preproc_angle=int(payload.get("preproc_angle", 0)),
     )
+
+
+def _validate_table_blocks(content_list: Any) -> None:
+    """Reject unsupported canonical table versions at transport boundaries."""
+
+    from vibeocr.tables.blocks import validate_table_blocks
+
+    validate_table_blocks(content_list)
 
 
 __all__ = [

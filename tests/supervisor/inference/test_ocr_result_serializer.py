@@ -129,3 +129,69 @@ def test_structured_payload_roundtrips_to_client_model() -> None:
     assert restored.raw_text == "hello"
     assert restored.markdown_text == "**hello**"
     assert restored.text_blocks[0].bbox == (1.0, 2.0, 3.0, 4.0)
+
+
+def test_canonical_table_and_stable_content_id_roundtrip_strictly() -> None:
+    from vibeocr.contracts.tables import TableCellV1, TableModelV1
+
+    table = TableModelV1(
+        table_id="table-wire",
+        row_count=2,
+        column_count=2,
+        cells=(
+            TableCellV1(
+                cell_id="merged",
+                row=0,
+                column=0,
+                colspan=2,
+                text="标题",
+            ),
+            TableCellV1(cell_id="left", row=1, column=0, text="左"),
+            TableCellV1(cell_id="right", row=1, column=1, text="右"),
+        ),
+    )
+    original = OCRResult(
+        content_list=[{"type": "table", "table": table.to_payload()}],
+        text_blocks=[
+            TextBlock(
+                text="标题\n左\t右",
+                score=0.9,
+                bbox=None,
+                content_index=0,
+                content_id="block-wire",
+                label="table",
+            )
+        ],
+    )
+
+    payload = ocr_result_to_payload(original)
+    restored = ocr_result_from_payload(payload)
+
+    assert restored.content_list == original.content_list
+    assert restored.text_blocks[0].content_id == "block-wire"
+
+
+def test_unknown_table_schema_is_rejected_on_both_wire_directions() -> None:
+    invalid = {
+        "type": "table",
+        "table": {
+            "schema_version": 999,
+            "table_id": "future",
+            "row_count": 0,
+            "column_count": 0,
+            "coordinate_space": "unknown",
+            "cells": [],
+            "provenance": None,
+        },
+    }
+
+    for operation in (
+        lambda: ocr_result_to_payload(OCRResult(content_list=[invalid])),
+        lambda: ocr_result_from_payload({"content_list": [invalid]}),
+    ):
+        try:
+            operation()
+        except ValueError as error:
+            assert "schema_version" in str(error)
+        else:
+            raise AssertionError("unknown table schemas must fail at the wire boundary")
