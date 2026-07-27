@@ -1,6 +1,6 @@
 # VibeOCR 自动打包发版流程
 #
-# 触发：推送 v* 格式的 tag（由本地 `bump_version.py` 创建并 push）
+# 触发：推送 v* tag，或由 Scheduled Release 在创建 tag 后通过 workflow_call 调用
 # 产物：Windows 便携版 zip + sha256，上传到对应 tag 的 GitHub Release
 #
 # 依赖策略：CI 不跑完整 uv sync（会拉数 GB 的 paddle/torch CUDA 包），
@@ -24,10 +24,21 @@ on:
           - pyside6
           - winui
           - all
+  workflow_call:
+    inputs:
+      version:
+        description: "要发布的 x.y.z 版本；调用方须先创建对应 vX.Y.Z tag。"
+        required: true
+        type: string
+      build_variants:
+        description: "生成 pyside6、winui 或 all。"
+        required: false
+        default: "pyside6"
+        type: string
 
 # 同一 tag 重复推送时取消旧 run，避免并发打包
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.version || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -59,6 +70,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          # workflow_call 的 github.ref 仍是调用方 main；显式 checkout 新 tag，
+          # 保证构建的是含 release commit 的版本。tag push 时 inputs.version 为空。
+          ref: ${{ inputs.version != '' && format('refs/tags/v{0}', inputs.version) || github.ref }}
 
       - name: Set up Python 3.13
         uses: actions/setup-python@v6
@@ -75,9 +90,10 @@ jobs:
         shell: bash
         run: |
           # tag 形如 refs/tags/v0.1.7 → version=0.1.7
-          tag="${GITHUB_REF_NAME#v}"
+          input="${{ inputs.version }}"
+          tag="${input:-${GITHUB_REF_NAME#v}}"
           if ! [[ "$tag" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::tag '$GITHUB_REF_NAME' 不符合 vX.Y.Z 格式"
+            echo "::error::版本 '$tag' 不符合 X.Y.Z 格式"
             exit 1
           fi
           echo "version=$tag" >> "$GITHUB_OUTPUT"
@@ -298,6 +314,8 @@ jobs:
         # （v2 不会得到 Node 24 更新，见 softprops/action-gh-release#654）。
         uses: softprops/action-gh-release@v3
         with:
+          # workflow_call 的 github.ref 不是 tag，必须显式指定目标 tag。
+          tag_name: v${{ steps.version.outputs.version }}
           # body 走文件，避免 GitHub Actions 多行字符串注入陷阱
           body_path: release_notes.md
           # files 用 glob（而非字面路径）：当某个安装包本次未生成（见

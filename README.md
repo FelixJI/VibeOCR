@@ -529,6 +529,17 @@ uv run python scripts/bump_version.py --build
 uv run python scripts/bump_version.py minor
 ```
 
+仓库还提供 [Scheduled Release](.github/workflows/scheduled-release.yml)：
+
+- 每天北京时间 15:30（GitHub cron 为 UTC 07:30）检查 `main`。
+- 若当前版本标签之后没有新提交，直接结束，不消耗完整发版门禁。
+- 若有新提交，先复用完整 Quality Gates；全部通过后自动升级 patch 版本，
+  创建 release commit/tag，原子推送二者，再调用 Release workflow。
+- 若质量门或后续 Release 失败，先把修复补丁合入 `main`，再到 GitHub
+  **Actions → Scheduled Release → Run workflow**，选择 `main` 手动重试。
+  手动触发时可选择 `patch`、`minor` 或 `major`；流水线会重新执行质量门，
+  并按所选增量生成新版本。每日定时发版固定使用 `patch`。
+
 ## 下载渠道
 
 | 渠道 | 地址 |

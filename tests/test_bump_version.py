@@ -1261,7 +1261,7 @@ class TestCheckUnversionedCommits:
 
 
 class TestBumpPushConfirm:
-    """bump 后推送确认接线测试（答 y/答 N/--yes）"""
+    """bump 后推送确认接线测试（答 y/答 N/--yes/--no-push）"""
 
     @staticmethod
     def _load_module():
@@ -1332,6 +1332,31 @@ class TestBumpPushConfirm:
         mod.main()
 
         assert pushed.get("pushed") is True, "--yes 应直接推送"
+
+    def test_no_push_flag_prepares_release_without_prompt_or_push(
+        self, monkeypatch, capsys
+    ):
+        """--no-push 只准备 commit/tag，供 CI 随后原子推送。"""
+        mod = self._load_module()
+        self._stub_bump_deps(mod, monkeypatch)
+        pushed: dict = {}
+        monkeypatch.setattr(
+            mod, "_push_release", lambda v: pushed.setdefault("pushed", True) or True
+        )
+
+        def unexpected_input(_prompt=""):
+            raise AssertionError("--no-push 不应读取交互输入")
+
+        monkeypatch.setattr("builtins.input", unexpected_input)
+        monkeypatch.setattr(
+            "sys.argv",
+            ["bump_version.py", "patch", "--no-push", "--no-build"],
+        )
+
+        assert mod.main() == 0
+
+        assert not pushed.get("pushed")
+        assert "跳过远程推送" in capsys.readouterr().out
 
 
 class TestOption5UnversionedWarning:

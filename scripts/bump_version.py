@@ -13,6 +13,7 @@ GitHub（代码另镜像到 CNB；见 .github/workflows/release.yml）。
     python scripts/bump_version.py 2.0.0        # 指定版本号
     python scripts/bump_version.py ... --no-edit  # 跳过编辑器
     python scripts/bump_version.py ... --yes      # 跳过推送/打包确认（直接 commit+tag+push）
+    python scripts/bump_version.py ... --no-push  # 仅准备本地 commit+tag（CI 原子推送用）
     python scripts/bump_version.py --build      # 打包当前 WinUI 版本
     python scripts/bump_version.py --rebuild 1.2.3  # 重新打包指定版本
 """
@@ -1925,6 +1926,7 @@ class _Args(argparse.Namespace):
     build: bool
     no_edit: bool
     yes: bool
+    no_push: bool
     no_build: bool
     force: bool
     version: str | None
@@ -1962,11 +1964,19 @@ def main() -> int:
         dest="no_edit",
         help="跳过编辑器审阅 CHANGELOG",
     )
-    parser.add_argument(
-        "--yes", "-y",
+    push_group = parser.add_mutually_exclusive_group()
+    push_group.add_argument(
+        "--yes",
+        "-y",
         action="store_true",
         dest="yes",
         help="跳过推送确认直接 push（触发 CI 发版），脚本化/非交互场景用",
+    )
+    push_group.add_argument(
+        "--no-push",
+        action="store_true",
+        dest="no_push",
+        help="跳过推送确认，仅准备本地 release commit 和 tag（供 CI 原子推送）",
     )
     parser.add_argument(
         "--build",
@@ -2111,6 +2121,11 @@ def main() -> int:
     pushed = False
     if args.yes:
         pushed = _push_release(new_str)
+    elif args.no_push:
+        print(
+            f"\n已准备本地 release commit 和 tag v{new_str}，"
+            "按 --no-push 要求跳过远程推送"
+        )
     else:
         print(
             f"\n已创建 tag v{new_str}。是否推送到 GitHub/main 触发发版？[y/N]: ",

@@ -4,6 +4,7 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_call:
 
 env:
   # Windows runners otherwise default Python stdout to a legacy code page,
@@ -36,7 +37,9 @@ jobs:
           retention-days: 14
 
   table-regression:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      github.event_name == 'workflow_call'
     runs-on: windows-latest
     timeout-minutes: 15
     steps:
