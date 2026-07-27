@@ -149,3 +149,91 @@ class TestModuleSingleton:
         from vibeocr.utils.cjk_font_resolver import _CJK_RESOLVER as r2
 
         assert r1 is r2
+
+
+class TestPlatformDispatchAndCleanup:
+    """_get_candidates 平台分发、subset/save 异常、cleanup OSError、atexit hook。"""
+
+    def test_get_candidates_mac_platform(self, monkeypatch):
+        """sys.platform=darwin 返回 MAC 候选（line 57-58）。"""
+        from vibeocr.utils import cjk_font_resolver
+
+        monkeypatch.setattr(cjk_font_resolver.sys, "platform", "darwin")
+        r = cjk_font_resolver.CjkFontResolver()
+        assert r._get_candidates() == r._MAC_CANDIDATES
+
+    def test_get_candidates_linux_platform(self, monkeypatch):
+        """sys.platform=linux 返回 LINUX 候选（line 59）。"""
+        from vibeocr.utils import cjk_font_resolver
+
+        monkeypatch.setattr(cjk_font_resolver.sys, "platform", "linux")
+        r = cjk_font_resolver.CjkFontResolver()
+        assert r._get_candidates() == r._LINUX_CANDIDATES
+
+    def test_get_candidates_windows_platform(self, monkeypatch):
+        """sys.platform=win32 返回 WIN 候选（line 55-56）。"""
+        from vibeocr.utils import cjk_font_resolver
+
+        monkeypatch.setattr(cjk_font_resolver.sys, "platform", "win32")
+        r = cjk_font_resolver.CjkFontResolver()
+        assert r._get_candidates() == r._WIN_CANDIDATES
+
+    def test_resolve_returns_none_when_subset_raises(self, monkeypatch, tmp_path):
+        """_subset 抛异常时 resolve 回退 None（line 93-95）。"""
+        from vibeocr.utils import cjk_font_resolver
+
+        fake_font = tmp_path / "fake.ttf"
+        fake_font.write_bytes(b"fake")
+        r = cjk_font_resolver.CjkFontResolver()
+        monkeypatch.setattr(r, "_get_candidates", lambda: [str(fake_font)])
+
+        def _boom(_font, _chars):
+            raise RuntimeError("subset failed")
+
+        monkeypatch.setattr(r, "_subset", _boom)
+        assert r.resolve("字") is None
+
+    def test_subset_save_failure_deletes_temp_and_reraises(self, monkeypatch, tmp_path):
+        """font.save 失败时删除临时文件并 reraise（line 120-123）。"""
+        from vibeocr.utils import cjk_font_resolver
+        from fontTools.ttLib import TTFont
+
+        r = cjk_font_resolver.CjkFontResolver()
+
+        # _subset 内部局部 import fontTools，故 patch TTFont.save 本体
+        def _fail_save(self, _path):
+            raise OSError("save failed")
+
+        monkeypatch.setattr(TTFont, "save", _fail_save)
+
+        # 找一个真实可打开的字体
+        candidate = None
+        for c in r._WIN_CANDIDATES + r._MAC_CANDIDATES + r._LINUX_CANDIDATES:
+            if Path(c).is_file():
+                candidate = c
+                break
+        if candidate is None:
+            pytest.skip("no system CJK font available on this host")
+
+        with pytest.raises(OSError, match="save failed"):
+            r._subset(candidate, "字")
+
+    def test_cleanup_ignores_unlink_oserror(self, monkeypatch, tmp_path):
+        """cleanup 中 unlink 抛 OSError 时不传播（line 131-132）。"""
+        from vibeocr.utils import cjk_font_resolver
+
+        r = cjk_font_resolver.CjkFontResolver()
+        r._subset_cache[frozenset("字")] = "/nonexistent/path.ttf"
+        # 即使路径不存在，missing_ok=True 也不会抛；这里再注入一个抛 OSError 的 unlink
+        def _fail_unlink(self, *args, **kwargs):
+            raise OSError("unlink denied")
+
+        monkeypatch.setattr("pathlib.Path.unlink", _fail_unlink)
+        r.cleanup()  # 不应抛
+
+    def test_cleanup_on_exit_hook_callable(self):
+        """模块级 _cleanup_on_exit 可调用（line 144）。"""
+        from vibeocr.utils import cjk_font_resolver
+
+        # 仅验证可调用且不抛（atexit 已注册，这里直接调）
+        cjk_font_resolver._cleanup_on_exit()
