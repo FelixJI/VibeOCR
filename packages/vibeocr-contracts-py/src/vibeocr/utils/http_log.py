@@ -10,7 +10,7 @@ from urllib.parse import parse_qsl, quote_plus, urlsplit
 if TYPE_CHECKING:
     import logging
 
-if not hasattr(HTTPStatus, "__members__"):
+if not hasattr(HTTPStatus, "__members__"):  # pragma: no cover - HTTPStatus always has __members__
     HTTPStatus = HTTPStatus  # type: ignore[assignment]
 
 
@@ -100,7 +100,7 @@ def _human_bytes(size: int | None) -> str | None:
                 return f"{int(s)} {unit}"
             return f"{s:.1f} {unit}"
         s /= 1024
-    return f"{s:.1f} {units[-1]}"
+    return f"{s:.1f} {units[-1]}"  # pragma: no cover - loop always exits via unit==units[-1]
 
 
 def format_http_transaction(
@@ -180,7 +180,7 @@ def guess_response_size(headers: dict[str, str] | None, content: bytes | str | N
             if isinstance(content, str):
                 return len(content.encode("utf-8"))
             return len(content)
-        except Exception:
+        except Exception:  # pragma: no cover - len() on valid bytes/str never raises
             pass
     if headers is None:
         return None
@@ -195,5 +195,5 @@ def guess_request_size(content: bytes | bytearray | str | None) -> int | None:
         if isinstance(content, str):
             return len(content.encode("utf-8"))
         return len(content)
-    except Exception:
+    except Exception:  # pragma: no cover - len() on valid bytes/str never raises
         return None
