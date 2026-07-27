@@ -83,3 +83,68 @@ def test_recognize_formula_extracts_from_dict_result():
     assert "a^2 + b^2" in result.raw_text
     assert "$$" in result.markdown_text
 
+
+
+def test_recognize_formula_with_preprocessed_output_img():
+    """doc_preprocessor_res 含 output_img 时提取预处理图与角度（line 92-103）。"""
+    import numpy as np
+
+    # 构造一个 2x2 RGB 数组
+    rgb_arr = np.zeros((2, 2, 3), dtype=np.uint8)
+    rgb_arr[..., 0] = 255  # R 通道
+    res = _DictResult(
+        {
+            "doc_preprocessor_res": {
+                "angle": 90,
+                "output_img": rgb_arr,
+            },
+            "parsing_res_list": [
+                _LayoutBlock(label="formula", content=r"x = 1"),
+            ],
+        }
+    )
+    service = _FakeService([res])
+    result = _recognize_formula(
+        service, image=None, options=FormulaRecognitionOptions()
+    )
+    assert result.preproc_angle == 90
+    assert result.preproc_img_w == 2
+    assert result.preproc_img_h == 2
+    assert result.preprocessed_image  # 预处理 PNG 存入 preprocessed_image 字段
+    assert result.preprocessed_image.startswith(b"\x89PNG")
+
+
+def test_recognize_formula_with_batch_size_option():
+    """formula_recognition_batch_size != 1 时透传给 predict（line 73）。"""
+    res = _DictResult(
+        {
+            "doc_preprocessor_res": None,
+            "parsing_res_list": [],
+        }
+    )
+    pipeline = _FakePipeline([res])
+    captured = {}
+
+    orig_predict = pipeline.predict
+
+    def capturing_predict(input, **kwargs):  # noqa: A002
+        captured.update(kwargs)
+        return orig_predict(input=input, **kwargs)
+
+    pipeline.predict = capturing_predict
+    service = _FakeService([res])
+    service._pipeline = pipeline
+
+    opts = FormulaRecognitionOptions(formula_recognition_batch_size=4)
+    _recognize_formula(service, image=None, options=opts)
+    assert captured.get("formula_recognition_batch_size") == 4
+
+
+def test_recognize_formula_empty_output():
+    """predict 返回空列表时不崩溃（line 88->105 分支）。"""
+    service = _FakeService([])
+    result = _recognize_formula(
+        service, image=None, options=FormulaRecognitionOptions()
+    )
+    assert result.raw_text == ""
+    assert result.text_blocks == []
