@@ -63,3 +63,44 @@ class TestMarkdownToHtmlWithIndent:
         markdown = "| A | B |\n|---|---|\n| 1 | 2 |"
         html = markdown_to_html(markdown)
         assert "<table>" in html
+
+
+class TestMarkdownConversionFailure:
+    """markdown.markdown 抛异常时的回退路径。"""
+
+    def test_conversion_failure_returns_escaped_text(self, monkeypatch):
+        """markdown.markdown 异常 + include_style=False 时返回纯 pre 转义文本（line 158）。"""
+        import markdown
+        from vibeocr.utils import markdown_converter
+
+        def _boom(*_args, **_kwargs):
+            raise RuntimeError("conversion failed")
+
+        monkeypatch.setattr(markdown, "markdown", _boom)
+        result = markdown_converter.markdown_to_html("a<b>&c", include_style=False)
+        # 不含 body，仅 pre 包裹的转义文本
+        assert "<body>" not in result
+        assert "<pre>" in result
+        assert "&lt;" in result
+
+    def test_conversion_failure_with_style(self, monkeypatch):
+        """include_style=True + 异常时返回带 style 的转义文本（line 156-158）。"""
+        import markdown
+        from vibeocr.utils import markdown_converter
+
+        def _boom(*_args, **_kwargs):
+            raise RuntimeError("conversion failed")
+
+        monkeypatch.setattr(markdown, "markdown", _boom)
+        result = markdown_converter.markdown_to_html("text", include_style=True)
+        assert "body" in result  # 含 HTML_STYLE + body 包裹
+
+
+def test_markdown_to_html_with_custom_extensions():
+    """传入自定义 extensions 时跳过默认扩展（line 127->135 分支）。"""
+    from vibeocr.utils.markdown_converter import markdown_to_html
+
+    # 传一个最小 extensions 列表，验证不报错且返回 HTML
+    result = markdown_to_html("# Title\n\nParagraph", extensions=["nl2br"], include_style=False)
+    assert "<h1>" in result
+    assert "Paragraph" in result

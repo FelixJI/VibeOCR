@@ -120,3 +120,25 @@ class TestProcessMarkdown:
         assert '<div class="zh-paragraph">结束段落</div>' in result
         assert "```python\nprint(1)\n```" in result
         assert "```bash\necho hello\n```" in result
+
+
+class TestIndentProcessorEdgeCases:
+    """HTML 块密度跳过、代码块标记行跳过边界。"""
+
+    @pytest.fixture
+    def processor(self):
+        from vibeocr.utils.indent_processor import IndentProcessor
+
+        return IndentProcessor()
+
+    def test_many_html_blocks_skipped(self, processor):
+        """含 >=3 个 HTML 块级标签时直接返回原文（line 55）。"""
+        md = "<div>a</div>\n<table>b</table>\n<p>c</p>\n中文段落"
+        assert processor.process_markdown(md) == md
+
+    def test_code_fence_marker_line_preserved(self, processor):
+        """单行代码块标记（以```开头但无闭合）原样保留（line 96-97）。"""
+        # 不成对的代码围栏标记 + 中文段：整段以 ``` 开头被当作代码块标记跳过
+        md = "```python\n中文段落"
+        result = processor.process_markdown(md)
+        assert result == md  # 原样返回，不包装
