@@ -1,3 +1,5 @@
+import pytest
+
 from vibeocr.contracts.tables import (
     TableCellV1,
     TableModelV1,
@@ -254,3 +256,94 @@ def test_result_reducer_keeps_table_raw_projection_without_a_text_block():
     assert result.raw_text == "A\tupdated"
     assert result.markdown_text.count("| A | updated |") == 1
     assert result.html_text.count("<table") == 1
+
+
+class TestReducerErrorPathsAndCancellation:
+    """update_result_table_cell 错误路径 + build_result_projections 取消/回退。"""
+
+    def test_update_raises_when_content_list_not_list(self):
+        """content_list 非 list 时 raise KeyError（line 65）。"""
+        from types import SimpleNamespace
+
+        from vibeocr.tables.reducer import update_result_table_cell
+
+        result = SimpleNamespace(content_list="not a list", text_blocks=[])
+        with pytest.raises(KeyError, match="unknown table_id"):
+            update_result_table_cell(result, table_id="t1", cell_id="c1", new_text="x")
+
+    def test_update_raises_when_table_id_not_found(self):
+        """table_id 在 content_list 中不存在时 raise KeyError（line 94）。"""
+        from types import SimpleNamespace
+
+        from vibeocr.tables.reducer import update_result_table_cell
+
+        result = SimpleNamespace(
+            content_list=[{"type": "table", "table_body": "<table><tr><td>A</td></tr></table>"}],
+            text_blocks=[],
+        )
+        with pytest.raises(KeyError, match="unknown table_id"):
+            update_result_table_cell(
+                result, table_id="nonexistent", cell_id="c1", new_text="x"
+            )
+
+    def test_build_projections_content_list_none_falls_back_to_text_blocks(self):
+        """content_list=None 时回退到 text_blocks 投影（line 142-154）。"""
+        from types import SimpleNamespace
+
+        from vibeocr.tables.reducer import build_result_projections
+
+        class _Block:
+            def __init__(self, text, label="text"):
+                self.text = text
+                self.label = label
+
+        result = SimpleNamespace(content_list=None, text_blocks=[_Block("hello"), _Block("world")])
+        projections = build_result_projections(result)
+        assert projections is not None
+        assert "hello" in projections[0]
+        assert "world" in projections[0]
+
+    def test_build_projections_returns_none_when_cancelled_in_text_blocks(self):
+        """text_blocks 回退路径中取消回调返回 None（line 145-146）。"""
+        from types import SimpleNamespace
+
+        from vibeocr.tables.reducer import build_result_projections
+
+        class _Block:
+            def __init__(self, text):
+                self.text = text
+                self.label = "text"
+
+        result = SimpleNamespace(
+            content_list=None,
+            text_blocks=[_Block(f"line{i}") for i in range(300)],
+        )
+        # cancelled 在 index % 256 == 0 时触发
+        projections = build_result_projections(result, is_cancelled=lambda: True)
+        assert projections is None
+
+    def test_build_projections_returns_none_when_cancelled_in_content_list(self):
+        """content_list 投影路径中取消回调返回 None（line 168-169）。"""
+        from types import SimpleNamespace
+
+        from vibeocr.tables.reducer import build_result_projections
+
+        result = SimpleNamespace(
+            content_list=[{"type": "text", "text": f"b{i}"} for i in range(200)],
+            text_blocks=[],
+        )
+        projections = build_result_projections(result, is_cancelled=lambda: True)
+        assert projections is None
+
+    def test_build_projections_returns_none_when_raw_projection_cancelled(self):
+        """_raw_parts_from_content 取消时返回 None（line 162-163）。"""
+        from types import SimpleNamespace
+
+        from vibeocr.tables.reducer import build_result_projections
+
+        result = SimpleNamespace(
+            content_list=[{"type": "text", "text": f"b{i}"} for i in range(300)],
+            text_blocks=[],
+        )
+        projections = build_result_projections(result, is_cancelled=lambda: True)
+        assert projections is None
