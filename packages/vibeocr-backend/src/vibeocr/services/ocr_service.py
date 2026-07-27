@@ -37,10 +37,14 @@ from vibeocr.pipeline_status import (
     is_pipeline_ever_succeeded,
     mark_pipeline_success,
 )
-from vibeocr.utils.html_tables import (  # noqa: F401
-    _extract_table_html,
-    _html_table_to_markdown,
-    normalize_table_html,
+from vibeocr.utils.html_tables import (
+    _extract_table_html as _extract_table_html,
+)
+from vibeocr.utils.html_tables import (
+    _html_table_to_markdown as _html_table_to_markdown,
+)
+from vibeocr.utils.html_tables import (
+    normalize_table_html as normalize_table_html,
 )
 
 _logger = logging.getLogger(__name__)
@@ -1062,306 +1066,24 @@ class OCRService(metaclass=SingletonMeta):
         image: Image.Image | np.ndarray | str,
         options: OCROptions,
     ) -> OCRResult:
-        """PP-StructureV3 文档结构分析"""
-        pipeline = self.get_pipeline(OCRPipeline.PP_STRUCTURE_V3)
-        output = pipeline.predict(
-            input=image,
-            use_doc_orientation_classify=options.use_doc_orientation_classify,
-            use_doc_unwarping=options.use_doc_unwarping,
-            use_textline_orientation=options.use_textline_orientation,
-            use_table_recognition=options.use_table_recognition,
-            use_formula_recognition=options.use_formula_recognition,
-            use_seal_recognition=options.use_seal_recognition,
-            use_chart_recognition=options.use_chart_recognition,
-        )
-        output_list = self._consume_generator_safely(output)
+        """通过管道注册表委托 PP-StructureV3 文档解析。"""
+        from vibeocr.core.pipelines import get_registry
 
-        preproc_angle = 0
-        preprocessed_png: bytes | None = None
-        preproc_w = preproc_h = 0
-        if output_list:
-            res = output_list[0]
-            dp_res = res.get("doc_preprocessor_res")
-            if dp_res is not None:
-                preproc_angle = dp_res.get("angle", 0)
-                out_arr = dp_res.get("output_img")
-                if out_arr is not None:
-                    from PIL import Image as _PILImage
-
-                    # output_img 已是 RGB，不可做 [::-1] 翻转（否则 R/B 对调）
-                    rgb = out_arr.copy()
-                    pil_img = _PILImage.fromarray(rgb)
-                    preproc_w, preproc_h = pil_img.size
-                    buf = io.BytesIO()
-                    pil_img.save(buf, format="PNG")
-                    preprocessed_png = buf.getvalue()
-
-        text_blocks: list[TextBlock] = []
-        text_with_scores: list[tuple[str, float]] = []
-        content_list: list[dict[str, Any]] = []
-        markdown_parts: list[str] = []
-        images: dict[str, Any] = {}
-
-        for res in output_list:
-            # 提取内建 markdown 作为参考
-            if hasattr(res, "markdown"):
-                md_info = getattr(res, "markdown", None)
-                if isinstance(md_info, dict):
-                    md_text = md_info.get("markdown_texts", "")
-                    if md_text:
-                        markdown_parts.append(md_text)
-                    md_imgs = md_info.get("markdown_images", {})
-                    if md_imgs:
-                        images.update(md_imgs)
-
-            # 从 parsing_res_list 提取结构化结果
-            parsing_res_list: list[Any] = []
-            if hasattr(res, "__getitem__"):
-                parsing_res_list = (
-                    res["parsing_res_list"]
-                    if "parsing_res_list"
-                    in (res.keys() if hasattr(res, "keys") else [])
-                    else []
-                )
-            if not parsing_res_list and hasattr(res, "parsing_res_list"):
-                parsing_res_list = res.parsing_res_list
-
-            for block in parsing_res_list:
-                label = getattr(block, "label", "text")
-                bbox = getattr(block, "bbox", None)
-                content = getattr(block, "content", "")
-                order_index = getattr(block, "order_index", -1)
-                block_image = getattr(block, "image", None)
-
-                if not content and label not in ("image", "chart"):
-                    continue
-
-                cl_idx = len(content_list)
-                bbox_tuple = (
-                    (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]))
-                    if bbox
-                    else None
-                )
-
-                if label == "table":
-                    table_html = _extract_table_html(content)
-                    table_md = _html_table_to_markdown(table_html)
-                    if table_md:
-                        markdown_parts.append(table_md)
-                    text_blocks.append(
-                        TextBlock(
-                            text=content,
-                            score=0.9,
-                            bbox=bbox_tuple,
-                            label=label,
-                            order=order_index or -1,
-                            content_index=cl_idx,
-                        )
-                    )
-                    text_with_scores.append((content, 0.9))
-                    content_list.append(
-                        {"type": "table", "table_body": table_html, "bbox": bbox_tuple}
-                    )
-
-                elif label == "formula":
-                    formula_md = f"$${content}$$"
-                    markdown_parts.append(formula_md)
-                    text_blocks.append(
-                        TextBlock(
-                            text=content,
-                            score=1.0,
-                            bbox=bbox_tuple,
-                            label=label,
-                            order=order_index or -1,
-                            content_index=cl_idx,
-                        )
-                    )
-                    text_with_scores.append((content, 1.0))
-                    content_list.append(
-                        {"type": "formula", "text": content, "bbox": bbox_tuple}
-                    )
-
-                else:
-                    # text, doc_title, seal, chart, image, etc.
-                    text_blocks.append(
-                        TextBlock(
-                            text=content,
-                            score=0.9,
-                            bbox=bbox_tuple,
-                            label=label,
-                            order=order_index or -1,
-                            content_index=cl_idx,
-                        )
-                    )
-                    text_with_scores.append((content, 0.9))
-                    content_entry: dict[str, Any] = {
-                        "type": label,
-                        "text": content,
-                        "bbox": bbox_tuple,
-                    }
-                    if block_image and isinstance(block_image, dict):
-                        img_path = block_image.get("path", "")
-                        if img_path:
-                            content_entry["img_path"] = img_path
-                    content_list.append(content_entry)
-
-        raw_text = "\n".join(b.text for b in text_blocks if b.label not in ("table",))
-        markdown_text = "\n\n".join(markdown_parts) if markdown_parts else raw_text
-
-        from vibeocr.utils.markdown_converter import markdown_to_html
-
-        result = self._build_ocr_result(
-            raw_text=raw_text,
-            markdown_text=markdown_text,
-            html_text=markdown_to_html(markdown_text) if markdown_text else "",
-            text_with_scores=text_with_scores,
-            pipeline_type="PP-StructureV3",
-            images=images if images else None,
-            text_blocks=text_blocks,
-            content_list=content_list,
-        )
-        result.preproc_angle = preproc_angle
-        result.preprocessed_image = preprocessed_png
-        result.preproc_img_w = preproc_w
-        result.preproc_img_h = preproc_h
-        return result
+        spec = get_registry().get("PP-StructureV3")
+        provider_options = spec.options_class.from_dict(options.to_dict())
+        return spec.recognize(self, image, provider_options)
 
     def _recognize_paddlocr_vl(
         self,
         image: Image.Image | np.ndarray | str,
         options: OCROptions,
     ) -> OCRResult:
-        """PaddleOCR-VL 文档解析"""
-        pipeline = self.get_pipeline(OCRPipeline.PADDLEOCR_VL)
+        """通过管道注册表委托 PaddleOCR-VL 文档解析。"""
+        from vibeocr.core.pipelines import get_registry
 
-        predict_kwargs: dict[str, Any] = {}
-        predict_kwargs["use_doc_orientation_classify"] = (
-            options.use_doc_orientation_classify
-        )
-        predict_kwargs["use_doc_unwarping"] = options.use_doc_unwarping
-        predict_kwargs["use_layout_detection"] = options.vl_use_layout_detection
-        predict_kwargs["use_chart_recognition"] = options.vl_use_chart_recognition
-        predict_kwargs["use_seal_recognition"] = options.vl_use_seal_recognition
-        predict_kwargs["use_ocr_for_image_block"] = options.use_ocr_for_image_block
-
-        output = pipeline.predict(input=image, **predict_kwargs)
-        output_list = list(output)
-
-        markdown_text = ""
-        text_blocks: list[TextBlock] = []
-        text_with_scores: list[tuple[str, float]] = []
-        content_list: list[dict[str, Any]] = []
-        images: dict[str, Any] = {}
-
-        for res in output_list:
-            if hasattr(res, "markdown"):
-                markdown_text = getattr(res, "markdown", "") or markdown_text
-
-            if hasattr(res, "content_list"):
-                cl = getattr(res, "content_list", None)
-                if cl:
-                    content_list = list(cl) if not isinstance(cl, list) else cl
-
-            if hasattr(res, "images"):
-                imgs = getattr(res, "images", None)
-                if imgs and isinstance(imgs, dict):
-                    images.update(imgs)
-
-            # PaddleOCR-VL 3.x: parsing_res_list with block-level localization
-            if hasattr(res, "parsing_res_list"):
-                for block in res.parsing_res_list:
-                    bbox = self._extract_block_bbox(block.get("block_bbox"))
-                    text = block.get("block_content", "")
-                    label = block.get("block_label", "text")
-                    order = block.get("block_order", -1)
-                    score = self._get_block_score(res, block)
-
-                    if text:
-                        text_blocks.append(
-                            TextBlock(
-                                text=text,
-                                score=score,
-                                bbox=bbox,
-                                label=label,
-                                order=order,
-                            )
-                        )
-                        text_with_scores.append((text, score))
-                        content_list.append(
-                            {
-                                "type": label,
-                                "text": text,
-                                "bbox": bbox,
-                            }
-                        )
-            elif hasattr(res, "rec_texts") and hasattr(res, "rec_scores"):
-                # Fallback: legacy output format
-                rec_boxes = getattr(res, "rec_boxes", None)
-                for i, (text, score) in enumerate(
-                    zip(res.rec_texts, res.rec_scores, strict=False)
-                ):
-                    if text:
-                        fs = float(score)
-                        text_with_scores.append((text, fs))
-                        bbox = (
-                            self._extract_bbox(rec_boxes, i)
-                            if rec_boxes is not None
-                            else None
-                        )
-                        text_blocks.append(TextBlock(text=text, score=fs, bbox=bbox))
-
-        raw_text = "\n".join(b.text for b in text_blocks)
-        if not raw_text and markdown_text:
-            raw_text = markdown_text
-
-        from vibeocr.utils.markdown_converter import markdown_to_html
-
-        return self._build_ocr_result(
-            raw_text=raw_text,
-            markdown_text=markdown_text or raw_text,
-            html_text=markdown_to_html(markdown_text) if markdown_text else raw_text,
-            text_with_scores=text_with_scores,
-            pipeline_type="PaddleOCR-VL",
-            images=images if images else None,
-            text_blocks=text_blocks,
-            content_list=content_list,
-        )
-
-    @staticmethod
-    def _extract_block_bbox(
-        block_bbox: list | tuple | None,
-    ) -> tuple[float, float, float, float] | None:
-        """从 parsing_res_list 的 block_bbox 提取坐标"""
-        if not block_bbox:
-            return None
-        try:
-            if len(block_bbox) == 4 and all(
-                isinstance(v, (int, float)) for v in block_bbox
-            ):
-                return (
-                    float(block_bbox[0]),
-                    float(block_bbox[1]),
-                    float(block_bbox[2]),
-                    float(block_bbox[3]),
-                )
-            if len(block_bbox) >= 2:
-                xs = [p[0] for p in block_bbox]
-                ys = [p[1] for p in block_bbox]
-                return (min(xs), min(ys), max(xs), max(ys))
-        except (TypeError, IndexError, ValueError):
-            pass
-        return None
-
-    @staticmethod
-    def _get_block_score(res, block: dict) -> float:
-        """从 parsing_res_list 结果中获取 block 的置信度"""
-        if hasattr(res, "layout_det_res") and hasattr(res.layout_det_res, "boxes"):
-            boxes = res.layout_det_res.boxes
-            order = block.get("block_order", -1)
-            if 0 <= order < len(boxes):
-                return float(boxes[order].get("score", 0.9))
-        # layout_det_res 不可用或索引越界时，PaddleOCR-VL 不提供单块置信度，给一个保守估值
-        return 0.9
+        spec = get_registry().get("PaddleOCR-VL")
+        provider_options = spec.options_class.from_dict(options.to_dict())
+        return spec.recognize(self, image, provider_options)
 
     @staticmethod
     def _extract_bbox(

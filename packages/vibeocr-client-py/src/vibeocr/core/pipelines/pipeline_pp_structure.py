@@ -8,14 +8,22 @@
 from __future__ import annotations
 
 import gc
+import html
 import io
 import logging
 import re as _re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
+from vibeocr.contracts.tables import TableProvenanceV1
 from vibeocr.core.pipelines.base_options import BasePipelineOptions
 from vibeocr.core.pipelines.registry import PipelineSpec
+from vibeocr.tables.blocks import canonicalize_table_block, table_model_from_block
+from vibeocr.tables.projections import (
+    table_model_to_markdown,
+    table_model_to_plain_text,
+)
+from vibeocr.tables.reducer import rebuild_result_projections
 
 _logger = logging.getLogger(__name__)
 
@@ -180,6 +188,7 @@ def _recognize_pp_structure(
     content_list: list[dict[str, Any]] = []
     markdown_parts: list[str] = []
     images: dict[str, Any] = {}
+    table_sequence = 0
 
     for res in output_list:
         # 提取内建 markdown 作为参考
@@ -223,25 +232,46 @@ def _recognize_pp_structure(
 
             if label == "table":
                 table_html = _extract_table_html(content)
-                table_md = _html_table_to_markdown(table_html)
+                table_id = f"pp-structure-v3-table-{table_sequence}"
+                table_sequence += 1
+                canonical_block = canonicalize_table_block(
+                    {
+                        "type": "table",
+                        "table_body": table_html,
+                        "bbox": bbox_tuple,
+                    },
+                    table_id=table_id,
+                    pipeline="PP-StructureV3",
+                )
+                table_model = table_model_from_block(canonical_block)
+                table_model = replace(
+                    table_model,
+                    provenance=TableProvenanceV1(
+                        pipeline="PP-StructureV3",
+                        provider_schema="paddlex-pp-structure-v3",
+                    ),
+                )
+                canonical_block["table"] = table_model.to_payload()
+                table_plain_text = table_model_to_plain_text(table_model)
+                table_md = table_model_to_markdown(table_model).text
                 if table_md:
                     markdown_parts.append(table_md)
                 text_blocks.append(
                     TextBlock(
-                        text=content,
+                        text=table_plain_text,
                         score=0.9,
                         bbox=bbox_tuple,
                         label=label,
-                        order=order_index or -1,
+                        order=order_index if order_index is not None else -1,
                         content_index=cl_idx,
+                        content_id=table_id,
                     )
                 )
-                text_with_scores.append((content, 0.9))
-                content_list.append(
-                    {"type": "table", "table_body": table_html, "bbox": bbox_tuple}
-                )
+                text_with_scores.append((table_plain_text, 0.9))
+                content_list.append(canonical_block)
 
             elif label == "formula":
+                block_id = f"pp-structure-v3-block-{cl_idx}"
                 formula_md = f"$${content}$$"
                 markdown_parts.append(formula_md)
                 text_blocks.append(
@@ -250,25 +280,33 @@ def _recognize_pp_structure(
                         score=1.0,
                         bbox=bbox_tuple,
                         label=label,
-                        order=order_index or -1,
+                        order=order_index if order_index is not None else -1,
                         content_index=cl_idx,
+                        content_id=block_id,
                     )
                 )
                 text_with_scores.append((content, 1.0))
                 content_list.append(
-                    {"type": "formula", "text": content, "bbox": bbox_tuple}
+                    {
+                        "type": "formula",
+                        "text": content,
+                        "bbox": bbox_tuple,
+                        "block_id": block_id,
+                    }
                 )
 
             else:
                 # text, doc_title, seal, chart, image, etc.
+                block_id = f"pp-structure-v3-block-{cl_idx}"
                 text_blocks.append(
                     TextBlock(
                         text=content,
                         score=0.9,
                         bbox=bbox_tuple,
                         label=label,
-                        order=order_index or -1,
+                        order=order_index if order_index is not None else -1,
                         content_index=cl_idx,
+                        content_id=block_id,
                     )
                 )
                 text_with_scores.append((content, 0.9))
@@ -276,6 +314,7 @@ def _recognize_pp_structure(
                     "type": label,
                     "text": content,
                     "bbox": bbox_tuple,
+                    "block_id": block_id,
                 }
                 if block_image and isinstance(block_image, dict):
                     img_path = block_image.get("path", "")
@@ -286,18 +325,26 @@ def _recognize_pp_structure(
     raw_text = "\n".join(b.text for b in text_blocks if b.label not in ("table",))
     markdown_text = "\n\n".join(markdown_parts) if markdown_parts else raw_text
 
-    from vibeocr.utils.markdown_converter import markdown_to_html
+    html_parts = [
+        (
+            str(block.get("table_body") or "")
+            if block.get("type") == "table"
+            else f"<p>{html.escape(str(block.get('text') or ''))}</p>"
+        )
+        for block in content_list
+    ]
 
     result = _build_ocr_result(
         raw_text=raw_text,
         markdown_text=markdown_text,
-        html_text=markdown_to_html(markdown_text) if markdown_text else "",
+        html_text="\n".join(part for part in html_parts if part),
         text_with_scores=text_with_scores,
         pipeline_type="PP-StructureV3",
         images=images if images else None,
         text_blocks=text_blocks,
         content_list=content_list,
     )
+    rebuild_result_projections(result)
     result.preproc_angle = preproc_angle
     result.preprocessed_image = preprocessed_png
     result.preproc_img_w = preproc_w

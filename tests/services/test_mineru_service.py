@@ -467,7 +467,52 @@ class TestBuildOcrResult:
         ]
         api_resp = _make_api_response(md_content="t", content_list=content_list)
         result = service._build_ocr_result(api_resp, "input.pdf", data=None)
-        assert result.text_blocks[0].text == "A B"
+        assert result.text_blocks[0].text == "A\tB"
+        assert result.text_with_scores[0] == ("A\tB", 1.0)
+
+    def test_table_block_emits_canonical_table_and_stable_content_id(self):
+        service = self._make_service()
+        content_list = [
+            {
+                "type": "table",
+                "table_body": (
+                    "<table><tr><td rowspan='2'>A</td><td>B</td></tr>"
+                    "<tr><td>C</td></tr></table>"
+                ),
+                "bbox": [0, 0, 500, 100],
+                "page_idx": 0,
+            }
+        ]
+        api_resp = _make_api_response(md_content="t", content_list=content_list)
+
+        result = service._build_ocr_result(api_resp, "input.pdf", data=None)
+
+        table_block = result.content_list[0]
+        assert table_block["table"]["table_id"] == table_block["block_id"]
+        assert (
+            table_block["table"]["provenance"]["provider_schema"]
+            == "mineru-content-list"
+        )
+        assert result.text_blocks[0].content_id == table_block["block_id"]
+        assert 'rowspan="2"' in result.html_text
+
+    def test_table_without_bbox_still_has_text_block_and_single_projection(self):
+        service = self._make_service()
+        content_list = [
+            {
+                "type": "table",
+                "table_body": "<table><tr><td>A</td></tr></table>",
+            }
+        ]
+        api_resp = _make_api_response(md_content="", content_list=content_list)
+
+        result = service._build_ocr_result(api_resp, "input.pdf", data=None)
+
+        table_block = result.content_list[0]
+        assert len(result.text_blocks) == 1
+        assert result.text_blocks[0].bbox is None
+        assert result.text_blocks[0].content_id == table_block["block_id"]
+        assert result.markdown_text.count("| A |") == 1
 
     def test_text_with_scores_from_text_blocks(self):
         service = self._make_service()
@@ -480,6 +525,9 @@ class TestBuildOcrResult:
         assert len(result.text_with_scores) == 2
         assert result.text_with_scores[0] == ("A", 1.0)
         assert result.avg_score == 1.0
+        for text_block in result.text_blocks:
+            content = result.content_list[text_block.content_index]
+            assert content["block_id"] == text_block.content_id
 
 
 class TestMinerUIntegration:
@@ -768,6 +816,83 @@ class TestBuildOcrResultV2:
         assert result.text_blocks[0].page_idx == 0
         assert result.text_blocks[1].page_idx == 0
 
+    def test_v2_canonical_table_content_list_is_flat(self):
+        service = self._make_service()
+        v2_content_list = [
+            [
+                {
+                    "type": "table",
+                    "table_body": "<table><tr><td>A</td></tr></table>",
+                    "bbox": [0, 0, 100, 50],
+                }
+            ]
+        ]
+        api_resp = _make_api_response(
+            md_content="",
+            content_list=v2_content_list,
+        )
+
+        result = service._build_ocr_result(api_resp, "input.pdf", data=None)
+
+        assert isinstance(result.content_list[0], dict)
+        assert result.content_list[0]["page_idx"] == 0
+        assert result.content_list[0]["table"]["table_id"]
+        assert result.text_blocks[0].content_index == 0
+
+    def test_v2_nested_html_table_is_canonicalized(self):
+        service = self._make_service()
+        v2_content_list = [
+            [
+                {
+                    "type": "table",
+                    "content": {
+                        "table_body": (
+                            "<table><tr><td>Nested</td></tr></table>"
+                        )
+                    },
+                }
+            ]
+        ]
+        result = service._build_ocr_result(
+            _make_api_response(md_content="", content_list=v2_content_list),
+            "input.pdf",
+            data=None,
+        )
+
+        table = result.content_list[0]
+        assert table["type"] == "table"
+        assert table["table"]["cells"][0]["text"] == "Nested"
+        assert result.text_blocks[0].content_id == table["block_id"]
+
+    def test_v2_unrecognized_structured_table_is_diagnosed_and_downgraded(self):
+        service = self._make_service()
+        v2_content_list = [
+            [
+                {
+                    "type": "table",
+                    "content": {
+                        "table_content": [
+                            {"type": "cell", "content": "A"},
+                            {"type": "cell", "content": "B"},
+                        ]
+                    },
+                }
+            ]
+        ]
+        result = service._build_ocr_result(
+            _make_api_response(md_content="", content_list=v2_content_list),
+            "input.pdf",
+            data=None,
+        )
+
+        block = result.content_list[0]
+        assert block["type"] == "table_unparsed"
+        assert block["source_type"] == "table"
+        assert any(
+            "structured-table-unsupported" in warning
+            for warning in block["projection_warnings"]
+        )
+
     def test_v2_multi_page_content_list(self):
         """V2 多页格式应正确分配 page_idx"""
         service = self._make_service()
@@ -1035,5 +1160,3 @@ class TestMinerUTextExtraction:
         """_extract_block_text: 普通 type 走 text 字段"""
         text = MinerUService._extract_block_text({"type": "text", "text": "段落"})
         assert text == "段落"
-
-

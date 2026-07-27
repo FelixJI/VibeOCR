@@ -7,12 +7,27 @@
 
 from __future__ import annotations
 
+import html
 import logging
-from dataclasses import dataclass
+import math
+from dataclasses import dataclass, replace
+from numbers import Real
 from typing import Any
 
+from vibeocr.contracts.tables import CoordinateSpace, TableProvenanceV1
 from vibeocr.core.pipelines.base_options import BasePipelineOptions
 from vibeocr.core.pipelines.registry import PipelineSpec
+from vibeocr.tables.blocks import canonicalize_table_block, table_model_from_block
+from vibeocr.tables.html_adapter import (
+    parse_table_source_layout,
+    table_model_from_html,
+    table_model_to_html,
+)
+from vibeocr.tables.projections import (
+    table_model_to_markdown,
+    table_model_to_plain_text,
+)
+from vibeocr.tables.reducer import rebuild_result_projections
 
 _logger = logging.getLogger(__name__)
 
@@ -214,6 +229,7 @@ def _recognize_table(service: Any, image: Any, options: TableRecognitionOptions)
     text_with_scores: list[tuple[str, float]] = []
     markdown_parts: list[str] = []
     content_list: list[dict[str, Any]] = []
+    table_sequence = 0
 
     for res in output_list:
         # PaddleX 表格结果（TableRecognitionResult）是 dict 子类，键需下标访问。
@@ -315,81 +331,164 @@ def _recognize_table(service: Any, image: Any, options: TableRecognitionOptions)
             )
             current_bbox: tuple[float, float, float, float] | None = None
             if cell_box_list:
-                try:
-                    xs_min: list[float] = []
-                    ys_min: list[float] = []
-                    xs_max: list[float] = []
-                    ys_max: list[float] = []
-                    for cell in cell_box_list:
-                        if hasattr(cell, "tolist"):
-                            cell = cell.tolist()
-                        if (
-                            isinstance(cell, (list, tuple))
-                            and len(cell) >= 4
-                            and all(
-                                isinstance(v, (int, float)) for v in cell[:4]
-                            )
-                        ):
-                            xs_min.append(float(cell[0]))
-                            ys_min.append(float(cell[1]))
-                            xs_max.append(float(cell[2]))
-                            ys_max.append(float(cell[3]))
-                    if xs_min:
-                        current_bbox = (
-                            min(xs_min),
-                            min(ys_min),
-                            max(xs_max),
-                            max(ys_max),
-                        )
-                except (TypeError, ValueError, IndexError):
-                    pass
+                valid_cell_boxes = [
+                    parsed
+                    for cell in cell_box_list
+                    if (parsed := _parse_cell_box(cell)) is not None
+                ]
+                if valid_cell_boxes:
+                    current_bbox = (
+                        min(box[0] for box in valid_cell_boxes),
+                        min(box[1] for box in valid_cell_boxes),
+                        max(box[2] for box in valid_cell_boxes),
+                        max(box[3] for box in valid_cell_boxes),
+                    )
 
-            from vibeocr.services.ocr_service import (
-                _extract_table_html,
-                _html_table_to_markdown,
-            )
+            from vibeocr.services.ocr_service import _extract_table_html
 
             table_html = _extract_table_html(pred_html)
+            original_table_html = table_html
+            cl_idx = len(content_list)
+            table_id = f"table-recognition-table-{table_sequence}"
+            table_sequence += 1
+            cell_mapping: dict[
+                int, tuple[tuple[float, float, float, float], int]
+            ] = {}
+            provider_warnings: list[str] = []
 
             # 空单元格回填（soft fallback）：PaddleX IoU 失配时输出空 <td></td>，
             # 但那些字其实躺在 overall_ocr_res 里。把落在空单元格内的 OCR
             # 文本回填进单元格，救回上游漏填的字，避免彻底漏字。
-            if ocr_items:
-                table_html, consumed = _backfill_empty_table_cells(
-                    table_html, cell_box_list, ocr_items
+            available_ocr = [
+                (ocr_index, item)
+                for ocr_index, item in enumerate(ocr_items)
+                if ocr_index not in consumed_ocr_indices
+            ]
+            table_html, consumed_local = _backfill_empty_table_cells(
+                table_html,
+                cell_box_list,
+                [item for _, item in available_ocr],
+                table_id=table_id,
+                mapping_out=cell_mapping,
+                warnings_out=provider_warnings,
+            )
+            if any(
+                warning.endswith(":cell-box-count-mismatch")
+                for warning in provider_warnings
+            ):
+                provider_warnings.append(
+                    f"{table_id}:cell-all:cell-mapping-unproven"
                 )
-                consumed_ocr_indices |= consumed
+            consumed_ocr_indices.update(
+                available_ocr[local_index][0]
+                for local_index in consumed_local
+            )
 
             if current_bbox is not None:
-                from vibeocr.utils.html_tables import _cell_text
-
                 table_match_regions.append(
-                    (current_bbox, _normalize_match_text(_cell_text(table_html)))
+                    (
+                        current_bbox,
+                        _normalize_match_text(
+                            table_model_to_plain_text(
+                                table_model_from_html(
+                                    table_html, table_id=table_id
+                                )
+                            )
+                        ),
+                    )
                 )
 
-            table_md = _html_table_to_markdown(table_html)
+            canonical_block = canonicalize_table_block(
+                {
+                    "type": "table",
+                    "table_body": table_html,
+                    "bbox": list(current_bbox) if current_bbox else None,
+                    "source": {
+                        "source_html": original_table_html,
+                        "provider_schema": "paddlex-table-res-list",
+                        "provider_table_id": (
+                            table_res.get("table_region_id")
+                            if hasattr(table_res, "get")
+                            else None
+                        ),
+                    },
+                },
+                table_id=table_id,
+                pipeline="TABLE_RECOGNITION",
+            )
+            table_model = table_model_from_block(canonical_block)
+            original_model = table_model_from_html(
+                original_table_html, table_id=table_id
+            )
+            provider_table_id = (
+                table_res.get("table_region_id")
+                if hasattr(table_res, "get")
+                else None
+            )
+            enriched_cells = []
+            for cell_index, cell in enumerate(table_model.cells):
+                mapping = cell_mapping.get(cell_index)
+                if mapping is None:
+                    enriched_cells.append(cell)
+                    continue
+                cell_box, source_index = mapping
+                source_ref = (
+                    (
+                        "paddlex:"
+                        f"table_region:{provider_table_id}:"
+                        f"cell_box:{source_index}"
+                    )
+                    if provider_table_id is not None
+                    else f"paddlex-cell:{source_index}"
+                )
+                enriched_cells.append(
+                    replace(
+                        cell,
+                        bbox=cell_box,
+                        source_refs=(source_ref,),
+                    )
+                )
+                if (
+                    cell_index < len(original_model.cells)
+                    and original_model.cells[cell_index].text != cell.text
+                ):
+                    provider_warnings.append(
+                        f"{table_id}:cell-{cell.cell_id}:ocr-backfilled"
+                    )
+            table_model = replace(
+                table_model,
+                cells=tuple(enriched_cells),
+                coordinate_space=(
+                    CoordinateSpace.PIXEL
+                    if cell_mapping
+                    else CoordinateSpace.UNKNOWN
+                ),
+                provenance=TableProvenanceV1(
+                    pipeline="TABLE_RECOGNITION",
+                    provider_schema="paddlex-table-res",
+                    warnings=tuple(dict.fromkeys(provider_warnings)),
+                ),
+            )
+            canonical_block["table"] = table_model.to_payload()
+            canonical_block["table_body"] = table_model_to_html(table_model)
+            table_plain_text = table_model_to_plain_text(table_model)
+            table_md = table_model_to_markdown(table_model).text
             if table_md:
                 markdown_parts.append(table_md)
 
-            cl_idx = len(content_list)
             text_blocks.append(
                 TextBlock(
-                    text=table_html,
+                    text=table_plain_text,
                     score=0.9,
                     bbox=current_bbox,
                     label="table",
                     order=idx,
                     content_index=cl_idx,
+                    content_id=table_id,
                 )
             )
-            text_with_scores.append((table_html, 0.9))
-            content_list.append(
-                {
-                    "type": "table",
-                    "table_body": table_html,
-                    "bbox": list(current_bbox) if current_bbox else None,
-                }
-            )
+            text_with_scores.append((table_plain_text, 0.9))
+            content_list.append(canonical_block)
 
         # 表格外的普通文字（overall_ocr_res）：截图场景多为整图表格，此处通常为空，
         # 但保留以兼容"表格 + 周边文字"的图片。
@@ -417,6 +516,7 @@ def _recognize_table(service: Any, image: Any, options: TableRecognitionOptions)
                         continue
                 # 剩余项属于表格外文字，或无法安全定位/去重的 OCR；保留以防漏字。
                 cl_idx = len(content_list)
+                block_id = f"table-recognition-block-{cl_idx}"
                 text_blocks.append(
                     TextBlock(
                         text=text,
@@ -425,27 +525,42 @@ def _recognize_table(service: Any, image: Any, options: TableRecognitionOptions)
                         label="text",
                         order=-1,
                         content_index=cl_idx,
+                        content_id=block_id,
                     )
                 )
                 text_with_scores.append((text, item["score"]))
                 content_list.append(
-                    {"type": "text", "text": text, "bbox": bbox_tuple}
+                    {
+                        "type": "text",
+                        "text": text,
+                        "bbox": bbox_tuple,
+                        "block_id": block_id,
+                    }
                 )
 
     raw_text = "\n".join(b.text for b in text_blocks)
     markdown_text = "\n\n".join(markdown_parts) if markdown_parts else raw_text
 
-    from vibeocr.utils.markdown_converter import markdown_to_html
+    html_parts = [
+        (
+            str(block.get("table_body") or "")
+            if block.get("type") == "table"
+            else f"<p>{html.escape(str(block.get('text') or ''))}</p>"
+        )
+        for block in content_list
+    ]
 
-    return OCRResult(
+    result = OCRResult(
         raw_text=raw_text,
         markdown_text=markdown_text,
-        html_text=markdown_to_html(markdown_text) if markdown_text else "",
+        html_text="\n".join(part for part in html_parts if part),
         text_with_scores=text_with_scores,
         pipeline_type="TABLE_RECOGNITION",
         text_blocks=text_blocks,
         content_list=content_list,
     )
+    rebuild_result_projections(result)
+    return result
 
 
 def _point_in_box(
@@ -453,6 +568,34 @@ def _point_in_box(
 ) -> bool:
     """点是否落在矩形框内（含边界）。"""
     return box[0] <= cx <= box[2] and box[1] <= cy <= box[3]
+
+
+def _parse_cell_box(raw_box: Any) -> tuple[float, float, float, float] | None:
+    """Parse one finite, non-degenerate provider cell box."""
+
+    box = raw_box.tolist() if hasattr(raw_box, "tolist") else raw_box
+    if (
+        not isinstance(box, (list, tuple))
+        or len(box) < 4
+        or any(
+            isinstance(value, bool) or not isinstance(value, Real)
+            for value in box[:4]
+        )
+    ):
+        return None
+    parsed = (
+        float(box[0]),
+        float(box[1]),
+        float(box[2]),
+        float(box[3]),
+    )
+    if (
+        not all(math.isfinite(value) for value in parsed)
+        or parsed[0] >= parsed[2]
+        or parsed[1] >= parsed[3]
+    ):
+        return None
+    return parsed
 
 
 def _normalize_match_text(text: str) -> str:
@@ -464,6 +607,13 @@ def _backfill_empty_table_cells(
     table_html: str,
     cell_box_list: list[Any] | None,
     ocr_items: list[dict[str, Any]],
+    *,
+    table_id: str = "table",
+    mapping_out: dict[
+        int, tuple[tuple[float, float, float, float], int]
+    ]
+    | None = None,
+    warnings_out: list[str] | None = None,
 ) -> tuple[str, set[int]]:
     """把表内 OCR 吸收到对应单元格，并救回上游漏填的字。
 
@@ -490,9 +640,7 @@ def _backfill_empty_table_cells(
         (new_table_html, consumed_indices)：合并后的 HTML，与被消费的
         ocr_items 索引集合。无坐标或落点不在任何单元格的项由调用方处理。
     """
-    from vibeocr.utils.html_tables import _RE_CELL, _RE_TR, _cell_text
-
-    if not cell_box_list or not ocr_items:
+    if not cell_box_list:
         return table_html, set()
 
     # 收集全部单元格：表格内已有内容对应的 OCR 也需要吸收，否则 UI 会
@@ -500,42 +648,148 @@ def _backfill_empty_table_cells(
     # 注意：_RE_CELL 在 tr_match.group(1) 内匹配，其 start/end 是相对该子串
     # 的偏移；需加上 tr_match.start(1) 换算成 table_html 内的绝对偏移，否则
     # 注入会落到错误位置（如把字插进 <table> 标签中间）。
-    all_cell_spans: list[tuple[int, int]] = []  # (start, end) in table_html
-    all_cell_texts: list[str] = []
-    global_idx = 0
-    for tr_match in _RE_TR.finditer(table_html):
-        tr_offset = tr_match.start(1)
-        for cm in _RE_CELL.finditer(tr_match.group(1)):
-            inner = cm.group(3)
-            all_cell_spans.append(
-                (tr_offset + cm.start(3), tr_offset + cm.end(3))
-            )
-            all_cell_texts.append(_cell_text(inner).strip())
-            global_idx += 1
-
-    if not all_cell_spans:
+    try:
+        source_layout = parse_table_source_layout(
+            table_html, table_id=table_id
+        )
+    except ValueError as error:
+        detail = str(error).casefold()
+        warning_kind = (
+            "span-limit-exceeded"
+            if "span" in detail or "coverage" in detail or "supported limit" in detail
+            else "layout-invalid"
+        )
+        warning = f"{table_id}:cell-0:{warning_kind}"
+        if warnings_out is not None:
+            warnings_out.append(warning)
+        _logger.warning("[表格回填] %s：%s", warning, error)
+        return table_html, set()
+    layout = source_layout.model
+    all_cell_spans = [
+        (cell.content_start, cell.content_end)
+        for cell in source_layout.cells
+    ]
+    all_cell_texts = [cell.text.strip() for cell in layout.cells]
+    if not source_layout.cells:
+        return table_html, set()
+    if len(source_layout.cells) != len(layout.cells):
+        warning = f"{table_id}:cell-all:layout-cell-count-mismatch"
+        if warnings_out is not None:
+            warnings_out.append(warning)
+        _logger.warning(
+            "[表格回填] %s：无法从 cell_box_list 证明 HTML 逻辑网格映射",
+            warning,
+        )
         return table_html, set()
 
-    # 为每个单元格取候选框（按位置序号；越界则跳过该格）
+    logical_cells = [
+        (cell.row, cell.column, cell.rowspan, cell.colspan)
+        for cell in layout.cells
+    ]
+    logical_column_count = layout.column_count
+    logical_row_count = layout.row_count
+
+    # PaddleX 未承诺 cell_box_list 的序列顺序；先过滤退化框，再按可验证的
+    # 视觉坐标（上→下、左→右）排序后对应 HTML 的 row-major 单元格。
+    valid_boxes: list[
+        tuple[int, tuple[float, float, float, float]]
+    ] = []
+    for source_index, raw_box in enumerate(cell_box_list):
+        parsed = _parse_cell_box(raw_box)
+        if parsed is not None:
+            valid_boxes.append((source_index, parsed))
+    if len(valid_boxes) != len(layout.cells):
+        warning = f"{table_id}:cell-all:cell-box-count-mismatch"
+        if warnings_out is not None:
+            warnings_out.append(warning)
+        _logger.warning(
+            "[表格回填] %s：无法从 cell_box_list 证明 HTML 逻辑网格映射",
+            warning,
+        )
+        return table_html, set()
+
+    def cluster_boundaries(
+        values: list[float], expected_count: int
+    ) -> tuple[list[float], float] | None:
+        ordered = sorted(values)
+        if not ordered or expected_count < 2:
+            return None
+        grid_step = (ordered[-1] - ordered[0]) / (expected_count - 1)
+        tolerance = max(grid_step * 0.15, 1e-6)
+        clusters: list[list[float]] = []
+        for value in ordered:
+            if clusters and abs(value - sum(clusters[-1]) / len(clusters[-1])) <= tolerance:
+                clusters[-1].append(value)
+            else:
+                clusters.append([value])
+        if len(clusters) != expected_count:
+            return None
+        return ([sum(cluster) / len(cluster) for cluster in clusters], tolerance)
+
+    x_grid = cluster_boundaries(
+        [value for _, box in valid_boxes for value in (box[0], box[2])],
+        logical_column_count + 1,
+    )
+    y_grid = cluster_boundaries(
+        [value for _, box in valid_boxes for value in (box[1], box[3])],
+        logical_row_count + 1,
+    )
+    if x_grid is None or y_grid is None:
+        warning = f"{table_id}:cell-all:cell-mapping-unproven"
+        if warnings_out is not None:
+            warnings_out.append(warning)
+        _logger.warning(
+            "[表格回填] %s：无法从 cell_box_list 证明 HTML 逻辑网格映射",
+            warning,
+        )
+        return table_html, set()
+
+    x_boundaries, x_tolerance = x_grid
+    y_boundaries, y_tolerance = y_grid
+
+    def boundary_index(
+        value: float, boundaries: list[float], tolerance: float
+    ) -> int | None:
+        index = min(
+            range(len(boundaries)),
+            key=lambda candidate: abs(value - boundaries[candidate]),
+        )
+        return index if abs(value - boundaries[index]) <= tolerance else None
+
     candidate_boxes: dict[int, tuple[float, float, float, float]] = {}
-    for ci in range(len(all_cell_spans)):
-        if ci < len(cell_box_list):
-            box = cell_box_list[ci]
-            if hasattr(box, "tolist"):
-                box = box.tolist()
-            if (
-                isinstance(box, (list, tuple))
-                and len(box) >= 4
-                and all(isinstance(v, (int, float)) for v in box[:4])
-            ):
-                candidate_boxes[ci] = (
-                    float(box[0]),
-                    float(box[1]),
-                    float(box[2]),
-                    float(box[3]),
-                )
+    for source_index, box in valid_boxes:
+        boundary_span = (
+            boundary_index(box[1], y_boundaries, y_tolerance),
+            boundary_index(box[0], x_boundaries, x_tolerance),
+            boundary_index(box[3], y_boundaries, y_tolerance),
+            boundary_index(box[2], x_boundaries, x_tolerance),
+        )
+        if any(value is None for value in boundary_span):
+            continue
+        top, left, bottom, right = boundary_span
+        matches = [
+            cell_index
+            for cell_index, (row, column, rowspan, colspan) in enumerate(
+                logical_cells
+            )
+            if (top, left, bottom, right)
+            == (row, column, row + rowspan, column + colspan)
+        ]
+        if len(matches) != 1 or matches[0] in candidate_boxes:
+            warning = f"{table_id}:cell-{matches[0] if matches else 'unknown'}:mapping-ambiguous"
+            if warnings_out is not None:
+                warnings_out.append(warning)
+            _logger.warning(
+                "[表格回填] %s：cell_box 无法唯一映射", warning
+            )
+            continue
+        candidate_boxes[matches[0]] = box
+        if mapping_out is not None:
+            mapping_out[matches[0]] = (box, source_index)
 
     if not candidate_boxes:
+        return table_html, set()
+    if not ocr_items:
         return table_html, set()
 
     # 几何匹配：OCR 文本中心落在任意单元格框内 → 吸收进该格。
@@ -549,11 +803,21 @@ def _backfill_empty_table_cells(
         text = (item.get("text") or "").strip()
         if not text:
             continue
-        for ci, box in candidate_boxes.items():
-            if _point_in_box(cx, cy, box):
-                cell_to_text[ci].append(text)
-                consumed.add(i)
-                break  # 一个 OCR 项只吸收到一个单元格
+        matches = [
+            (ci, box)
+            for ci, box in candidate_boxes.items()
+            if _point_in_box(cx, cy, box)
+        ]
+        if matches:
+            ci, _ = min(
+                matches,
+                key=lambda pair: (
+                    (pair[1][2] - pair[1][0]) * (pair[1][3] - pair[1][1]),
+                    pair[0],
+                ),
+            )
+            cell_to_text[ci].append(text)
+            consumed.add(i)
 
     if not consumed:
         return table_html, set()

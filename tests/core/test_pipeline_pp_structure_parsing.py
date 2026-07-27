@@ -8,6 +8,7 @@ HTML 表格解析与结果构建纯逻辑。
 from __future__ import annotations
 
 import gc
+from types import SimpleNamespace
 
 import pytest
 
@@ -17,6 +18,7 @@ from vibeocr.core.pipelines.pipeline_pp_structure import (
     _consume_generator_safely,
     _extract_table_html,
     _html_table_to_markdown,
+    _recognize_pp_structure,
 )
 
 
@@ -135,3 +137,42 @@ class TestPPStructureV3Options:
         assert opts.use_formula_recognition is True
         assert opts.use_seal_recognition is False
         assert opts.use_chart_recognition is False
+
+
+def test_pp_structure_emits_canonical_table_and_keeps_content_index():
+    block = SimpleNamespace(
+        label="table",
+        bbox=[10, 20, 100, 80],
+        content=(
+            "<table><tr><td rowspan='2'>A</td><td>B</td></tr>"
+            "<tr><td>C</td></tr></table>"
+        ),
+        order_index=0,
+        image=None,
+    )
+
+    class Pipeline:
+        def predict(self, **_kwargs):
+            return [{"parsing_res_list": [block]}]
+
+    class Service:
+        def get_or_create_pipeline(self, _name):
+            return Pipeline()
+
+    result = _recognize_pp_structure(
+        Service(), image=None, options=PPStructureV3Options()
+    )
+
+    table_block = result.content_list[0]
+    assert table_block["table"]["table_id"] == table_block["block_id"]
+    assert (
+        table_block["table"]["provenance"]["provider_schema"]
+        == "paddlex-pp-structure-v3"
+    )
+    assert result.text_blocks[0].content_index == 0
+    assert result.text_blocks[0].content_id == table_block["block_id"]
+    assert result.text_blocks[0].order == 0
+    assert result.text_blocks[0].text == "A\tB\nC"
+    assert result.text_with_scores[0] == ("A\tB\nC", 0.9)
+    assert result.raw_text == "A\tB\nC"
+    assert 'rowspan="2"' in result.html_text
