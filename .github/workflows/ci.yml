@@ -93,12 +93,7 @@ jobs:
           )
           python -m pytest tests/core tests/managers tests/migration tests/models tests/release_layout/test_pyside_frozen_startup.py tests/release_layout/test_pyside_stdio.py tests/ui tests/utils tests/workers @rootTests -q
       - run: pip install build==1.3.0 hatchling==1.27.0
-      - run: python -m build --wheel packages/vibeocr-contracts-py --outdir dist/wheels
-      - run: python -m build --wheel packages/vibeocr-client-py --outdir dist/wheels
-      - run: python -m build --wheel packages/vibeocr-backend --outdir dist/wheels
-      - run: python -m build --wheel apps/vibeocr-pyside --outdir dist/wheels
-      - run: python -m build --wheel . --outdir dist/wheels
-      - run: python scripts/verify_workspace_wheels.py dist/wheels
+      - uses: ./.github/actions/build-workspace-wheels
       - name: Install root meta wheel in a clean environment
         shell: pwsh
         run: |
