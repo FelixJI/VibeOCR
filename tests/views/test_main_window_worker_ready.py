@@ -41,6 +41,19 @@ def test_supervisor_ready_is_not_reported_as_startup_failure() -> None:
     window._record_supervisor_ready.assert_called_once_with()
 
 
+def test_t6_smoke_starts_supervisor_without_ocr_dependency_probe() -> None:
+    window = _ReadyWindow()
+    window._runtime_gpu_capability = None
+    window._ocr_ready = False
+    window._start_supervisor = MagicMock()
+
+    MainWindow._start_supervisor_self_test(window)
+
+    assert window._runtime_gpu_capability is False
+    assert window._ocr_ready is True
+    window._start_supervisor.assert_called_once_with()
+
+
 def test_subprocess_progress_names_process_and_handshake_stage() -> None:
     window = _ReadyWindow()
 
@@ -65,6 +78,24 @@ def test_supervisor_failure_does_not_blame_model_download() -> None:
     message = warning.call_args.args[2]
     assert "就绪握手" in message
     assert "通常不是模型下载问题" in message
+
+
+def test_t6_supervisor_failure_exits_instead_of_opening_modal(
+    monkeypatch,
+) -> None:
+    window = _ReadyWindow()
+    monkeypatch.setenv("VIBEOCR_SELF_TEST_SMOKE", "t6")
+
+    with (
+        patch("vibeocr.views.main_window.QMessageBox.warning") as warning,
+        patch("vibeocr.startup_metrics.flush_startup") as flush,
+        patch("vibeocr.views.main_window.os._exit") as exit_process,
+    ):
+        window._on_supervisor_ready(False)
+
+    flush.assert_called_once_with()
+    exit_process.assert_called_once_with(1)
+    warning.assert_not_called()
 
 
 def test_background_preload_status_does_not_override_active_recognition() -> None:

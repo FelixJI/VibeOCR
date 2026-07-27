@@ -88,6 +88,17 @@ def _finish_t3_smoke(app) -> None:
     os._exit(0)
 
 
+def _startup_lock_names() -> tuple[str, str | None]:
+    """Return stable production locks or process-unique T6 smoke locks."""
+    if os.environ.get("VIBEOCR_SELF_TEST_SMOKE") == "t6":
+        process_id = os.getpid()
+        return (
+            f"VibeOCR-SelfTest-{process_id}",
+            rf"Local\VibeOCR.Frontend.Exclusive.SelfTest.{process_id}",
+        )
+    return "VibeOCR", None
+
+
 def check_production_dependencies() -> bool:
     """检查生产环境依赖
 
@@ -505,7 +516,8 @@ def launch_application() -> int:
     # socket 名固定为 "VibeOCR"（不绑版本），保证升级后新旧版本互认同一应用。
     from vibeocr.utils.single_instance import SingleInstanceGuard
 
-    guard = SingleInstanceGuard("VibeOCR")
+    single_instance_name, exclusive_mutex_name = _startup_lock_names()
+    guard = SingleInstanceGuard(single_instance_name)
     if not guard.try_lock():
         # 已有实例在运行，本实例静默退出。
         return 0
@@ -515,7 +527,11 @@ def launch_application() -> int:
     # 不启动第二个 WorkerHost。Mutex 由 OS 在前端崩溃时自动释放（ADR §6）。
     from vibeocr.utils.frontend_exclusive_lock import FrontendExclusiveLock
 
-    exclusive_lock = FrontendExclusiveLock()
+    exclusive_lock = (
+        FrontendExclusiveLock(name=exclusive_mutex_name)
+        if exclusive_mutex_name is not None
+        else FrontendExclusiveLock()
+    )
     if not exclusive_lock.try_acquire():
         _show_another_product_running_dialog()
         return 1

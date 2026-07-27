@@ -162,15 +162,26 @@ class MainWindow(QMainWindow):
         # 设置 OCRService 状态回调（用于显示模型下载进度）
         self._setup_ocr_status_callback()
 
-        # 启动时立即读取缓存，如果有有效缓存则直接更新状态
-        self._try_load_cache()
-        # 异步检查嵌入式依赖（在UI显示后）
-        QTimer.singleShot(100, self._check_embedded_dependencies)
-        # GPU 探测由设置页 worker 在后台完成，结果通过
-        # gpu_capability_callback 回传并广播给所有选项组件。
-        # 后台校验 OCR_CHECK_MODULES 与 pyproject.toml 一致性（仅开发期告警，
-        # 防止新增 OCR 依赖时漏更新清单/漏 bump CACHE_VERSION）。延迟 2s 避免抢启动资源。
-        QTimer.singleShot(2000, self._check_dep_check_consistency)
+        if os.environ.get("VIBEOCR_SELF_TEST_SMOKE") == "t6":
+            # 发布包门只验证冻结入口 -> Supervisor ready 的真实链路。
+            # OCR/Paddle/模型环境由独立安装流程覆盖，不能让其拖慢或掩盖此门。
+            QTimer.singleShot(0, self._start_supervisor_self_test)
+        else:
+            # 启动时立即读取缓存，如果有有效缓存则直接更新状态
+            self._try_load_cache()
+            # 异步检查嵌入式依赖（在UI显示后）
+            QTimer.singleShot(100, self._check_embedded_dependencies)
+            # GPU 探测由设置页 worker 在后台完成，结果通过
+            # gpu_capability_callback 回传并广播给所有选项组件。
+            # 后台校验 OCR_CHECK_MODULES 与 pyproject.toml 一致性（仅开发期告警，
+            # 防止新增 OCR 依赖时漏更新清单/漏 bump CACHE_VERSION）。延迟 2s 避免抢启动资源。
+            QTimer.singleShot(2000, self._check_dep_check_consistency)
+
+    def _start_supervisor_self_test(self) -> None:
+        """在发布包门中跳过 OCR 环境探测，直接验证 Supervisor 握手。"""
+        self._runtime_gpu_capability = False
+        self._ocr_ready = True
+        self._start_supervisor()
 
     @Slot(bool)
     def _apply_gpu_gating_to_all(self, has_gpu: bool) -> None:
@@ -1236,6 +1247,12 @@ class MainWindow(QMainWindow):
             self._statusbar.set_residency("不可用")
             self._statusbar.set_result("OCR 暂不可用")
             self._statusbar.clearMessage()
+            if os.environ.get("VIBEOCR_SELF_TEST_SMOKE") == "t6":
+                from vibeocr.startup_metrics import flush_startup
+
+                flush_startup()
+                os._exit(1)
+                return
             # 显示错误提示
             QMessageBox.warning(
                 self,

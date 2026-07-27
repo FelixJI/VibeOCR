@@ -48,3 +48,22 @@ def test_finish_t3_smoke_flushes_before_immediate_exit(monkeypatch) -> None:
     main_module._finish_t3_smoke(_FakeApp())
 
     assert events == ["paint", "flush", ("exit", 0)]
+
+
+def test_t6_smoke_uses_process_unique_startup_locks(monkeypatch) -> None:
+    monkeypatch.setenv("VIBEOCR_SELF_TEST_SMOKE", "t6")
+    monkeypatch.setattr(main_module.os, "getpid", lambda: 4321)
+
+    single_instance, exclusive_mutex = main_module._startup_lock_names()
+
+    assert single_instance == "VibeOCR-SelfTest-4321"
+    assert exclusive_mutex == r"Local\VibeOCR.Frontend.Exclusive.SelfTest.4321"
+
+
+def test_production_uses_stable_startup_locks(monkeypatch) -> None:
+    monkeypatch.delenv("VIBEOCR_SELF_TEST_SMOKE", raising=False)
+
+    single_instance, exclusive_mutex = main_module._startup_lock_names()
+
+    assert single_instance == "VibeOCR"
+    assert exclusive_mutex is None

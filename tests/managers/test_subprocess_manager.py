@@ -68,6 +68,38 @@ def test_start_creates_one_background_task(manager: SubprocessManager) -> None:
     manager._thread_pool.start.assert_called_once_with(manager._start_task)
 
 
+def test_t6_smoke_uses_explicit_test_python(
+    manager: SubprocessManager, monkeypatch, tmp_path
+) -> None:
+    test_python = tmp_path / "release-python.exe"
+    monkeypatch.setenv("VIBEOCR_SELF_TEST_SMOKE", "t6")
+    monkeypatch.setenv("VIBEOCR_SELF_TEST_PYTHON", str(test_python))
+    manager._thread_pool.start = Mock()
+
+    manager.start_supervisor()
+
+    assert manager._start_task._python_exe == str(test_python)
+
+
+def test_production_start_ignores_test_python_override(
+    manager: SubprocessManager, monkeypatch, tmp_path
+) -> None:
+    embedded_python = tmp_path / "python" / "python.exe"
+    monkeypatch.delenv("VIBEOCR_SELF_TEST_SMOKE", raising=False)
+    monkeypatch.setenv(
+        "VIBEOCR_SELF_TEST_PYTHON", str(tmp_path / "untrusted-python.exe")
+    )
+    monkeypatch.setattr(
+        "vibeocr.env_manager.get_embedded_python_executable",
+        lambda _project_root: embedded_python,
+    )
+    manager._thread_pool.start = Mock()
+
+    manager.start_supervisor()
+
+    assert manager._start_task._python_exe == str(embedded_python)
+
+
 def test_start_is_idempotent_when_ready_or_starting(
     manager: SubprocessManager,
 ) -> None:

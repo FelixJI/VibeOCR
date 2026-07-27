@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 
@@ -24,9 +24,6 @@ from vibeocr.supervisor.bootstrap import (
 )
 from vibeocr.supervisor.jobs.registry import JobRegistry
 from vibeocr.supervisor.jobs.retention import RetentionPolicy
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 INSTANCE = "sup-test"
 
@@ -175,6 +172,43 @@ def test_supervisor_uvicorn_config_disables_access_log() -> None:
     assert config is not None
     assert captured["app"] is app
     assert captured["access_log"] is False
+
+
+def test_t6_self_test_result_records_actual_supervisor_source(
+    monkeypatch, tmp_path: Path
+) -> None:
+    import sys
+
+    import vibeocr.supervisor.main as main_module
+
+    result = tmp_path / "supervisor-result.json"
+    monkeypatch.setenv("VIBEOCR_SELF_TEST_SMOKE", "t6")
+    monkeypatch.setenv("VIBEOCR_SELF_TEST_RESULT", str(result))
+
+    main_module._write_self_test_result()
+
+    evidence = json.loads(result.read_text(encoding="utf-8"))
+    assert evidence["supervisor_ready"] is True
+    assert (
+        Path(evidence["module_file"]).resolve() == Path(main_module.__file__).resolve()
+    )
+    assert (
+        Path(evidence["python_executable"]).resolve() == Path(sys.executable).resolve()
+    )
+
+
+def test_production_supervisor_does_not_write_self_test_result(
+    monkeypatch, tmp_path: Path
+) -> None:
+    import vibeocr.supervisor.main as main_module
+
+    result = tmp_path / "supervisor-result.json"
+    monkeypatch.delenv("VIBEOCR_SELF_TEST_SMOKE", raising=False)
+    monkeypatch.setenv("VIBEOCR_SELF_TEST_RESULT", str(result))
+
+    main_module._write_self_test_result()
+
+    assert not result.exists()
 
 
 # ---------------------------------------------------------------------------

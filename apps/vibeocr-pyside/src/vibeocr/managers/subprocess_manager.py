@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
 from typing import TYPE_CHECKING, Any
 
@@ -114,7 +115,11 @@ class SubprocessManager(QObject):
             return
 
         self._shutdown_requested = False
-        python_exe = env_manager.get_embedded_python_executable(self._project_root)
+        test_python = os.environ.get("VIBEOCR_SELF_TEST_PYTHON")
+        if os.environ.get("VIBEOCR_SELF_TEST_SMOKE") == "t6" and test_python:
+            python_exe = test_python
+        else:
+            python_exe = env_manager.get_embedded_python_executable(self._project_root)
         task = SupervisorStartTask(python_exe)
         self._start_task = task
         task.signals.started.connect(self._on_started)

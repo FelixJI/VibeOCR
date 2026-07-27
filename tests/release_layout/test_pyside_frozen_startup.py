@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -20,11 +21,17 @@ def _load_verifier():
     return module
 
 
-def test_frozen_startup_smoke_requires_t3(monkeypatch, tmp_path: Path) -> None:
+def test_frozen_startup_smoke_requires_t6_in_isolated_environment(
+    monkeypatch, tmp_path: Path
+) -> None:
     verifier = _load_verifier()
     exe = tmp_path / "VibeOCR.exe"
     exe.write_bytes(b"MZ")
     captured = {}
+    monkeypatch.setenv("PYTHONPATH", r"C:\workspace\apps\vibeocr-pyside\src")
+    monkeypatch.setenv("PYTHONHOME", r"C:\workspace\.python")
+    monkeypatch.setenv("VIRTUAL_ENV", r"C:\workspace\.venv")
+    monkeypatch.setenv("VIBEOCR_REPOSITORY_ROOT", r"C:\workspace")
 
     def fake_run(command, **kwargs):
         captured["command"] = command
@@ -33,7 +40,32 @@ def test_frozen_startup_smoke_requires_t3(monkeypatch, tmp_path: Path) -> None:
         captured["stderr"] = kwargs["stderr"]
         trace = Path(kwargs["env"]["VIBEOCR_STARTUP_TRACE"])
         trace.write_text(
-            json.dumps({"T0": 0.0, "T1": 0.1, "T2": 0.2, "T3": 0.3}) + "\n",
+            json.dumps(
+                {
+                    "T0": 0.0,
+                    "T1": 0.1,
+                    "T2": 0.2,
+                    "T3": 0.3,
+                    "T4": 0.4,
+                    "T5": 0.5,
+                    "T6": 0.6,
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        module_file = tmp_path / "_internal" / "vibeocr" / "supervisor" / "main.py"
+        module_file.parent.mkdir(parents=True)
+        module_file.write_text("# bundled supervisor\n", encoding="utf-8")
+        result = Path(kwargs["env"]["VIBEOCR_SELF_TEST_RESULT"])
+        result.write_text(
+            json.dumps(
+                {
+                    "supervisor_ready": True,
+                    "module_file": str(module_file),
+                    "python_executable": kwargs["env"]["VIBEOCR_SELF_TEST_PYTHON"],
+                }
+            ),
             encoding="utf-8",
         )
         return SimpleNamespace(returncode=0, stderr="")
@@ -43,15 +75,73 @@ def test_frozen_startup_smoke_requires_t3(monkeypatch, tmp_path: Path) -> None:
     verifier._verify_frozen_startup(tmp_path)
 
     assert captured["command"] == [str(exe)]
-    assert captured["env"]["VIBEOCR_SELF_TEST_SMOKE"] == "t3"
+    assert captured["env"]["VIBEOCR_SELF_TEST_SMOKE"] == "t6"
     assert captured["env"]["QT_QPA_PLATFORM"] == "offscreen"
     assert captured["env"]["PYTHONIOENCODING"] == "utf-8"
     assert captured["env"]["PYTHONUTF8"] == "1"
+    assert captured["env"]["VIBEOCR_SELF_TEST_PYTHON"] == sys.executable
+    assert "PYTHONPATH" not in captured["env"]
+    assert "PYTHONHOME" not in captured["env"]
+    assert "VIRTUAL_ENV" not in captured["env"]
+    assert "VIBEOCR_REPOSITORY_ROOT" not in captured["env"]
     assert captured["stdout"] is not verifier.subprocess.PIPE
     assert captured["stderr"] is not verifier.subprocess.PIPE
     assert not (tmp_path / ".startup-smoke.jsonl").exists()
     assert not (tmp_path / ".startup-smoke.stdout.log").exists()
     assert not (tmp_path / ".startup-smoke.stderr.log").exists()
+    assert not (tmp_path / ".startup-smoke-result.json").exists()
+
+
+def test_frozen_startup_smoke_rejects_trace_that_stops_at_t3(
+    monkeypatch, tmp_path: Path
+) -> None:
+    verifier = _load_verifier()
+    (tmp_path / "VibeOCR.exe").write_bytes(b"MZ")
+
+    def fake_run(*args, **kwargs):
+        trace = Path(kwargs["env"]["VIBEOCR_STARTUP_TRACE"])
+        trace.write_text(
+            json.dumps({"T0": 0.0, "T1": 0.1, "T2": 0.2, "T3": 0.3}) + "\n",
+            encoding="utf-8",
+        )
+        return SimpleNamespace(returncode=0, stderr="")
+
+    monkeypatch.setattr(verifier.subprocess, "run", fake_run)
+
+    with pytest.raises(RuntimeError, match="did not reach T6"):
+        verifier._verify_frozen_startup(tmp_path)
+
+
+def test_frozen_startup_smoke_rejects_supervisor_loaded_outside_artifact(
+    monkeypatch, tmp_path: Path
+) -> None:
+    verifier = _load_verifier()
+    (tmp_path / "VibeOCR.exe").write_bytes(b"MZ")
+
+    def fake_run(*args, **kwargs):
+        trace = Path(kwargs["env"]["VIBEOCR_STARTUP_TRACE"])
+        trace.write_text(
+            json.dumps({f"T{index}": index / 10 for index in range(7)}) + "\n",
+            encoding="utf-8",
+        )
+        result = Path(kwargs["env"]["VIBEOCR_SELF_TEST_RESULT"])
+        result.write_text(
+            json.dumps(
+                {
+                    "supervisor_ready": True,
+                    "module_file": r"C:\workspace\packages\vibeocr-backend"
+                    r"\src\vibeocr\supervisor\main.py",
+                    "python_executable": sys.executable,
+                }
+            ),
+            encoding="utf-8",
+        )
+        return SimpleNamespace(returncode=0, stderr="")
+
+    monkeypatch.setattr(verifier.subprocess, "run", fake_run)
+
+    with pytest.raises(RuntimeError, match="outside extracted artifact"):
+        verifier._verify_frozen_startup(tmp_path)
 
 
 def test_frozen_startup_smoke_rejects_missing_trace(

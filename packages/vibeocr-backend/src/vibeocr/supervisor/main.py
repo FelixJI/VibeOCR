@@ -18,6 +18,7 @@ Usage from a parent process (PySide/WinUI):
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import threading
@@ -34,6 +35,25 @@ from .bootstrap import (
     token_from_environment,
 )
 from .composition import build_supervisor
+
+
+def _write_self_test_result() -> None:
+    """Persist child-process source evidence for the frozen T6 release gate."""
+    if os.environ.get("VIBEOCR_SELF_TEST_SMOKE") != "t6":
+        return
+    target = os.environ.get("VIBEOCR_SELF_TEST_RESULT")
+    if not target:
+        return
+    Path(target).write_text(
+        json.dumps(
+            {
+                "supervisor_ready": True,
+                "module_file": str(Path(__file__).resolve()),
+                "python_executable": str(Path(sys.executable).resolve()),
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 def _build_uvicorn_config(
@@ -84,6 +104,7 @@ def run_supervisor(argv: list[str] | None = None) -> int:
         schema_version=2,
         capabilities=["recognition", "pdf_ocr", "mineru_parse", "qrcode", "settings"],
     )
+    _write_self_test_result()
     emit_ready(envelope)
     _schedule_soak_crash_after_ready()
 
@@ -137,7 +158,9 @@ def _schedule_soak_crash_after_ready() -> None:
     ).start()
 
 
-async def _serve_with_socket(server, sock, app, token) -> None:  # pragma: no cover - integration
+async def _serve_with_socket(
+    server, sock, app, token
+) -> None:  # pragma: no cover - integration
     """Serve using the pre-bound socket. Kept thin for testability."""
     config = server.config
     # uvicorn supports passing a configured socket via Server.startup via
