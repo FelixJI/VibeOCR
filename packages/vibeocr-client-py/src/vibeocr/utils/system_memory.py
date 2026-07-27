@@ -71,16 +71,16 @@ def _read_windows() -> int | None:
 
 def _read_linux() -> int | None:
     """Linux: 读取 /proc/meminfo 的 MemAvailable（kB）。"""
-    try:
+    try:  # pragma: no cover - Linux-only path, not exercisable on Windows CI
         with open("/proc/meminfo", encoding="utf-8") as f:
             for line in f:
                 if line.startswith("MemAvailable:"):
                     # 行格式: "MemAvailable:  12345678 kB"
                     parts = line.split()
                     return int(parts[1]) // 1024
-    except (OSError, ValueError, IndexError):
+    except (OSError, ValueError, IndexError):  # pragma: no cover - Linux-only
         return None
-    return None
+    return None  # pragma: no cover - Linux-only
 
 
 #: CPU 模式每页峰值放大系数（oneDNN 工作区 + 多线程缓冲，比 GPU 大）。
@@ -107,7 +107,7 @@ def estimate_cpu_batch_size(free_mb: int, avg_pixels: int) -> int:
     if free_mb <= 0 or avg_pixels <= 0:
         return 1
     per_page_peak_mb = (avg_pixels * 3 * CPU_AMP_FACTOR) / (1024 * 1024)
-    if per_page_peak_mb <= 0:
+    if per_page_peak_mb <= 0:  # pragma: no cover - avg_pixels>0 guarded above
         return 1
     usable_mb = free_mb * CPU_SAFETY_FACTOR
     batch = int(usable_mb / per_page_peak_mb)

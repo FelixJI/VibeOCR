@@ -49,3 +49,70 @@ def test_estimate_cpu_batch_size_zero_inputs_returns_1():
     """零或负输入兜底返回 1。"""
     assert estimate_cpu_batch_size(free_mb=0, avg_pixels=8_700_000) == 1
     assert estimate_cpu_batch_size(free_mb=4096, avg_pixels=0) == 1
+
+
+def test_get_available_ram_mb_falls_back_on_exception(monkeypatch):
+    """_read_available_ram 抛异常时回退到 FALLBACK_RAM_MB（line 32-36）。"""
+    import vibeocr.utils.system_memory as sm
+
+    def _raise():
+        raise OSError("denied")
+
+    monkeypatch.setattr(sm, "_read_available_ram", _raise)
+    assert sm.get_available_ram_mb() == FALLBACK_RAM_MB
+
+
+def test_read_available_ram_returns_none_on_unsupported_platform(monkeypatch):
+    """非 win/linux 平台返回 None（line 43-45）。"""
+    import vibeocr.utils.system_memory as sm
+
+    monkeypatch.setattr(sm.sys, "platform", "darwin")
+    assert sm._read_available_ram() is None
+
+
+def test_read_windows_returns_none_when_status_call_fails(monkeypatch):
+    """GlobalMemoryStatusEx 返回 0（失败）时 _read_windows 返回 None（line 68）。"""
+    import vibeocr.utils.system_memory as sm
+
+    class _FakeKernel32:
+        def GlobalMemoryStatusEx(self, _ref):
+            return 0  # 失败
+
+    monkeypatch.setattr(sm.sys, "platform", "win32")
+    # ctypes.windll.kernel32 在测试中替换
+    import ctypes
+
+    class _FakeWindll:
+        kernel32 = _FakeKernel32()
+
+    monkeypatch.setattr(ctypes, "windll", _FakeWindll(), raising=False)
+    assert sm._read_windows() is None
+
+
+def test_read_available_ram_dispatches_to_linux_on_linux(monkeypatch):
+    """sys.platform=linux 时调用 _read_linux 分支（line 44）。"""
+    import vibeocr.utils.system_memory as sm
+
+    monkeypatch.setattr(sm.sys, "platform", "linux")
+    # /proc/meminfo 不存在（Windows 测试主机）→ 返回 None，但分发路径被覆盖
+    result = sm._read_available_ram()
+    assert result is None
+
+
+def test_get_available_ram_mb_falls_back_when_read_returns_none(monkeypatch):
+    """_read_available_ram 返回 None/0 时回退（line 30->36 falsy 分支）。"""
+    import vibeocr.utils.system_memory as sm
+
+    monkeypatch.setattr(sm, "_read_available_ram", lambda: None)
+    assert sm.get_available_ram_mb() == FALLBACK_RAM_MB
+
+    monkeypatch.setattr(sm, "_read_available_ram", lambda: 0)
+    assert sm.get_available_ram_mb() == FALLBACK_RAM_MB
+
+
+def test_estimate_cpu_batch_size_dead_branch_returns_1():
+    """per_page_peak_mb<=0 在 avg_pixels>0 下不可达，但仍验证夹紧（line 110-111）。"""
+    from vibeocr.utils.system_memory import estimate_cpu_batch_size
+
+    # 极大像素也不会出错
+    assert estimate_cpu_batch_size(4096, 10**12) == 1

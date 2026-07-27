@@ -92,3 +92,69 @@ class TestMimeMap:
         assert is_document_file("photo.png") is False
         assert is_document_file("image.jpg") is False
         assert is_document_file("screenshot.BMP") is False
+
+
+class TestGuessMimeFromBytes:
+    """guess_mime_from_bytes 魔数识别（无文件名时按内容路由）。"""
+
+    from vibeocr.utils.mime_types import guess_mime_from_bytes
+
+    def test_png_magic(self):
+        from vibeocr.utils.mime_types import guess_mime_from_bytes
+
+        assert guess_mime_from_bytes(b"\x89PNG\r\n\x1a\n" + b"rest") == "image/png"
+
+    def test_pdf_magic(self):
+        from vibeocr.utils.mime_types import guess_mime_from_bytes
+
+        assert guess_mime_from_bytes(b"%PDF-1.7...") == "application/pdf"
+
+    def test_jpeg_magic(self):
+        from vibeocr.utils.mime_types import guess_mime_from_bytes
+
+        assert guess_mime_from_bytes(b"\xff\xd8\xff\xe0rest") == "image/jpeg"
+
+    def test_gif_87a_magic(self):
+        from vibeocr.utils.mime_types import guess_mime_from_bytes
+
+        assert guess_mime_from_bytes(b"GIF87a" + b"data") == "image/gif"
+
+    def test_gif_89a_magic(self):
+        from vibeocr.utils.mime_types import guess_mime_from_bytes
+
+        assert guess_mime_from_bytes(b"GIF89a" + b"data") == "image/gif"
+
+    def test_bmp_magic(self):
+        from vibeocr.utils.mime_types import guess_mime_from_bytes
+
+        assert guess_mime_from_bytes(b"BM" + b"\x00" * 10) == "image/bmp"
+
+    def test_tiff_little_endian_magic(self):
+        from vibeocr.utils.mime_types import guess_mime_from_bytes
+
+        assert guess_mime_from_bytes(b"II*\x00rest") == "image/tiff"
+
+    def test_tiff_big_endian_magic(self):
+        from vibeocr.utils.mime_types import guess_mime_from_bytes
+
+        assert guess_mime_from_bytes(b"MM\x00*rest") == "image/tiff"
+
+    def test_webp_magic(self):
+        from vibeocr.utils.mime_types import guess_mime_from_bytes
+
+        assert (
+            guess_mime_from_bytes(b"RIFF" + b"\x00" * 4 + b"WEBP" + b"vp8")
+            == "image/webp"
+        )
+
+    def test_zip_container_treated_as_pdf(self):
+        from vibeocr.utils.mime_types import guess_mime_from_bytes
+
+        # DOCX/PPTX/XLSX 都是 ZIP 容器，统一归到 application/pdf（走文档解析）
+        assert guess_mime_from_bytes(b"PK\x03\x04" + b"\x00" * 20) == "application/pdf"
+
+    def test_unknown_falls_back_to_pdf(self):
+        from vibeocr.utils.mime_types import guess_mime_from_bytes
+
+        assert guess_mime_from_bytes(b"\x00\x01\x02random") == "application/pdf"
+        assert guess_mime_from_bytes(b"") == "application/pdf"
