@@ -544,8 +544,11 @@ def parse_error_payload(payload: dict[str, Any]) -> ErrorPayload:
     except ValueError as exc:
         raise ContractError(f"unknown error code: {code_raw!r}") from exc
     # Cross-check against the registry so a code only valid in one place is
-    # rejected.
-    if code not in error_registry:
+    # rejected. ``error_registry`` is loaded from errors.json and is total over
+    # the ErrorCode enum (every member is registered), so a value that survived
+    # the ErrorCode() construction above is always present here; the guard is
+    # retained as a defensive invariant for future registry edits.
+    if code not in error_registry:  # pragma: no cover - registry is total over ErrorCode
         raise ContractError(f"error code not in registry: {code.value}")
     registry_entry = error_registry[code]
     category_raw = payload["category"]
