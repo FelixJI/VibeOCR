@@ -435,13 +435,14 @@ class TestDownloadZipWithShaCancelAfterSha:
             _download_zip_with_sha(
                 client,
                 "http://x/zip",
-                zip_path,
                 "http://x/sha",
+                zip_path,
                 sha_path,
+                None,  # progress_callback
                 cancel_event=cancel,
             )
         )
-        assert attempt.success is False
+        assert attempt.ok is False
         assert attempt.reason == DOWNLOAD_REASON_CANCELLED
 
 
@@ -488,3 +489,69 @@ class TestUpdateInfoFromRelease:
         assert info.download_url == ""
         assert info.sha256_url == ""
         assert info.file_size == 0
+
+
+# ---------------------------------------------------------------------------
+# _find_asset_size: no matching name after _find_asset returns empty
+# ---------------------------------------------------------------------------
+
+
+class TestFindAssetSizeNoMatch:
+    def test_returns_zero_when_no_asset_found(self):
+        """_find_asset 返回空 name 时 _find_asset_size → 0（line 198-199 → 203）。"""
+        from vibeocr.services.update_service import _find_asset_size
+
+        # 无任何 .zip asset → _find_asset 返回 ("", "") → size 查询返回 0
+        release = {
+            "assets": [
+                {"name": "readme.txt", "size": 50},
+            ]
+        }
+        assert _find_asset_size(release, ".zip") == 0
+
+
+# ---------------------------------------------------------------------------
+# download_update: cache cleanup OSError (line 561-565)
+# ---------------------------------------------------------------------------
+
+
+class TestDownloadUpdateCacheCleanup:
+    def test_old_file_unlink_oserror_is_swallowed(self, tmp_path):
+        """残留文件 unlink 抛 OSError 时被吞掉（line 561-565）。
+
+        用 cancel_event 在下载开始前立即取消，避免真实网络请求；
+        清理循环在取消检查前已执行，覆盖 unlink OSError 分支。
+        """
+        import threading
+
+        from vibeocr.services.update_service import UpdateInfo, download_update
+
+        cache_dir = tmp_path / "cache"
+        cache_dir.mkdir()
+        stale = cache_dir / "old.zip"
+        stale.write_bytes(b"old")
+
+        info = UpdateInfo(
+            version="1.0",
+            download_url="http://x/zip",
+            sha256_url="http://x/sha",
+            changelog="",
+            zip_filename="VibeOCR-v1.0-win64.zip",
+            sha256_filename="VibeOCR-v1.0-win64.zip.sha256",
+        )
+
+        # 预先 set cancel，让 download_update 在发起网络前就返回 cancelled。
+        cancel = threading.Event()
+        cancel.set()
+
+        # unlink 抛 OSError（被清理循环吞掉）
+        with patch.object(Path, "unlink", side_effect=OSError("denied")):
+            zip_path, reasons = _run(
+                download_update(
+                    info,
+                    cache_dir=cache_dir,
+                    cancel_event=cancel,
+                )
+            )
+        # 取消 → 返回 None
+        assert zip_path is None
