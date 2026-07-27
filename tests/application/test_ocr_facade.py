@@ -45,6 +45,20 @@ class _FakeOcrAdapter:
             raise self._raise
         return OcrResult(text=self._result_text, raw_blocks=[], pipeline=request.pipeline)
 
+    def recognize_batch(
+        self, requests: list[OcrRequest], cancel: CancelToken
+    ) -> list[OcrResult | None]:
+        self.last_cancel = cancel
+        self.call_count += 1
+        if self._check_cancel and cancel is not None and cancel.is_cancelled:
+            raise OcrError("cancelled")
+        if self._raise is not None:
+            raise self._raise
+        return [
+            OcrResult(text=self._result_text, raw_blocks=[], pipeline=r.pipeline)
+            for r in requests
+        ]
+
 
 class TestOcrRequest:
     def test_ocr_request_is_frozen(self):
@@ -132,3 +146,53 @@ class TestOcrFacade:
 
         result = facade.recognize(req, None)  # type: ignore[arg-type]
         assert result.text == "fake OCR text"
+
+
+class TestOcrFacadeBatch:
+    """recognize_batch 各分支：cancel-pre-check、空请求、OcrError 透传、generic 包装。"""
+
+    def _req(self):
+        return OcrRequest(image_data=b"png", pipeline="OCR")
+
+    def test_batch_empty_requests_returns_empty_list(self):
+        """空请求列表直接返回 []，不调用 adapter（line 79-80）。"""
+        adapter = _FakeOcrAdapter()
+        facade = OcrFacade(adapter)
+        assert facade.recognize_batch([], CancelToken()) == []
+
+    def test_batch_passes_requests_and_cancel(self):
+        adapter = _FakeOcrAdapter()
+        facade = OcrFacade(adapter)
+        reqs = [self._req(), self._req()]
+        result = facade.recognize_batch(reqs, CancelToken())
+        assert len(result) == 2
+
+    def test_batch_respects_cancel(self):
+        """cancel 已取消时 raise（line 77-78）。"""
+        adapter = _FakeOcrAdapter()
+        facade = OcrFacade(adapter)
+        cancel = CancelToken()
+        cancel.cancel()
+        with pytest.raises(OcrError, match="cancel"):
+            facade.recognize_batch([self._req()], cancel)
+
+    def test_batch_without_cancel(self):
+        """cancel=None 时正常执行。"""
+        adapter = _FakeOcrAdapter(check_cancel=False)
+        facade = OcrFacade(adapter)
+        result = facade.recognize_batch([self._req()], None)
+        assert len(result) == 1
+
+    def test_batch_propagates_ocr_error(self):
+        """OcrError 直接透传（line 83-84）。"""
+        adapter = _FakeOcrAdapter(raise_exception=OcrError("backend"))
+        facade = OcrFacade(adapter)
+        with pytest.raises(OcrError, match="backend"):
+            facade.recognize_batch([self._req()], CancelToken())
+
+    def test_batch_wraps_generic_exception(self):
+        """非 OcrError 异常包装为 OcrError（line 85-86）。"""
+        adapter = _FakeOcrAdapter(raise_exception=RuntimeError("boom"))
+        facade = OcrFacade(adapter)
+        with pytest.raises(OcrError, match="batch"):
+            facade.recognize_batch([self._req()], CancelToken())

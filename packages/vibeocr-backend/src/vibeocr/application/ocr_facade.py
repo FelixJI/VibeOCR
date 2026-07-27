@@ -23,11 +23,13 @@ class OcrAdapter(Protocol):
     实现方可以是 OCRServiceSubprocess（生产）或 fake（测试）。
     """
 
-    def recognize(self, request: OcrRequest, cancel: CancelToken) -> OcrResult: ...
+    # Protocol 方法签名为 ``...`` body（无可执行分支）；coverage 的 ``->exit``
+    # partial 是插桩噪音，非真实未覆盖代码。
+    def recognize(self, request: OcrRequest, cancel: CancelToken) -> OcrResult: ...  # pragma: no cover
 
     def recognize_batch(
         self, requests: list[OcrRequest], cancel: CancelToken
-    ) -> list[OcrResult | None]: ...
+    ) -> list[OcrResult | None]: ...  # pragma: no cover
 
 
 class OcrFacade:
