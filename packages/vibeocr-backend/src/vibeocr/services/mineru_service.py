@@ -16,11 +16,13 @@ import subprocess
 import sys
 import threading
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from vibeocr.contracts.tables import TableProvenanceV1
 from vibeocr.core.constants import Constants
 from vibeocr.core.pipelines.pipeline_mineru import (
     MINERU_BACKEND_CHAIN,
@@ -35,9 +37,11 @@ from vibeocr.models.ocr_result import (
     normalize_bbox,
     normalize_content_list,
 )
+from vibeocr.tables.blocks import canonicalize_table_block, table_model_from_block
+from vibeocr.tables.projections import table_model_to_plain_text
+from vibeocr.tables.reducer import rebuild_result_projections
 from vibeocr.utils.http_log import guess_response_size, log_http_response
 from vibeocr.utils.job_object import JobObjectGuard
-from vibeocr.utils.markdown_converter import markdown_to_html
 from vibeocr.utils.mime_types import mime_to_extension
 
 if TYPE_CHECKING:
@@ -507,8 +511,140 @@ class MinerUService(metaclass=SingletonMeta):
             except (json.JSONDecodeError, TypeError):
                 content_list_parsed = []
 
+        table_sequence = 0
+        page_groups = (
+            content_list_parsed
+            if content_list_parsed and isinstance(content_list_parsed[0], list)
+            else [content_list_parsed]
+        )
+        for inferred_page_idx, page_blocks in enumerate(page_groups):
+            for block_index, block in enumerate(page_blocks):
+                if not isinstance(block, dict):
+                    continue
+                block.setdefault(
+                    "block_id",
+                    (
+                        f"mineru-{stem}-page-{inferred_page_idx}-"
+                        f"block-{block_index}"
+                    ),
+                )
+                if block.get("type") != "table":
+                    continue
+                content = block.get("content")
+                nested_html = ""
+                if isinstance(content, dict):
+                    nested_html = str(
+                        content.get("table_body")
+                        or content.get("table_html")
+                        or content.get("html")
+                        or ""
+                    )
+                if nested_html and not (
+                    block.get("table_body") or block.get("html")
+                ):
+                    block["table_body"] = nested_html
+                if not (
+                    isinstance(block.get("table"), dict)
+                    or block.get("table_body")
+                    or block.get("html")
+                ):
+                    block["source_type"] = "table"
+                    block["type"] = "table_unparsed"
+                    table_content = (
+                        content.get("table_content")
+                        if isinstance(content, dict)
+                        else None
+                    )
+                    block["text"] = " ".join(
+                        str(item.get("content") or "")
+                        for item in (
+                            table_content
+                            if isinstance(table_content, list)
+                            else []
+                        )
+                        if isinstance(item, dict)
+                        and item.get("content")
+                    )
+                    block["projection_warnings"] = [
+                        (
+                            f"{block['block_id']}:"
+                            "structured-table-unsupported"
+                        )
+                    ]
+                    continue
+                page_idx = block.get("page_idx", inferred_page_idx)
+                table_id = str(
+                    block.get("block_id")
+                    or block.get("table_id")
+                    or (
+                        f"mineru-{stem}-page-{page_idx}-"
+                        f"table-{table_sequence}"
+                    )
+                )
+                source_html = str(block.get("table_body") or block.get("html") or "")
+                canonical_input = dict(block)
+                if source_html and not re.search(
+                    r"<table\b", source_html, flags=re.IGNORECASE
+                ):
+                    canonical_input["table_body"] = f"<table>{source_html}</table>"
+                    source = dict(block.get("source") or {})
+                    source.setdefault("source_html", source_html)
+                    canonical_input["source"] = source
+                canonical_block = canonicalize_table_block(
+                    canonical_input,
+                    table_id=table_id,
+                    pipeline="MinerU",
+                )
+                table_model = table_model_from_block(canonical_block)
+                table_model = replace(
+                    table_model,
+                    provenance=TableProvenanceV1(
+                        pipeline="MinerU",
+                        provider_schema="mineru-content-list",
+                    ),
+                )
+                canonical_block["table"] = table_model.to_payload()
+                page_blocks[block_index] = canonical_block
+                table_sequence += 1
+
         # 通过正常化层统一格式
         normalized = normalize_content_list(content_list_parsed)
+        for normalized_block in normalized:
+            if normalized_block.get("type") != "table":
+                continue
+            raw_block = normalized_block.get("raw")
+            if isinstance(raw_block, dict) and isinstance(
+                raw_block.get("table"), dict
+            ):
+                table_model = table_model_from_block(raw_block)
+                normalized_block["text"] = table_model_to_plain_text(table_model)
+
+        flat_content_list: list[dict[str, Any]] = []
+        is_v2_content = bool(
+            content_list_parsed
+            and isinstance(content_list_parsed[0], list)
+        )
+        for normalized_block in normalized:
+            raw_block = normalized_block.get("raw")
+            if not isinstance(raw_block, dict):
+                continue
+            flat_block = dict(raw_block)
+            if is_v2_content:
+                # V2 使用 page_header/page_footer 等 provider 类型；投影层只识别
+                # 归一化后的 header/footer，因此扁平化时携带统一语义，避免页眉泄漏。
+                flat_block["type"] = normalized_block.get(
+                    "type", flat_block.get("type")
+                )
+                flat_block["text"] = normalized_block.get("text", "")
+            elif (
+                flat_block.get("type") == "text"
+                and isinstance(flat_block.get("text_level"), int)
+            ):
+                # MinerU legacy 标题以 text + text_level 表示。
+                flat_block["type"] = "title"
+                flat_block["level"] = flat_block["text_level"]
+            flat_block.setdefault("page_idx", normalized_block.get("page_idx"))
+            flat_content_list.append(flat_block)
 
         images: dict[str, bytes] = {}
         images_dict = file_result.get("images", {})
@@ -531,7 +667,7 @@ class MinerUService(metaclass=SingletonMeta):
             if block_type in DISCARDED_BLOCK_TYPES:
                 continue
             bbox = block.get("bbox")
-            if not bbox or len(bbox) < 4:
+            if (not bbox or len(bbox) < 4) and block_type != "table":
                 continue
             text = block.get("text", "")
             if not text:
@@ -541,9 +677,10 @@ class MinerUService(metaclass=SingletonMeta):
                 TextBlock(
                     text=text,
                     score=1.0,  # MineRU content_list 不提供 confidence
-                    bbox=normalize_bbox(bbox[:4]),
+                    bbox=normalize_bbox(bbox[:4]) if bbox else None,
                     page_idx=block.get("page_idx"),
                     content_index=i,
+                    content_id=(block.get("raw") or {}).get("block_id"),
                 )
             )
 
@@ -554,18 +691,20 @@ class MinerUService(metaclass=SingletonMeta):
             else 0.0
         )
 
-        return OCRResult(
+        result = OCRResult(
             raw_text=raw_text,
             markdown_text=md_content,
-            html_text=markdown_to_html(md_content),
+            html_text="",
             text_with_scores=text_with_scores,
             avg_score=avg_score,
             low_confidence_items=[],
             pipeline_type="MinerU",
             images=images,
-            content_list=content_list_parsed,  # 原始数据，未 normalize
+            content_list=flat_content_list,
             text_blocks=text_blocks,
         )
+        rebuild_result_projections(result)
+        return result
 
     @staticmethod
     def _strip_html(html: str) -> str:

@@ -12,6 +12,55 @@ env:
   PYTHONPATH: "${{ github.workspace }}/packages/vibeocr-contracts-py/src;${{ github.workspace }}/packages/vibeocr-client-py/src;${{ github.workspace }}/packages/vibeocr-backend/src;${{ github.workspace }}/apps/vibeocr-pyside/src"
 
 jobs:
+  table-contract:
+    runs-on: windows-latest
+    # Only checked-in synthetic fixtures; no network/model/GPU dependency.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with: { python-version: "3.13" }
+      - run: pip install --require-hashes -r requirements/build-shell.lock
+      - name: Run offline table semantic contract gate
+        shell: pwsh
+        run: ./scripts/run_table_contract_gate.ps1 -PythonPath python -ReportDir reports/table-contract
+      - name: Upload table contract diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: table-contract-diagnostics
+          path: |
+            reports/table-contract
+            tests/fixtures/table_contract
+          if-no-files-found: warn
+          retention-days: 14
+
+  table-regression:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with: { python-version: "3.13" }
+      - run: pip install --require-hashes -r requirements/build-shell.lock
+      - name: Run expanded table regression matrix
+        shell: pwsh
+        run: |
+          ./scripts/run_table_contract_gate.ps1 -PythonPath python -ReportDir reports/table-regression
+          # Table projection coverage is a focused ratchet: raise this threshold
+          # when tests improve; never lower it to make a regression green.
+          python -m pytest tests/contracts/test_table_contract.py tests/core/test_pipeline_table.py tests/core/test_pipeline_pp_structure_parsing.py tests/core/test_pipeline_paddlocr_vl.py tests/services/test_export_service.py tests/services/test_export_service_extra.py tests/services/test_mineru_service.py tests/supervisor/inference/test_ocr_result_serializer.py tests/supervisor/test_export_route_tables.py tests/utils/test_table_model_html.py tests/utils/test_table_model_reducer.py tests/views/tabs/test_base_tab.py tests/widgets/test_result_view_widget.py -q --cov=vibeocr.tables --cov-branch --cov-report=term-missing --cov-report=xml:reports/table-regression/coverage.xml --cov-fail-under=85 --junitxml=reports/table-regression/junit-expanded.xml
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upload table regression diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: table-regression-diagnostics
+          path: reports/table-regression
+          if-no-files-found: warn
+          retention-days: 14
+
   contracts:
     runs-on: windows-latest
     # 正常 ~1-2min；30min 是宽裕上限，防止偶发环境/依赖拉取卡死烧配额。

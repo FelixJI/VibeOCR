@@ -444,6 +444,106 @@ def test_large_text_edit_defers_aggregate_rebuild(qapp, qtbot, monkeypatch):
     assert html == raw
 
 
+def test_async_result_rebuild_uses_shared_mixed_content_projection(
+    qapp, qtbot, monkeypatch
+):
+    import threading
+
+    from vibeocr.contracts.tables import TableCellV1, TableModelV1
+    from vibeocr.models.ocr_result import OCRResult, TextBlock
+
+    table = TableModelV1(
+        table_id="mixed-table",
+        row_count=1,
+        column_count=2,
+        cells=(
+            TableCellV1(cell_id="left", row=0, column=0, text="A"),
+            TableCellV1(cell_id="right", row=0, column=1, text="B"),
+        ),
+    )
+    content_list = [
+        {
+            "type": "title",
+            "block_id": "title",
+            "text": "Document",
+            "text_level": 2,
+        },
+        {
+            "type": "table",
+            "block_id": "table",
+            "table": table.to_payload(),
+            "table_caption": ["Caption"],
+            "table_footnote": ["Footnote"],
+        },
+        {"type": "list", "block_id": "list", "list_items": ["one", "two"]},
+        {"type": "code", "block_id": "code", "code_body": "print(1)"},
+        {
+            "type": "image",
+            "block_id": "image",
+            "image_caption": ["Figure"],
+            "img_path": "figure.png",
+        },
+        {"type": "header", "block_id": "secret", "text": "SECRET"},
+    ]
+    result = OCRResult(
+        content_list=content_list,
+        text_blocks=[
+            TextBlock(
+                text="Document",
+                score=1.0,
+                bbox=None,
+                content_index=0,
+                content_id="title",
+            ),
+            TextBlock(
+                text="A\tB",
+                score=1.0,
+                bbox=None,
+                content_index=1,
+                content_id="table",
+            ),
+            TextBlock(
+                text="print(1)",
+                score=1.0,
+                bbox=None,
+                content_index=3,
+                content_id="code",
+            ),
+            TextBlock(
+                text="SECRET",
+                score=1.0,
+                bbox=None,
+                content_index=5,
+                content_id="secret",
+            ),
+        ],
+    )
+    tab = ConcreteTab()
+    qtbot.addWidget(tab)
+    submitted = []
+    monkeypatch.setattr(
+        tab._result_rebuild_jobs, "submit", lambda operation: submitted.append(operation)
+    )
+
+    tab._schedule_table_result_rebuild(result)
+    _result, raw, markdown, rendered_html = submitted[0](threading.Event())
+
+    assert raw == "Document\nA\tB\none\ntwo\nprint(1)\nFigure"
+    assert "Caption" in markdown
+    assert markdown.startswith("## Document")
+    assert "Footnote" in markdown
+    assert "- one" in markdown
+    assert "```" in markdown
+    assert "![Figure](figure.png)" in markdown
+    assert 'class="table-caption"' in rendered_html
+    assert "<ul>" in rendered_html
+    assert "<pre><code>print(1)</code></pre>" in rendered_html
+    assert '<img src="figure.png"' in rendered_html
+    assert "SECRET" not in raw
+    assert "SECRET" not in markdown
+    assert "SECRET" not in rendered_html
+
+
 def test_rapid_large_text_edits_rebuild_all_accepted_changes(
     qapp, qtbot
 ):
@@ -568,7 +668,7 @@ def test_large_table_edit_submits_without_gui_model_scan(
     assert ObservedContent.iterations == 0
     assert len(submitted) == 1
     _result, raw, markdown, html = submitted[0](threading.Event())
-    assert raw.startswith("<table><tr><td>changed</td></tr></table>\nblock-1")
+    assert raw.startswith("changed\nblock-1")
     assert "changed" in markdown
     assert "changed" in html
 
@@ -604,9 +704,7 @@ def test_rapid_large_table_edits_publish_latest_complete_aggregates(qapp, qtbot)
     tab._on_table_block_edited(0, "<table><tr><td>second</td></tr></table>")
 
     qtbot.waitUntil(lambda: not tab._result_rebuild_jobs.is_running, timeout=3000)
-    assert result.raw_text.startswith(
-        "<table><tr><td>second</td></tr></table>\nblock-1"
-    )
+    assert result.raw_text.startswith("second\nblock-1")
     assert "second" in result.markdown_text
     assert "first" not in result.markdown_text
     assert "second" in result.html_text
@@ -669,7 +767,61 @@ def test_large_nonaligned_table_edit_uses_prepared_reverse_index(
 
     assert elapsed_ms < 150
     assert threading.get_ident() not in ObservedTextBlocks.iteration_threads
-    assert result.text_blocks[-1].text == (
-        "<table><tr><td>nonaligned</td></tr></table>"
-    )
+    assert result.text_blocks[-1].text == "nonaligned"
     assert len(submitted) == 1
+
+
+def test_stable_table_cell_edit_updates_reordered_result_without_html_in_raw(
+    qapp, qtbot
+):
+    from vibeocr.contracts.tables import TableCellV1, TableModelV1
+    from vibeocr.models.ocr_result import OCRResult, TextBlock
+
+    table = TableModelV1(
+        table_id="table-stable",
+        row_count=1,
+        column_count=2,
+        cells=(
+            TableCellV1(cell_id="left", row=0, column=0, text="重复"),
+            TableCellV1(cell_id="right", row=0, column=1, text="重复"),
+        ),
+    )
+    result = OCRResult(
+        content_list=[
+            {"type": "text", "block_id": "intro", "text": "开头"},
+            {
+                "type": "table",
+                "block_id": "block-stable",
+                "table": table.to_payload(),
+                "table_body": "stale",
+            },
+        ],
+        text_blocks=[
+            TextBlock(
+                text="重复\t重复",
+                score=0.8,
+                bbox=None,
+                content_index=1,
+                content_id="block-stable",
+                label="table",
+            ),
+            TextBlock(
+                text="开头",
+                score=0.9,
+                bbox=None,
+                content_index=0,
+                content_id="intro",
+            ),
+        ],
+    )
+    tab = ConcreteTab()
+    qtbot.addWidget(tab)
+    tab._current_ocr_result = result
+
+    tab._on_table_cell_edited("table-stable", "right", "只改右侧")
+
+    updated = TableModelV1.from_payload(result.content_list[1]["table"])
+    assert [cell.text for cell in updated.cells] == ["重复", "只改右侧"]
+    assert result.text_blocks[0].text == "重复\t只改右侧"
+    assert "<table" not in result.raw_text
+    assert 'data-cell-id="right"' in result.html_text

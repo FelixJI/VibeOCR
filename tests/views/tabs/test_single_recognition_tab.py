@@ -293,10 +293,12 @@ class TestResultBlockEditedTableDelegation:
         new_html = "<table><tr><td>X</td></tr></table>"
         tab._on_result_block_edited(0, new_html)
 
-        # table_body 是真正的数据源，应被更新为新 HTML
-        assert tab._current_ocr_result.content_list[0]["table_body"] == new_html
-        # text_block 也应是新 HTML（不是纯文本 innerText）
-        assert tab._current_ocr_result.text_blocks[0].text == new_html
+        # canonical table 是权威数据源，table_body 是带稳定 ID 的兼容投影。
+        block = tab._current_ocr_result.content_list[0]
+        assert block["table"]["cells"][0]["text"] == "X"
+        assert "data-table-id" in block["table_body"]
+        # TextBlock/raw 用纯文本，不能混入整段 HTML。
+        assert tab._current_ocr_result.text_blocks[0].text == "X"
         assert tab._current_ocr_result.text_blocks[0].is_manually_edited is True
         # 左侧应走块类型模式刷新（set_content_list），而非切到置信度模式
         assert refreshed and refreshed[0][0] == "content_list"

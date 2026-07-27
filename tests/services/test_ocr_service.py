@@ -1,6 +1,7 @@
 """Tests for OCRService."""
 
 import threading
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -33,6 +34,44 @@ try:
     PADDLE_TORCH_CONFLICT = _HAS_PADDLE and _HAS_MODELSCOPE
 except ImportError:
     PADDLE_TORCH_CONFLICT = False
+
+
+@pytest.mark.parametrize(
+    ("method_name", "pipeline_name"),
+    [
+        ("_recognize_structure", "PP-StructureV3"),
+        ("_recognize_paddlocr_vl", "PaddleOCR-VL"),
+    ],
+)
+def test_legacy_document_entrypoints_delegate_to_registry(
+    monkeypatch, method_name, pipeline_name
+):
+    import vibeocr.core.pipelines as pipelines
+
+    sentinel = OCRResult(raw_text="delegated")
+    calls = []
+
+    class Options:
+        @classmethod
+        def from_dict(cls, payload):
+            calls.append(("options", payload["pipeline"]))
+            return SimpleNamespace(pipeline=pipeline_name)
+
+    spec = SimpleNamespace(
+        options_class=Options,
+        recognize=lambda service, image, options: (
+            calls.append(("recognize", image, options.pipeline)) or sentinel
+        ),
+    )
+    registry = SimpleNamespace(get=lambda name: spec)
+    monkeypatch.setattr(pipelines, "get_registry", lambda: registry)
+    service = OCRService.__new__(OCRService)
+    options = OCROptions(pipeline=pipeline_name)
+
+    result = getattr(service, method_name)("image", options)
+
+    assert result is sentinel
+    assert calls[-1] == ("recognize", "image", pipeline_name)
 
 
 class TestOCRServiceSingleton:

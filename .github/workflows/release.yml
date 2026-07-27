@@ -161,10 +161,19 @@ jobs:
           node --test tests/web/*.test.ts
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Run offline table provider contract gate
+        shell: pwsh
+        run: |
+          ./scripts/run_table_contract_gate.ps1 -PythonPath python -ReportDir reports/table-release-contract
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Validate feature-parity matrix
         shell: bash
         run: |
-          python tests/parity/validate_matrix.py docs/quality/feature-parity.md --require-pass
+          python tests/parity/validate_matrix.py docs/quality/feature-parity.md
+          if [[ "${{ steps.variants.outputs.build_winui }}" == "true" ]]; then
+            python tests/parity/validate_matrix.py docs/quality/feature-parity.md --require-pass
+          fi
           python -m pytest tests/parity -q
 
       - name: Build physical Python workspace wheels
@@ -224,6 +233,30 @@ jobs:
         run: |
           ./scripts/verify_winui_artifact.ps1 -Artifact "dist/VibeOCR-Next-v${{ steps.version.outputs.version }}-win64.zip"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify table semantics in release artifacts
+        if: ${{ steps.variants.outputs.build_pyside == 'true' || steps.variants.outputs.build_winui == 'true' }}
+        shell: pwsh
+        run: |
+          if ('${{ steps.variants.outputs.build_pyside }}' -eq 'true') {
+            python scripts/verify_table_artifact.py "dist/VibeOCR-Classic-v${{ steps.version.outputs.version }}-win64.zip" --report-dir reports/table-artifact/classic
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          if ('${{ steps.variants.outputs.build_winui }}' -eq 'true') {
+            python scripts/verify_table_artifact.py "dist/VibeOCR-Next-v${{ steps.version.outputs.version }}-win64.zip" --report-dir reports/table-artifact/winui
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+      - name: Upload table artifact diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: table-artifact-diagnostics
+          path: |
+            reports/table-release-contract
+            reports/table-artifact
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Package Python wheelhouse
         shell: pwsh

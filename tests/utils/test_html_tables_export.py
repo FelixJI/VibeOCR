@@ -181,3 +181,37 @@ class TestTablesFromResult:
         tables = tables_from_result(result)
         assert len(tables) == 1
         assert "<table>" in tables[0]
+
+    def test_canonical_content_list_prevents_stale_projection_rediscovery(self):
+        from vibeocr.contracts.tables import TableCellV1, TableModelV1
+
+        table = TableModelV1(
+            table_id="canonical",
+            row_count=1,
+            column_count=1,
+            cells=(TableCellV1(cell_id="cell", row=0, column=0, text="fresh"),),
+        )
+        result = SimpleNamespace(
+            content_list=[
+                {
+                    "type": "table",
+                    "table": table.to_payload(),
+                    "table_body": "<table><tr><td>stale-body</td></tr></table>",
+                }
+            ],
+            text_blocks=[
+                SimpleNamespace(
+                    label="table",
+                    text="<table><tr><td>stale-block</td></tr></table>",
+                )
+            ],
+            html_text="<table><tr><td>stale-html</td></tr></table>",
+            markdown_text="",
+            raw_text="",
+        )
+
+        tables = tables_from_result(result)
+
+        assert len(tables) == 1
+        assert "fresh" in tables[0]
+        assert "stale" not in tables[0]

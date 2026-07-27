@@ -183,6 +183,36 @@ class TestRenderTable:
         html = _render_table(block, 0)
         assert 'class="ocr-table"' in html
 
+    def test_canonical_table_wins_over_stale_legacy_projection(self):
+        from vibeocr.contracts.tables import TableCellV1, TableModelV1
+
+        table = TableModelV1(
+            table_id="render-table",
+            row_count=1,
+            column_count=1,
+            cells=(
+                TableCellV1(
+                    cell_id="render-cell",
+                    row=0,
+                    column=0,
+                    text="fresh",
+                ),
+            ),
+        )
+        html = _render_table(
+            {
+                "type": "table",
+                "table": table.to_payload(),
+                "table_body": "<table><tr><td>stale</td></tr></table>",
+            },
+            0,
+        )
+
+        assert "fresh" in html
+        assert "stale" not in html
+        assert 'data-table-id="render-table"' in html
+        assert 'data-cell-id="render-cell"' in html
+
 
 class TestRenderEquation:
     """测试 _render_equation 函数。"""
@@ -278,6 +308,21 @@ class TestRenderFallback:
         assert html == ""
 
 
+def test_unknown_canonical_table_schema_has_visible_legacy_warning():
+    rendered = _render_table(
+        {
+            "type": "table",
+            "table": {"schema_version": 999},
+            "table_body": "<table><tr><td>legacy</td></tr></table>",
+        },
+        0,
+    )
+
+    assert 'class="table-schema-warning"' in rendered
+    assert "不受支持" in rendered
+    assert "legacy" in rendered
+
+
 class TestBorderColorLookup:
     """测试边框颜色和类型标签查找。"""
 
@@ -359,6 +404,13 @@ class TestTableCopyAndSelectionJS:
         from pathlib import Path
 
         return _build_full_html("<p>x</p>", Path("resources/katex"))
+
+    def test_table_edit_js_emits_stable_table_and_cell_ids(self):
+        html = self._full_html()
+
+        assert "onTableCellEditedForDocument" in html
+        assert "table[data-table-id]" in html
+        assert "data-cell-id" in html
 
     def test_copy_interceptor_present(self):
         html = self._full_html()
