@@ -141,6 +141,96 @@ jobs:
     permissions:
       contents: read
 
+  prepare-release:
+    name: Prepare and trigger release
+    needs: [detect, quality-gates]
+    if: >-
+      needs.detect.outputs.should_release == 'true' &&
+      needs.quality-gates.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - name: Checkout the quality-gated commit
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install pinned uv
+        run: python -m pip install uv==0.11.28
+
+      - name: Configure release identity
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Prepare next release
+        id: release
+        shell: bash
+        env:
+          EXPECTED_VERSION: ${{ needs.detect.outputs.current_version }}
+          VERSION_BUMP: ${{ inputs.version_bump || 'patch' }}
+        run: |
+          actual_version="$(
+            sed -n 's/^version = "\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)"/\1/p' \
+              pyproject.toml | head -n 1
+          )"
+          if [[ "$actual_version" != "$EXPECTED_VERSION" ]]; then
+            echo "::error::质量门前后版本不一致：expected=$EXPECTED_VERSION actual=$actual_version"
+            exit 1
+          fi
+
+          case "$VERSION_BUMP" in
+            patch|minor|major) ;;
+            *)
+              echo "::error::未知版本增量：$VERSION_BUMP"
+              exit 1
+              ;;
+          esac
+
+          python scripts/bump_version.py "$VERSION_BUMP" --no-edit --no-push --no-build
+
+          next_version="$(
+            sed -n 's/^version = "\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)"/\1/p' \
+              pyproject.toml | head -n 1
+          )"
+          git rev-parse --verify "refs/tags/v${next_version}^{commit}"
+          echo "version=$next_version" >> "$GITHUB_OUTPUT"
+
+      - name: Atomically push main and release tag
+        shell: bash
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          git push --atomic origin \
+            HEAD:refs/heads/main \
+            "refs/tags/v${VERSION}:refs/tags/v${VERSION}"
+
+      - name: Write release summary
+        shell: bash
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          COMMIT_COUNT: ${{ needs.detect.outputs.commit_count }}
+          VERSION_BUMP: ${{ inputs.version_bump || 'patch' }}
+        run: |
+          {
+            echo "### 已触发自动发版"
+            echo
+            echo "- 待发布 main 提交：${COMMIT_COUNT}"
+            echo "- 版本增量：${VERSION_BUMP}"
+            echo "- 新版本：v${VERSION}"
+            echo "- 后续构建：下方 build job"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   build:
     name: Build & Release (Windows)
     runs-on: windows-latest
