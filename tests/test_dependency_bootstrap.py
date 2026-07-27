@@ -73,3 +73,57 @@ def test_cli_auto_selects_gpu_profile(monkeypatch) -> None:
     )
     assert dependency_bootstrap.main(["--profile", "auto"]) == 0
     assert captured["profile"] == "gpu-cu126"
+
+
+def test_resolve_profile_explicit_cpu(monkeypatch) -> None:
+    """_resolve_profile 对非 auto 请求直接返回（line 14）。"""
+    # detect_gpu 不应被调用
+    def _fail_detect():
+        raise AssertionError("detect_gpu should not be called for explicit profile")
+
+    monkeypatch.setattr(dependency_bootstrap, "detect_gpu", _fail_detect)
+    assert dependency_bootstrap._resolve_profile("cpu") == "cpu"
+    assert dependency_bootstrap._resolve_profile("gpu-cu126") == "gpu-cu126"
+
+
+def test_resolve_profile_auto_uses_detect_gpu(monkeypatch) -> None:
+    monkeypatch.setattr(dependency_bootstrap, "detect_gpu", lambda: (False, None))
+    assert dependency_bootstrap._resolve_profile("auto") == "cpu"
+
+    monkeypatch.setattr(dependency_bootstrap, "detect_gpu", lambda: (True, "cu126"))
+    assert dependency_bootstrap._resolve_profile("auto") == "gpu-cu126"
+
+
+def test_cli_invokes_progress_callback(monkeypatch, capsys) -> None:
+    """main 的 report callback 被触发并打印 stage 消息（line 42-43）。"""
+    monkeypatch.setattr(dependency_bootstrap, "detect_gpu", lambda: (False, None))
+
+    def fake_install(python_exe, profile, network_type, progress_callback):
+        # 模拟安装器调用 progress callback
+        progress_callback("download", "fetching paddle")
+        progress_callback("install", "installing")
+        return True, "done"
+
+    monkeypatch.setattr(
+        dependency_bootstrap, "install_backend_dependencies", fake_install
+    )
+    rc = dependency_bootstrap.main(["--profile", "cpu"])
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert "[download]" in captured.out
+    assert "[install]" in captured.out
+    assert "done" in captured.out
+
+
+def test_cli_failure_returns_nonzero(monkeypatch) -> None:
+    """安装失败时返回 1（line 51-52）。"""
+    monkeypatch.setattr(dependency_bootstrap, "detect_gpu", lambda: (False, None))
+
+    def fake_install(python_exe, profile, network_type, progress_callback):
+        return False, "install failed"
+
+    monkeypatch.setattr(
+        dependency_bootstrap, "install_backend_dependencies", fake_install
+    )
+    rc = dependency_bootstrap.main(["--profile", "cpu"])
+    assert rc == 1

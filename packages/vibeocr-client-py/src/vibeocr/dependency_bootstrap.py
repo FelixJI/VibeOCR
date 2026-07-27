@@ -52,5 +52,5 @@ def main(argv: list[str] | None = None) -> int:
     return 0 if success else 1
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover - module entry point
     raise SystemExit(main())
