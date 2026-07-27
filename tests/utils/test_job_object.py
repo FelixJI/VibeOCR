@@ -266,3 +266,89 @@ class TestJobObjectGuardWindowsClose:
                 assert guard._handle == 333
             fake_kernel.CloseHandle.assert_called_once_with(333)
         assert guard._handle is None
+
+
+class TestJobObjectGuardWindowsFailurePaths:
+    """Windows 失败/异常降级路径。"""
+
+    @patch("vibeocr.utils.job_object._IS_WINDOWS", True)
+    @patch("vibeocr.utils.job_object.sys.platform", "win32")
+    def test_setinformation_failure_closes_handle_and_degrades(self):
+        """SetInformationJobObject 返回 0 时关闭句柄并降级（line 114-118）。"""
+        fake_kernel = MagicMock()
+        fake_kernel.CreateJobObjectW.return_value = 444  # 创建成功
+        fake_kernel.SetInformationJobObject.return_value = 0  # 设置失败
+
+        with patch(
+            "vibeocr.utils.job_object.ctypes.windll",
+            MagicMock(kernel32=fake_kernel),
+        ):
+            guard = JobObjectGuard()
+
+        assert guard._handle is None  # 降级
+        fake_kernel.CloseHandle.assert_called_once_with(444)
+
+    @patch("vibeocr.utils.job_object._IS_WINDOWS", True)
+    @patch("vibeocr.utils.job_object.sys.platform", "win32")
+    def test_create_job_exception_degrades(self):
+        """_create_job 内部抛异常时降级（line 122-123）。"""
+        fake_kernel = MagicMock()
+        fake_kernel.CreateJobObjectW.side_effect = OSError("kernel boom")
+
+        with patch(
+            "vibeocr.utils.job_object.ctypes.windll",
+            MagicMock(kernel32=fake_kernel),
+        ):
+            guard = JobObjectGuard()
+
+        assert guard._handle is None
+
+    @patch("vibeocr.utils.job_object._IS_WINDOWS", True)
+    @patch("vibeocr.utils.job_object.sys.platform", "win32")
+    def test_assign_pid_exception_returns_false(self):
+        """_assign_pid 抛异常时返回 False（line 163-165）。"""
+        with (
+            patch("vibeocr.utils.job_object._IS_WINDOWS", True),
+            patch("vibeocr.utils.job_object.sys.platform", "win32"),
+            patch.object(
+                JobObjectGuard,
+                "_create_job",
+                lambda self: setattr(self, "_handle", 777),
+            ),
+        ):
+            guard = JobObjectGuard()
+
+        fake_kernel = MagicMock()
+        fake_kernel.OpenProcess.side_effect = OSError("open failed")
+
+        popen = MagicMock(spec=subprocess.Popen)
+        popen.pid = 999
+
+        with patch(
+            "vibeocr.utils.job_object.ctypes.windll",
+            MagicMock(kernel32=fake_kernel),
+        ):
+            assert guard.assign_from_popen(popen) is False
+
+    @patch("vibeocr.utils.job_object._IS_WINDOWS", True)
+    @patch("vibeocr.utils.job_object.sys.platform", "win32")
+    def test_close_exception_still_clears_handle(self):
+        """close 内 CloseHandle 抛异常时仍清空 _handle（line 178-179）。"""
+        fake_kernel = MagicMock()
+        fake_kernel.CloseHandle.side_effect = OSError("close failed")
+
+        with (
+            patch(
+                "vibeocr.utils.job_object.ctypes.windll",
+                MagicMock(kernel32=fake_kernel),
+            ),
+            patch.object(
+                JobObjectGuard,
+                "_create_job",
+                lambda self: setattr(self, "_handle", 555),
+            ),
+        ):
+            guard = JobObjectGuard()
+            guard.close()  # 不应抛
+
+        assert guard._handle is None
