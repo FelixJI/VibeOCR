@@ -233,3 +233,42 @@ class TestOCROptions:
         assert options.use_e2e_wireless_table_rec_model is True
         assert options.text_det_limit_side_len is None
         assert options.formula_recognition_model_name is None
+
+
+class TestOCROptionsFromDictEdgeCases:
+    """from_dict 的 pipeline 解析边界（大小写/无效/非字符串）与 copy_with。"""
+
+    def test_from_dict_pipeline_case_insensitive_match(self):
+        """pipeline 值大小写不匹配时按小写回退匹配（如 'ocr' → OCR）。"""
+        options = OCROptions.from_dict({"pipeline": "ocr"})
+        assert options.pipeline == OCRPipeline.OCR
+
+    def test_from_dict_pipeline_case_insensitive_match_complex(self):
+        """PP-StructureV3 大小写不匹配也能回退命中。"""
+        options = OCROptions.from_dict({"pipeline": "pp-structurev3"})
+        assert options.pipeline == OCRPipeline.PP_STRUCTURE_V3
+
+    def test_from_dict_pipeline_invalid_string_falls_back_to_ocr(self):
+        """完全无法识别的 pipeline 字符串回退到默认 OCR。"""
+        options = OCROptions.from_dict({"pipeline": "BOGUS_PIPELINE"})
+        assert options.pipeline == OCRPipeline.OCR
+
+    def test_from_dict_pipeline_non_string_passes_through(self):
+        """pipeline 不是字符串（已是枚举）时直接透传。"""
+        options = OCROptions.from_dict({"pipeline": OCRPipeline.DOCUMENT_PARSING})
+        assert options.pipeline == OCRPipeline.DOCUMENT_PARSING
+
+    def test_copy_with_updates_pipeline_enum(self):
+        """copy 接受 OCRPipeline 枚举并正确序列化。"""
+        base = OCROptions(pipeline=OCRPipeline.OCR)
+        updated = base.copy(pipeline=OCRPipeline.TABLE_RECOGNITION)
+        assert updated.pipeline == OCRPipeline.TABLE_RECOGNITION
+        # 其余字段保持默认
+        assert updated.use_doc_orientation_classify == base.use_doc_orientation_classify
+
+    def test_copy_with_updates_plain_field(self):
+        """copy 更新普通字段。"""
+        base = OCROptions()
+        updated = base.copy(use_doc_unwarping=True)
+        assert updated.use_doc_unwarping is True
+        assert base.use_doc_unwarping is False  # 原实例不变

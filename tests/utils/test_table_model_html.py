@@ -2,7 +2,11 @@ import pytest
 
 import vibeocr.tables.html_adapter as html_adapter
 from vibeocr.contracts.tables import TableCellV1, TableModelV1
-from vibeocr.tables.blocks import canonicalize_table_block, table_model_from_block
+from vibeocr.tables.blocks import (
+    canonicalize_table_block,
+    table_model_from_block,
+    validate_table_blocks,
+)
 from vibeocr.tables.html_adapter import (
     parse_table_source_layout,
     table_model_from_html,
@@ -84,6 +88,17 @@ def test_table_grid_projection_keeps_merged_positions_empty():
     markdown = table_model_to_markdown(table)
     assert markdown.warnings == ("lossy_markdown_source",)
     assert "| 纵向 | 横向 |  |" in markdown.text
+
+
+def test_empty_table_projections_return_empty_strings():
+    """row_count=0 的空表格：grid/tsv/markdown 均返回空，不产生 lossy 警告。"""
+    empty = TableModelV1(table_id="empty", row_count=0, column_count=0, cells=())
+    assert table_model_to_grid(empty) == []
+    assert table_model_to_tsv(empty) == ""
+    projection = table_model_to_markdown(empty)
+    assert projection.text == ""
+    assert projection.warnings == ()
+
 
 
 def test_single_table_adapter_rejects_multiple_top_level_tables():
@@ -238,3 +253,123 @@ def test_source_layout_uses_structured_parser_offsets_with_optional_end_tags():
         "B",
         "C",
     ]
+
+
+class TestBlocksHelpers:
+    """tables/blocks.py 的 from_block / canonicalize / validate 边界。"""
+
+    def test_table_model_from_block_rejects_block_without_any_source(self):
+        """既无 canonical table 也无 legacy HTML 时 raise ValueError。"""
+        with pytest.raises(ValueError, match="neither canonical table nor legacy HTML"):
+            table_model_from_block({"type": "table"})
+
+    def test_table_model_from_block_rejects_whitespace_only_html(self):
+        with pytest.raises(ValueError, match="neither canonical table nor legacy HTML"):
+            table_model_from_block({"type": "table", "table_body": "   "})
+
+    def test_canonicalize_renames_table_id_when_mismatch(self):
+        """canonicalize 把 table_id 强制对齐到传入的 table_id（line 54 replace 分支）。"""
+        block = {
+            "type": "table",
+            "table_body": "<table><tr><td>A</td></tr></table>",
+            "table_id": "original-id",
+        }
+        result = canonicalize_table_block(block, table_id="forced-id", pipeline="MinerU")
+        assert result["table"]["table_id"] == "forced-id"
+        assert result["block_id"] == "forced-id"
+
+    def test_canonicalize_adds_legacy_provenance_when_absent(self):
+        block = {"type": "table", "table_body": "<table><tr><td>A</td></tr></table>"}
+        result = canonicalize_table_block(block, table_id="t1", pipeline="MinerU")
+        prov = result["table"]["provenance"]
+        assert prov["pipeline"] == "MinerU"
+        assert prov["provider_schema"] == "legacy-html"
+        assert "legacy_html_adapted" in prov["warnings"]
+
+    def test_canonicalize_marks_canonical_provider_when_table_present(self):
+        canonical = TableModelV1(
+            table_id="c1",
+            row_count=1,
+            column_count=1,
+            cells=(TableCellV1(cell_id="a", row=0, column=0, text="X"),),
+        ).to_payload()
+        block = {"type": "table", "table": canonical}
+        result = canonicalize_table_block(block, table_id="c1", pipeline="OCR")
+        prov = result["table"]["provenance"]
+        assert prov["provider_schema"] == "canonical-v1"
+
+    def test_validate_table_blocks_ignores_non_sequence(self):
+        """非 list/tuple 输入直接返回，不报错。"""
+        validate_table_blocks(None)  # no raise
+        validate_table_blocks("not a list")
+
+    def test_validate_table_blocks_skips_non_table_and_non_dict(self):
+        validate_table_blocks([None, {"type": "text", "text": "x"}, 42])
+
+    def test_validate_table_blocks_validates_canonical_payload(self):
+        canonical = TableModelV1(
+            table_id="c1",
+            row_count=1,
+            column_count=1,
+            cells=(TableCellV1(cell_id="a", row=0, column=0, text="X"),),
+        ).to_payload()
+        validate_table_blocks([{"type": "table", "table": canonical}])  # no raise
+
+    def test_validate_table_blocks_rejects_bad_canonical_payload(self):
+        with pytest.raises((KeyError, TypeError, ValueError)):
+            validate_table_blocks([{"type": "table", "table": {"bogus": True}}])
+
+
+class TestHtmlAdapterEdgeCases:
+    """html_adapter 的自闭合标签、行/覆盖上限、source-parser 边界。"""
+
+    def test_self_closing_td_tag_handled(self):
+        """<td/> 自闭合标签触发 handle_startendtag 的 td 分支（line 66-68）。"""
+        table = table_model_from_html(
+            "<table><tr><td>A</td><td/><td>C</td></tr></table>",
+            table_id="self-close",
+        )
+        # 中间空 td 仍占一列
+        assert table.column_count >= 3
+
+    def test_self_closing_table_tag_handled(self):
+        """<table/> 自闭合标签在 source parser 中触发 handle_startendtag table 分支。
+
+        空自闭合 table 不产生 cell，source parser 返回空 spans。
+        """
+        layout = parse_table_source_layout("<table/>", table_id="empty-self-close")
+        assert layout.cells == ()
+
+    def test_row_count_exceeds_limit_raises(self):
+        """行数超过 MAX_TABLE_DIMENSION 时 raise（line 127）。"""
+        from vibeocr.tables.html_adapter import MAX_TABLE_DIMENSION
+        rows = "<tr><td>x</td></tr>" * (MAX_TABLE_DIMENSION + 1)
+        with pytest.raises(ValueError, match="row count"):
+            table_model_from_html(f"<table>{rows}</table>", table_id="too-many-rows")
+
+    def test_cell_coverage_exceeds_limit_raises(self):
+        """单元格覆盖总数超 MAX_TABLE_COVERAGE 时 raise（line 176）。"""
+        from vibeocr.tables.html_adapter import MAX_TABLE_COVERAGE
+        huge = MAX_TABLE_COVERAGE + 1
+        with pytest.raises(ValueError):
+            table_model_from_html(
+                f'<table><tr><td colspan="{huge}">x</td></tr></table>',
+                table_id="too-wide",
+            )
+
+    def test_source_parser_handles_extra_trailing_newlines(self):
+        """源解析器对尾随多余换行确定性处理（覆盖 line 234-238 循环）。"""
+        layout = parse_table_source_layout(
+            "<table><tr><td>A</td></tr></table>\n\n\n",
+            table_id="src",
+        )
+        assert layout.cells[0].source_text == "A"
+
+    def test_source_parser_handles_nested_table_depth(self):
+        """嵌套 table 的内层标签被忽略（_table_depth != 1，line 256-257）。"""
+        layout = parse_table_source_layout(
+            "<table><tr><td>outer</td></tr></table>",
+            table_id="nested",
+        )
+        assert len(layout.cells) >= 1
+        assert layout.cells[0].source_text == "outer"

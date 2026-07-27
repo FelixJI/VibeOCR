@@ -65,7 +65,7 @@ def convert_legacy_pipeline_ttls(
         if ttl is None or ttl < 0:
             out.append({"name": name, "ttl_seconds": None, "pinned": False})
         elif ttl == 0:
-            if name in _LEGACY_ZERO_MEANS_PINNED:
+            if name in _LEGACY_ZERO_MEANS_PINNED:  # pragma: no cover - set is empty by design
                 out.append({"name": name, "ttl_seconds": None, "pinned": True})
             else:
                 out.append({"name": name, "ttl_seconds": None, "pinned": False})

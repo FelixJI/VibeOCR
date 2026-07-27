@@ -195,3 +195,47 @@ def test_unknown_table_schema_is_rejected_on_both_wire_directions() -> None:
             assert "schema_version" in str(error)
         else:
             raise AssertionError("unknown table schemas must fail at the wire boundary")
+
+
+def test_images_non_bytes_value_surfaces_present_without_size() -> None:
+    """images 值不是 bytes/bytearray 时，只标记 present，不报 size（line 110）。"""
+    result = OCRResult(images={"marker.txt": "not-bytes"})
+    payload = ocr_result_to_payload(result)
+    entry = payload["images"]["marker.txt"]
+    assert entry == {"present": True}
+    assert "size" not in entry
+
+
+def test_ocr_result_from_payload_skips_non_dict_text_blocks() -> None:
+    """payload.text_blocks 含非 dict 元素时跳过（line 140 continue）。"""
+    payload = {
+        "raw_text": "x",
+        "markdown_text": "",
+        "html_text": "",
+        "avg_score": 0.0,
+        "pipeline_type": "OCR",
+        "preproc_angle": 0,
+        "content_list": [],
+        "text_with_scores": [],
+        "low_confidence_items": [],
+        "text_blocks": [None, "str-entry", 42, {"text": "valid", "score": 0.9}],
+        "images": {},
+        "image_width": 0,
+        "image_height": 0,
+    }
+    restored = ocr_result_from_payload(payload)
+    assert len(restored.text_blocks) == 1
+    assert restored.text_blocks[0].text == "valid"
+
+
+def test_non_dict_images_attribute_is_ignored_safely() -> None:
+    """result.images 不是 dict（如 None 或 list）时不进入汇总（line 105->112）。"""
+    result = OCRResult()
+    # OCRResult 默认 images={}，这里直接构造一个 images 非 dict 的场景
+    object.__setattr__(result, "images", None)
+    payload = ocr_result_to_payload(result)
+    assert payload["images"] == {}
+
+    object.__setattr__(result, "images", ["not", "a", "dict"])
+    payload = ocr_result_to_payload(result)
+    assert payload["images"] == {}

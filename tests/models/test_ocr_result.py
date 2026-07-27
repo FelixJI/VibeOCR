@@ -100,3 +100,18 @@ def test_result_text_properties_follow_documented_fallbacks(
     assert result.has_rich_content is rich
     assert result.display_text == display
     assert result.copy_text == copy
+
+
+def test_normalize_polygon_passthrough_when_pixel_coords_without_dims() -> None:
+    """max_val>1001 但未提供 img_w/img_h 时直接 passthrough（走 line 89）。"""
+    poly = [[0, 0], [2000, 0], [2000, 1000], [0, 1000]]
+    result = normalize_polygon(poly)
+    assert result == (0.0, 0.0, 2000.0, 0.0, 2000.0, 1000.0, 0.0, 1000.0)
+
+
+def test_ocr_result_has_content_list_property() -> None:
+    """has_content_list 反映 content_list 是否非空。"""
+    empty = OCRResult(raw_text="x")
+    assert empty.has_content_list is False
+    with_content = OCRResult(raw_text="x", content_list=[{"type": "text", "text": "a"}])
+    assert with_content.has_content_list is True

@@ -116,3 +116,49 @@ def test_real_fixtures_load() -> None:
     assert "schema_version" not in minimal
     current = json.loads((FIXTURES / "v1-current.json").read_text(encoding="utf-8"))
     assert current["schema_version"] == CURRENT_SCHEMA_VERSION
+
+
+def test_write_hashed_backup_returns_none_when_read_fails(tmp_path: Path, monkeypatch) -> None:
+    """源文件读取失败时 _write_hashed_backup 返回 None 并记日志（line 72-74）。"""
+    from vibeocr.migration import profile_migrator
+
+    path = tmp_path / "app_settings.json"
+    path.write_text("{}", encoding="utf-8")
+
+    def _raise_oserror(_p):
+        raise OSError("read denied")
+
+    monkeypatch.setattr(Path, "read_bytes", _raise_oserror)
+    result = profile_migrator._write_hashed_backup(path)
+    assert result is None
+
+
+def test_write_hashed_backup_returns_none_when_write_fails(tmp_path: Path, monkeypatch) -> None:
+    """备份文件写入失败时返回 None（line 80-82）。"""
+    from vibeocr.migration import profile_migrator
+
+    path = tmp_path / "app_settings.json"
+    path.write_text("{}", encoding="utf-8")
+
+    original_write = Path.write_bytes
+
+    def _fail_write(self, _data):
+        # 只让备份文件写入失败；源文件读取仍正常
+        if ".pre-migrate-" in self.name:
+            raise OSError("write denied")
+        return original_write(self, _data)
+
+    monkeypatch.setattr(Path, "write_bytes", _fail_write)
+    result = profile_migrator._write_hashed_backup(path)
+    assert result is None
+
+
+def test_migrate_skips_non_object_json(tmp_path: Path) -> None:
+    """顶层 JSON 不是对象（如数组/数字）时跳过迁移（line 96）。"""
+    path = tmp_path / "app_settings.json"
+    path.write_text("[1, 2, 3]", encoding="utf-8")
+
+    result = migrate_config(path)
+
+    assert result.status == "skipped"
+    assert "not a JSON object" in (result.message or "")
