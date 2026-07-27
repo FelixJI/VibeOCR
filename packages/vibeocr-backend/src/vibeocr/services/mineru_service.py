@@ -66,7 +66,7 @@ class MinerUService(metaclass=SingletonMeta):
     def __init__(self):
         if not self._initialized:
             with self._lock:
-                if not self._initialized:
+                if not self._initialized:  # pragma: no cover - DCL inner recheck, only races under concurrency
                     self._ensure_api_running()
                     self._initialized = True
 

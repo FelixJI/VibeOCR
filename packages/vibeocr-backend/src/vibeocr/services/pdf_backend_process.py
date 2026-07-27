@@ -890,5 +890,5 @@ def main() -> None:
     uvicorn.run(app, host=args.host, port=port, log_level=args.log_level)
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover - 入口守卫，仅脚本直接执行时触发，单元测试无法覆盖
     main()
