@@ -203,3 +203,53 @@ class TestSorting:
         ]
         opts = TextBlockOptions(line_mode=LINE_MODE_MERGE)
         assert TextBlockProcessor.process(blocks, opts) == "左右"
+
+
+# ── 索引保留变体（_sort_indexed / _split_indexed_into_segments / _join_segment 空文本）──
+
+
+class TestIndexedVariants:
+    """显示层排版用的索引保留变体。"""
+
+    def test_sort_indexed_by_order(self):
+        indexed = [
+            (0, _block("A", order=2)),
+            (1, _block("B", order=0)),
+            (2, _block("C", order=1)),
+        ]
+        result = TextBlockProcessor._sort_indexed(indexed)
+        assert [i for i, _b in result] == [1, 2, 0]
+
+    def test_sort_indexed_by_bbox_when_no_order(self):
+        indexed = [
+            (0, _block("A", bbox=(10, 100, 20, 110))),
+            (1, _block("B", bbox=(10, 50, 20, 60))),
+        ]
+        result = TextBlockProcessor._sort_indexed(indexed)
+        # y1 小的排前：B(50) < A(100)
+        assert [i for i, _b in result] == [1, 0]
+
+    def test_split_indexed_into_segments_breaks_on_gap(self):
+        # prev 高度 10（y1=100,y2=110），cur y1=200 → gap=90 > 1.5*10=15 → 新段
+        indexed = [
+            (0, _block("A", bbox=(0, 100, 10, 110))),
+            (1, _block("B", bbox=(0, 200, 10, 210))),
+        ]
+        segments = TextBlockProcessor._split_indexed_into_segments(indexed)
+        assert len(segments) == 2
+        assert [i for seg in segments for i, _b in seg] == [0, 1]
+
+    def test_split_indexed_into_segments_same_segment_on_small_gap(self):
+        # prev 高度 100（y1=100,y2=200），cur y1=210 → gap=10 < 150 → 同段
+        indexed = [
+            (0, _block("A", bbox=(0, 100, 10, 200))),
+            (1, _block("B", bbox=(0, 210, 10, 310))),
+        ]
+        segments = TextBlockProcessor._split_indexed_into_segments(indexed)
+        assert len(segments) == 1
+        assert len(segments[0]) == 2
+
+    def test_join_segment_returns_empty_when_all_blank(self):
+        blocks = [_block(""), _block("")]
+        assert TextBlockProcessor._join_segment(blocks, join_space=True) == ""
+        assert TextBlockProcessor._join_segment(blocks, join_space=False) == ""
