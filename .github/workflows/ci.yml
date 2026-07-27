@@ -167,3 +167,17 @@ jobs:
             --ignore=tests/test_upgrade_deps.py `
             tests/ -q
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  parity:
+    runs-on: windows-latest
+    # feature-parity 矩阵校验从 release 迁来。校验矩阵结构 + PASS 行证据齐全，
+    # 并跑 tests/parity。不加 --require-pass：表格编辑（WinUI 未实现）当前 PENDING，
+    # 硬门会使主干变红；WinUI 成熟到默认随发版时再恢复 --require-pass。
+    timeout-minutes: 15
+    steps:
+      - uses: ./.github/actions/setup-python-buildshell
+      - name: Validate feature-parity matrix
+        shell: bash
+        run: |
+          python tests/parity/validate_matrix.py docs/quality/feature-parity.md
+          python -m pytest tests/parity -q
