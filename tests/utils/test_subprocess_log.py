@@ -277,3 +277,39 @@ class TestSplitMixedLines:
         assert "[WARNING]" in lines[0]
         assert "[INFO]" in lines[1]
         assert "[ERROR]" in lines[2]
+
+
+def test_raw_log_auto_flush_at_threshold(caplog):
+    """裸 print 累积达阈值时自动 flush（line 110-116），无需显式 flush。"""
+    from vibeocr.utils.subprocess_log import SubprocessLogForwarder
+
+    forwarder = SubprocessLogForwarder(
+        logger_name="test_auto_flush",
+        source_label="[T]",
+        raw_flush_threshold=3,
+    )
+    with caplog.at_level("DEBUG", logger="test_auto_flush"):
+        # 发 3 条裸 print，第 3 条触发自动 flush
+        for i in range(3):
+            forwarder.forward(f"raw line {i} 内容")
+        # 不显式 flush，应已自动产生概括记录
+    summary = [r for r in caplog.records if "raw line" not in r.message]
+    # 内容不泄露
+    assert all("内容" not in r.message for r in caplog.records)
+    # 有概括记录提到 3 行
+    assert any("3" in r.message for r in caplog.records)
+
+
+def test_split_lines_returns_multiple_for_multiple_datetime_patterns():
+    """含多个日期时间模式的文本被分割成多行（line 154-159）。"""
+    from vibeocr.utils.subprocess_log import SubprocessLogForwarder
+
+    text = (
+        "2024-01-01 12:00:00 first line\n"
+        "2024-01-01 12:00:01 second line\n"
+        "2024-01-01 12:00:02 third"
+    )
+    lines = SubprocessLogForwarder.split_mixed_lines(text)
+    assert len(lines) == 3
+    assert "first line" in lines[0]
+    assert "third" in lines[2]

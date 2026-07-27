@@ -136,3 +136,27 @@ class TestBackwardCompatibility:
         exe = install / "VibeOCR.exe"
         paths2 = resolve_app_paths(exe, profile="production")
         assert paths1.install_root == paths2.install_root
+
+
+def test_normalize_executable_existing_non_exe_file_takes_parent(tmp_path):
+    """已存在的非 exe 文件（如 python.exe 之外的脚本）取 parent（line 82）。"""
+    from vibeocr.app_paths import _normalize_executable
+
+    # 创建一个存在的非 exe 文件
+    f = tmp_path / "launcher"
+    f.write_text("#!/bin/sh")
+    result = _normalize_executable(str(f))
+    assert result == f.resolve().parent
+
+
+def test_resolve_app_paths_rejects_unknown_profile(tmp_path):
+    """未知 profile raise ValueError（line 105-106）。"""
+    import pytest
+
+    from vibeocr.app_paths import resolve_app_paths
+
+    with pytest.raises(ValueError, match="unsupported profile"):
+        resolve_app_paths(str(tmp_path), profile="bogus")
+
+    with pytest.raises(ValueError, match="unsupported profile"):
+        resolve_app_paths(str(tmp_path), profile="")
