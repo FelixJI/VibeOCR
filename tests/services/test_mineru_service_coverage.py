@@ -224,6 +224,12 @@ class TestStartApi:
         mock_proc.pid = 12345
         mock_proc.poll.return_value = None  # 进程存活
 
+        # 缩短超时 + 跳过 sleep，避免真实等待
+        monkeypatch.setattr(
+            "vibeocr.core.constants.Constants.Timeout.MINERU_API_START", 0.01
+        )
+        monkeypatch.setattr("vibeocr.services.mineru_service.time.sleep", lambda *_: None)
+
         with (
             patch.object(MinerUService, "_resolve_python_executable", return_value=Path("/fake/python.exe")),
             patch("vibeocr.services.mineru_service.subprocess.Popen", return_value=mock_proc),
