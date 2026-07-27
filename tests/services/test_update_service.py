@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import json
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -2115,3 +2116,437 @@ class TestDoDownloadAndUpdateThreadedDelivery:
         assert exec_thread_ids, "抽取 updater 应被执行"
         assert exec_thread_ids[0] != threading.get_ident(), \
             "_extract_updater_from_zip 必须经 asyncio.to_thread 派发到工作线程（直接同步调用会冻结事件循环）"
+
+
+# ---------------------------------------------------------------------------
+# Bug 1：「稍后提醒」持久化（remind_later）—— 纯逻辑层
+# ---------------------------------------------------------------------------
+
+
+class TestRemindLater:
+    """「稍后提醒」持久化测试。
+
+    历史 bug：UpdateDialog 的「稍后提醒」按钮只把 action 设为 "cancel" 并 reject，
+    check_and_prompt 不处理 "cancel" 分支，没有任何持久化——下次检查（启动自动 /
+    手动）立刻再次弹窗，按钮形同虚设。
+
+    修复：仿照 skip_version 三件套，新增 remind_later_until（unix 时间戳）持久化。
+    自动检查（manual=False）命中暂缓窗口则不弹；手动检查（manual=True）始终弹
+    （用户主动请求，忽略暂缓）。
+    """
+
+    def test_save_and_check_remind_later_active(self, tmp_path):
+        """save 后、窗口内：is_remind_later_active 返回 True。"""
+        from vibeocr.services.update_service import (
+            REMIND_LATER_SECONDS,
+            is_remind_later_active,
+            save_remind_later,
+        )
+
+        settings_path = tmp_path / "update_settings.json"
+        now = 1_700_000_000.0
+        save_remind_later(now + REMIND_LATER_SECONDS, settings_path)
+        # 同一时刻仍活跃
+        assert is_remind_later_active(settings_path, now=now) is True
+        # 窗口结束前一秒仍活跃
+        assert (
+            is_remind_later_active(settings_path, now=now + REMIND_LATER_SECONDS - 1)
+            is True
+        )
+
+    def test_remind_later_expires_after_window(self, tmp_path):
+        """超过窗口：is_remind_later_active 返回 False。"""
+        from vibeocr.services.update_service import (
+            REMIND_LATER_SECONDS,
+            is_remind_later_active,
+            save_remind_later,
+        )
+
+        settings_path = tmp_path / "update_settings.json"
+        base = 1_700_000_000.0
+        save_remind_later(base + REMIND_LATER_SECONDS, settings_path)
+        # 到期那一刻即失效
+        assert (
+            is_remind_later_active(settings_path, now=base + REMIND_LATER_SECONDS)
+            is False
+        )
+        # 远超窗口
+        assert (
+            is_remind_later_active(settings_path, now=base + REMIND_LATER_SECONDS * 10)
+            is False
+        )
+
+    def test_remind_later_missing_returns_false(self, tmp_path):
+        """无设置文件：is_remind_later_active 返回 False（默认不暂缓）。"""
+        from vibeocr.services.update_service import is_remind_later_active
+
+        assert (
+            is_remind_later_active(tmp_path / "missing.json", now=1_700_000_000.0)
+            is False
+        )
+
+    def test_remind_later_corrupt_returns_false(self, tmp_path):
+        """设置文件损坏：返回 False（容错，不抛异常）。"""
+        from vibeocr.services.update_service import is_remind_later_active
+
+        settings_path = tmp_path / "update_settings.json"
+        settings_path.write_text("not json", encoding="utf-8")
+        assert (
+            is_remind_later_active(settings_path, now=1_700_000_000.0) is False
+        )
+
+    def test_save_remind_later_preserves_skip_version(self, tmp_path):
+        """save_remind_later 不能覆盖既有 skip_version（两个键共存）。"""
+        from vibeocr.services.update_service import (
+            load_skip_version,
+            save_remind_later,
+            save_skip_version,
+        )
+
+        settings_path = tmp_path / "update_settings.json"
+        save_skip_version("0.9.9", settings_path)
+        save_remind_later(1_700_000_000.0 + 86400, settings_path)
+        # skip_version 仍在
+        assert load_skip_version(settings_path) == "0.9.9"
+
+    def test_remind_later_seconds_constant(self):
+        """窗口常量：1 天（86400 秒）。"""
+        from vibeocr.services.update_service import REMIND_LATER_SECONDS
+
+        assert REMIND_LATER_SECONDS == 86400
+
+
+# ---------------------------------------------------------------------------
+# Bug 1：check_and_prompt 集成 —— manual 参数 / later action 处理
+# ---------------------------------------------------------------------------
+
+
+class TestCheckAndPromptRemindLater:
+    """check_and_prompt 与 remind_later 集成测试。
+
+    - 自动检查（manual=False）命中暂缓 → 不弹窗，状态栏提示「已暂缓」。
+    - 手动检查（manual=True）忽略暂缓 → 始终弹窗。
+    - 点「稍后提醒」→ 持久化 remind_later_until。
+    """
+
+    def _make_service(self, tmp_path, monkeypatch):
+        from vibeocr.pyside import update as update_ui
+        from vibeocr.services import env_config
+
+        (tmp_path / "version.json").write_text(
+            json.dumps({"version": "0.1.0"}), encoding="utf-8"
+        )
+        monkeypatch.setattr(
+            env_config,
+            "get_update_cache_dir",
+            lambda: tmp_path / "cache" / "update",
+            raising=False,
+        )
+        monkeypatch.setattr(
+            env_config,
+            "get_update_settings_path",
+            lambda: tmp_path / "settings" / "update_settings.json",
+            raising=False,
+        )
+        update_ui.UpdateService._check_lock = None
+        return update_ui.UpdateService(tmp_path)
+
+    def _mock_has_update(self, monkeypatch):
+        """mock check_for_updates 返回有更新（远程版本更高）。"""
+        from vibeocr.services import update_service
+
+        info = _make_update_info(version="9.9.9")
+        async def fake_check(current):
+            return info, True
+        monkeypatch.setattr(update_service, "check_for_updates", fake_check)
+        return info
+
+    def test_auto_check_skips_prompt_when_remind_later_active(
+        self, tmp_path, monkeypatch, qapp
+    ):
+        """自动检查（manual=False）+ 暂缓活跃 → 不构造 UpdateDialog。"""
+        from vibeocr.pyside import update as update_ui
+        from vibeocr.services.update_service import (
+            REMIND_LATER_SECONDS,
+            save_remind_later,
+        )
+
+        service = self._make_service(tmp_path, monkeypatch)
+        self._mock_has_update(monkeypatch)
+        # 预置一个未到期的暂缓
+        now = 1_700_000_000.0
+        save_remind_later(
+            now + REMIND_LATER_SECONDS, service._settings_path
+        )
+
+        dialog_created = []
+        real_update_dialog = update_ui.UpdateDialog
+        monkeypatch.setattr(
+            update_ui,
+            "UpdateDialog",
+            lambda *a, **k: dialog_created.append(1) or real_update_dialog(*a, **k),
+        )
+
+        statuses: list[str] = []
+        service._status_callback = lambda text, timeout=0: statuses.append(text)
+
+        _run(service.check_and_prompt(None, manual=False, now=now))
+
+        assert not dialog_created, "自动检查命中暂缓不应弹窗"
+        assert any("暂缓" in s for s in statuses), "状态栏应提示已暂缓"
+
+    def test_manual_check_prompts_despite_remind_later_active(
+        self, tmp_path, monkeypatch, qapp
+    ):
+        """手动检查（manual=True）即使暂缓活跃也弹窗（用户主动请求）。"""
+        from vibeocr.pyside import update as update_ui
+        from vibeocr.services.update_service import (
+            REMIND_LATER_SECONDS,
+            save_remind_later,
+        )
+
+        service = self._make_service(tmp_path, monkeypatch)
+        self._mock_has_update(monkeypatch)
+        now = 1_700_000_000.0
+        save_remind_later(
+            now + REMIND_LATER_SECONDS, service._settings_path
+        )
+
+        # 桩住 await_dialog：模拟用户点「稍后提醒」（later），让 check_and_prompt 完成
+        async def fake_await_dialog(dlg):
+            dlg._action = "later"  # type: ignore[attr-defined]
+            return 0
+        monkeypatch.setattr(update_ui, "await_dialog", fake_await_dialog)
+
+        dialog_created = []
+        real_update_dialog = update_ui.UpdateDialog
+        monkeypatch.setattr(
+            update_ui,
+            "UpdateDialog",
+            lambda *a, **k: dialog_created.append(1) or real_update_dialog(*a, **k),
+        )
+
+        _run(service.check_and_prompt(None, manual=True, now=now))
+
+        assert dialog_created, "手动检查应弹窗（忽略暂缓）"
+
+    def test_later_action_persists_remind_later(
+        self, tmp_path, monkeypatch, qapp
+    ):
+        """点「稍后提醒」→ settings 文件写入 remind_later_until（未到期）。"""
+        from vibeocr.pyside import update as update_ui
+        from vibeocr.services.update_service import (
+            REMIND_LATER_SECONDS,
+            is_remind_later_active,
+            load_remind_later,
+        )
+
+        service = self._make_service(tmp_path, monkeypatch)
+        self._mock_has_update(monkeypatch)
+
+        now = 1_700_000_000.0
+        async def fake_await_dialog(dlg):
+            dlg._action = "later"  # type: ignore[attr-defined]
+            return 0
+        monkeypatch.setattr(update_ui, "await_dialog", fake_await_dialog)
+
+        _run(service.check_and_prompt(None, manual=True, now=now))
+
+        until = load_remind_later(service._settings_path)
+        assert until == pytest.approx(now + REMIND_LATER_SECONDS)
+        assert is_remind_later_active(service._settings_path, now=now) is True
+
+    def test_skip_action_does_not_set_remind_later(
+        self, tmp_path, monkeypatch, qapp
+    ):
+        """点「跳过此版本」不应误写 remind_later（两个机制独立）。"""
+        from vibeocr.pyside import update as update_ui
+        from vibeocr.services.update_service import load_remind_later
+
+        service = self._make_service(tmp_path, monkeypatch)
+        self._mock_has_update(monkeypatch)
+
+        async def fake_await_dialog(dlg):
+            dlg._action = "skip"  # type: ignore[attr-defined]
+            return 0
+        monkeypatch.setattr(update_ui, "await_dialog", fake_await_dialog)
+
+        _run(service.check_and_prompt(None, manual=True, now=1_700_000_000.0))
+
+        assert load_remind_later(service._settings_path) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Bug 2：request_cancel 即时切 idle + download_update 竞速取消
+# ---------------------------------------------------------------------------
+
+
+class TestRequestCancelImmediateState:
+    """request_cancel 立即切 idle 回归测试。
+
+    历史 bug：request_cancel 只 set event，按钮切回「检查更新」依赖协程跑到 finally。
+    若下载正卡在 SHA get / verify_sha256 等不可中断段，按钮要等这些段结束（最坏
+    15s read timeout + 数秒哈希）才变。修复：request_cancel 在 set event 的同时
+    立即 _set_download_state("idle")，让按钮在用户点击瞬间就切回。
+    """
+
+    def test_request_cancel_sets_idle_immediately(self, tmp_path, monkeypatch):
+        """downloading 态调 request_cancel → _download_state 立即变 idle。"""
+        from vibeocr.pyside import update as us_mod
+        from vibeocr.services import env_config
+
+        monkeypatch.setattr(
+            env_config, "get_update_cache_dir", lambda: tmp_path / "c"
+        )
+        monkeypatch.setattr(
+            env_config, "get_update_settings_path", lambda: tmp_path / "s.json"
+        )
+
+        # 模拟下载进行中：有活跃 event + downloading 态
+        event = asyncio.Event()
+        us_mod.UpdateService._active_cancel_event = event
+        us_mod.UpdateService._download_state = "downloading"
+        assert not event.is_set()
+
+        us_mod.UpdateService.request_cancel()
+
+        # event 被 set（取消信号）
+        assert event.is_set()
+        # 状态立即切 idle（不等协程退出）—— 这是本次修复的关键契约
+        assert us_mod.UpdateService._download_state == "idle"
+
+        # 清理
+        us_mod.UpdateService._active_cancel_event = None
+
+
+class TestDownloadUpdateCancelRaceWithShaHang:
+    """download_update 在 SHA get 卡住时也能快速响应取消。
+
+    历史 bug：SHA 预检 ``client.get(sha_url)`` 不接受协作取消，read timeout 15s。
+    用户在 SHA 请求进行中点取消，要等请求完成/超时（最坏 15s）才生效。修复：在
+    download_update 的多源循环里用 asyncio.wait 让 cancel_event 与下载任务竞速，
+    取消先到则立即返回 cancelled，并 cancel 卡住的下载任务（CancelledError 会
+    中断 httpx 请求）。
+    """
+
+    def test_cancel_returns_quickly_when_sha_get_hangs(self, tmp_path):
+        """SHA get 卡住（长 sleep）时 set cancel → download_update 快速返回 cancelled。"""
+        from vibeocr.services.update_service import (
+            DOWNLOAD_REASON_CANCELLED,
+            download_update,
+        )
+
+        info = _make_update_info()
+        cancel_event = asyncio.Event()
+
+        async def _hanging_attempt(*a, **kw):
+            # 模拟 SHA get 卡住：长时间不返回（远超测试预算）
+            try:
+                await asyncio.sleep(30)
+            except asyncio.CancelledError:
+                # 清理半成品（与生产代码 finally/except 行为一致）
+                for p in a[3:5]:  # zip_path, sha_path
+                    try:
+                        p.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                raise
+
+        with patch(
+            "vibeocr.services.update_service._detect_network_type",
+            return_value="domestic",
+        ), patch(
+            "vibeocr.services.update_service._download_zip_with_sha",
+            side_effect=_hanging_attempt,
+        ):
+            async def driver():
+                # 并发：启动下载 + 短暂延迟后取消
+                async def _cancel_soon():
+                    await asyncio.sleep(0.2)
+                    cancel_event.set()
+
+                cancel_task = asyncio.ensure_future(_cancel_soon())
+                start = time.perf_counter()
+                result, reasons = await download_update(
+                    info, tmp_path, cancel_event=cancel_event
+                )
+                elapsed = time.perf_counter() - start
+                await cancel_task
+                return result, reasons, elapsed
+
+            result, reasons, elapsed = _run(driver())
+
+        assert result is None
+        assert DOWNLOAD_REASON_CANCELLED in reasons
+        # 关键：取消必须在远短于 SHA read timeout（15s）内生效
+        assert elapsed < 3.0, (
+            f"取消响应过慢（{elapsed:.2f}s），应在 SHA get 卡住时也能快速返回"
+        )
+
+    def test_succeeds_normally_when_not_cancelled_with_race_wrapper(self, tmp_path):
+        """回归保护：竞速取消包装不破坏正常成功路径。"""
+        from vibeocr.services.update_service import (
+            DOWNLOAD_REASON_OK,
+            SourceAttempt,
+            download_update,
+        )
+
+        info = _make_update_info()
+        cancel_event = asyncio.Event()  # 不 set
+
+        with patch(
+            "vibeocr.services.update_service._detect_network_type",
+            return_value="domestic",
+        ), patch(
+            "vibeocr.services.update_service._download_zip_with_sha",
+            new_callable=AsyncMock,
+            return_value=SourceAttempt(True, DOWNLOAD_REASON_OK),
+        ):
+            result, reasons = _run(
+                download_update(info, tmp_path, cancel_event=cancel_event)
+            )
+
+        assert result is not None
+        assert reasons == []
+
+    def test_cancel_between_sources_still_breaks(self, tmp_path):
+        """换源间隙取消仍生效（原有契约，竞速包装不应破坏）。"""
+        from vibeocr.services.update_service import (
+            DOWNLOAD_REASON_HTTP_ERROR,
+            DOWNLOAD_REASON_OK,
+            SourceAttempt,
+            download_update,
+        )
+
+        info = _make_update_info()
+        cancel_event = asyncio.Event()
+
+        attempts = [
+            SourceAttempt(False, DOWNLOAD_REASON_HTTP_ERROR),
+            SourceAttempt(True, DOWNLOAD_REASON_OK),
+        ]
+        call_count = {"n": 0}
+
+        async def _flaky(*a, **kw):
+            n = call_count["n"]
+            call_count["n"] += 1
+            # 第一源失败后 set cancel，第二源不应被尝试
+            if n == 0:
+                cancel_event.set()
+            return attempts[n]
+
+        with patch(
+            "vibeocr.services.update_service._detect_network_type",
+            return_value="domestic",
+        ), patch(
+            "vibeocr.services.update_service._download_zip_with_sha",
+            side_effect=_flaky,
+        ):
+            result, reasons = _run(
+                download_update(info, tmp_path, cancel_event=cancel_event)
+            )
+
+        assert result is None
+        # 第二源（ghproxy）因取消未被尝试
+        assert call_count["n"] == 1
+        assert reasons == [DOWNLOAD_REASON_HTTP_ERROR]

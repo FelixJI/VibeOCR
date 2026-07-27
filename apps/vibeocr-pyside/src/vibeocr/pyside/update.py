@@ -40,10 +40,13 @@ from vibeocr.services.update_service import (
     DOWNLOAD_REASON_HTTP_ERROR,
     DOWNLOAD_REASON_SHA_MISMATCH,
     DOWNLOAD_REASON_SHA_MISSING,
+    REMIND_LATER_SECONDS,
     UpdateInfo,
     check_for_updates,
     download_update,
+    is_remind_later_active,
     read_local_version,
+    save_remind_later,
     save_skip_version,
     should_skip_version,
 )
@@ -252,7 +255,10 @@ class UpdateDialog(QDialog):
         self.accept()
 
     def _on_later(self) -> None:
-        self._action = "cancel"
+        # 「稍后提醒」：语义化 action="later"，由 check_and_prompt 持久化为
+        # remind_later_until（暂缓 1 天）。早期版本误用 "cancel"（与 reject 的结果码
+        # 语义混淆），且 check_and_prompt 不处理 "cancel" 分支，导致按钮无任何效果。
+        self._action = "later"
         self.reject()
 
     def _on_skip(self) -> None:
@@ -340,9 +346,25 @@ class UpdateService:
 
     @classmethod
     def request_cancel(cls) -> None:
-        """关于页「取消下载」按钮调用。None 守卫防 idle 态竞态（无活跃下载时安全跳过）。"""
+        """关于页「取消下载」按钮调用。
+
+        None 守卫防 idle 态竞态（无活跃下载时安全跳过）。
+
+        **立即切 idle**：除 set 取消 event 外，同步把 ``_download_state`` 切回
+        ``"idle"``。历史 bug：旧版只 set event，按钮从「取消下载」切回「检查更新」
+        完全依赖 ``_do_download_and_update`` 协程跑到 ``finally``——若下载正卡在
+        SHA 预检（httpx get 不接受协作取消，read timeout 15s）或 verify_sha256
+        （to_thread 不可中断的 170MB 哈希），按钮要等这些阻塞段结束才变。此处
+        在用户点击瞬间立即切 idle，按钮即时响应；下游协程随后取消/返回时 finally
+        再 set idle（幂等无害）。
+
+        注：idle 语义是「按钮可点检查更新」，此时旧协程仍在收尾——若用户立刻又点
+        「检查更新」，会 new 一个 UpdateService 实例跑 check_and_prompt，受
+        ``_check_lock`` 串行化（与现状一致），不会并发。
+        """
         if cls._active_cancel_event is not None:
             cls._active_cancel_event.set()
+            cls._set_download_state("idle")
 
     @classmethod
     def register_state_listener(cls, fn: Callable[[str], None]) -> None:
@@ -424,7 +446,13 @@ class UpdateService:
 
         return on_source_switch
 
-    async def check_and_prompt(self, parent: QWidget | None = None) -> None:
+    async def check_and_prompt(
+        self,
+        parent: QWidget | None = None,
+        *,
+        manual: bool = False,
+        now: float | None = None,
+    ) -> None:
         """异步检查更新并提示用户
 
         临界区（网络拉取 + 模态对话框）受类级 ``_check_lock`` 保护，串行化两个
@@ -433,6 +461,14 @@ class UpdateService:
         所有模态对话框（``QMessageBox`` / ``UpdateDialog``）经 ``await_dialog``
         非阻塞 await（而非 ``exec()``），避免 qasync 嵌套事件循环触发 asyncio
         ``_enter_task`` 重入 ``RuntimeError``（详见 ``await_dialog`` 文档）。
+
+        Args:
+            manual: True 表示用户主动点「检查更新」按钮触发。手动检查始终弹窗，
+                忽略「稍后提醒」暂缓（用户主动请求）；自动检查（False）命中暂缓
+                窗口则静默跳过。修复历史 bug：原「稍后提醒」按钮无任何持久化，
+                点击后下次检查立刻再次弹窗。
+            now: 当前时间戳，仅用于测试注入固定时刻判定暂缓窗口；None 取
+                ``time.time()``。
         """
         async with self._get_check_lock():
             self._status("正在检查更新…", 0)
@@ -466,6 +502,13 @@ class UpdateService:
                 self._status("当前已是最新版本", 3000)
                 return
 
+            # 自动检查（非用户主动）命中「稍后提醒」暂缓窗口：静默跳过。
+            # 手动检查（manual=True）忽略暂缓——用户主动点按钮即表示现在想看。
+            if not manual and is_remind_later_active(self._settings_path, now=now):
+                logger.debug("更新提醒处于「稍后提醒」暂缓窗口内，跳过自动弹窗")
+                self._status("已暂缓更新提醒，稍后再试", 3000)
+                return
+
             if should_skip_version(update_info.version, self._settings_path):
                 logger.debug(f"用户已跳过版本 {update_info.version}")
                 self._status(f"已跳过版本 v{update_info.version}", 3000)
@@ -476,6 +519,16 @@ class UpdateService:
 
             if dialog.user_action == "skip":
                 save_skip_version(update_info.version, self._settings_path)
+                return
+
+            if dialog.user_action == "later":
+                # 「稍后提醒」：持久化暂缓到期时间戳，1 天内自动检查不再弹窗。
+                # （手动检查仍弹——见上文 manual 分支。）
+                current_now = time.time() if now is None else now
+                save_remind_later(
+                    current_now + REMIND_LATER_SECONDS, self._settings_path
+                )
+                self._status("将在明天再次提醒", 3000)
                 return
 
             if dialog.user_action == "update":

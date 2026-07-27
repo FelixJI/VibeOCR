@@ -428,7 +428,9 @@ class AboutTab(QWidget):
 
             app_dir = env_manager.get_project_root()
             service = UpdateService(app_dir, status_callback=self._status_callback)
-            await service.check_and_prompt(self)
+            # manual=True：用户主动点「检查更新」按钮，忽略「稍后提醒」暂缓，
+            # 始终弹窗（用户主动请求即表示现在想看更新信息）。
+            await service.check_and_prompt(self, manual=True)
 
         async def _safe():
             try:

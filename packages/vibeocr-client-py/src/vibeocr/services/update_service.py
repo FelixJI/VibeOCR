@@ -22,8 +22,9 @@ from typing import TYPE_CHECKING, NamedTuple
 import httpx
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Coroutine
     from pathlib import Path
+    from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -601,13 +602,23 @@ async def download_update(
                 break
             source_name = _source_label(url)
             logger.info(f"尝试下载源：{url}")
-            attempt = await _download_zip_with_sha(
-                client,
-                url,
-                sha_url,
-                zip_path,
-                sha256_path,
-                progress_callback,
+            # 用竞速包装包住单源尝试：cancel_event 一旦先 set，立即返回 cancelled 并
+            # cancel 卡住的下载任务。覆盖 _download_zip_with_sha 内部协作取消点无法
+            # 响应的窗口——SHA 预检 ``client.get``（httpx get 不接受协作取消，read
+            # timeout 15s）、verify_sha256（to_thread 不可中断的 170MB 哈希）、流式
+            # chunk 间隙（源慢/卡住时 aiter_bytes 阻塞到下一块或 15s read timeout）。
+            # 任务被 cancel 时抛 CancelledError，会中断 httpx 请求并关闭连接；
+            # _download_zip_with_sha 的 except 会清理半成品 zip/sha。
+            attempt = await _attempt_or_cancel(
+                _download_zip_with_sha(
+                    client,
+                    url,
+                    sha_url,
+                    zip_path,
+                    sha256_path,
+                    progress_callback,
+                    cancel_event=cancel_event,
+                ),
                 cancel_event=cancel_event,
             )
             if attempt.ok:
@@ -623,6 +634,59 @@ async def download_update(
 
     logger.error("所有更新包下载源均失败（或用户已取消）")
     return None, fail_reasons
+
+
+async def _attempt_or_cancel(
+    attempt_coro: Coroutine[Any, Any, SourceAttempt],
+    *,
+    cancel_event: asyncio.Event | None = None,
+) -> SourceAttempt:
+    """单源下载尝试与取消事件的竞速包装。
+
+    历史 bug：``_download_zip_with_sha`` 内部虽在多个检查点协作式取消（块级、
+    单源开始前、SHA 预检后/verify 前），但 SHA 预检的 ``client.get(sha_url)`` 和
+    verify_sha256 是不可中断的网络/CPU 阻塞段，用户在这些段期间点「取消下载」要
+    等阻塞段自然结束（最坏 15s read timeout + 数秒哈希）才生效，按钮迟迟不变。
+
+    修复：把单源尝试包成一个 Task，与 ``cancel_event.wait()`` 用 ``asyncio.wait``
+    竞速。取消先到则立即返回 cancelled 并 cancel 下载 Task（CancelledError 中断
+    httpx 请求、关闭连接；_download_zip_with_sha 的 except 清理半成品）。下载先
+    正常完成则返回其 SourceAttempt。
+
+    Args:
+        attempt_coro: 单源下载协程（``_download_zip_with_sha(...)``）。
+        cancel_event: 取消事件；None 时直接 await 协程（无竞速，保持原行为）。
+    """
+    if cancel_event is None:
+        return await attempt_coro
+
+    cancel_wait = asyncio.ensure_future(cancel_event.wait())
+    attempt_task = asyncio.ensure_future(attempt_coro)
+    try:
+        done, _pending = await asyncio.wait(
+            {attempt_task, cancel_wait}, return_when=asyncio.FIRST_COMPLETED
+        )
+    except BaseException:
+        # 等待过程自身被 cancel（如上层关闭取消整个 download_update）：清理两个子任务。
+        attempt_task.cancel()
+        cancel_wait.cancel()
+        raise
+
+    if attempt_task in done:
+        cancel_wait.cancel()
+        return attempt_task.result()
+
+    # cancel 先到：cancel 卡住的下载任务，让 _download_zip_with_sha 的 except 清理
+    # 半成品 zip/sha。to_thread 的 verify_sha256 不可中断会在线程池跑完丢弃结果，
+    # 但不阻塞本协程返回——用户感知的取消响应不受影响。
+    cancel_wait.cancel()
+    attempt_task.cancel()
+    # 静默吞掉 CancelledError（任务被我们主动 cancel），不让它冒泡破坏编排器。
+    try:
+        await attempt_task
+    except (asyncio.CancelledError, Exception):
+        pass
+    return SourceAttempt(False, DOWNLOAD_REASON_CANCELLED)
 
 
 def _source_label(url: str) -> str:
@@ -672,3 +736,70 @@ def save_skip_version(version: str, settings_path: Path) -> None:
 
 def should_skip_version(version: str, settings_path: Path) -> bool:
     return load_skip_version(settings_path) == version
+
+
+# ---------------------------------------------------------------------------
+# 「稍后提醒」暂缓管理
+# ---------------------------------------------------------------------------
+#
+# 历史 bug：UpdateDialog 的「稍后提醒」按钮只把 action 设为 "cancel" 并 reject，
+# check_and_prompt 不处理该分支、没有任何持久化——下次检查（启动自动检查 / 手动
+# 检查）立刻再次弹窗，按钮形同虚设。
+#
+# 修复：仿照 skip_version 三件套，用 remind_later_until（unix 时间戳，单调墙钟）
+# 持久化暂缓到期时间。自动检查（manual=False）命中窗口则不弹；手动检查
+# （manual=True）始终弹（用户主动请求，忽略暂缓）。
+#
+# 用 unix 时间戳而非 wall-clock ISO8601：判定逻辑是「now < until」的纯数值比较，
+# 时间戳最简且无时区/格式歧义。time.time() 是本模块既定的时间来源（见
+# _log_http_exchange 的 perf_counter 用于耗时，time.time 用于绝对时刻语义一致）。
+
+# 「稍后提醒」暂缓窗口（秒）。1 天：足够给用户喘息，又不会让更新提醒长期沉默。
+REMIND_LATER_SECONDS: int = 86400
+
+
+def load_remind_later(settings_path: Path) -> float:
+    """读取暂缓到期时间戳。
+
+    Returns:
+        到期 unix 时间戳；无设置 / 损坏 / 缺字段返回 0.0（视为从未暂缓）。
+    """
+    if not settings_path.exists():
+        return 0.0
+    try:
+        data = json.loads(settings_path.read_text(encoding="utf-8"))
+        until = data.get("remind_later_until", 0.0)
+        return float(until) if until else 0.0
+    except (json.JSONDecodeError, OSError, TypeError, ValueError):
+        return 0.0
+
+
+def save_remind_later(until_ts: float, settings_path: Path) -> None:
+    """写入暂缓到期时间戳。
+
+    与 save_skip_version 共用同一文件（update_settings.json），合并写回，互不覆盖。
+    """
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    data: dict = {}
+    if settings_path.exists():
+        try:
+            data = json.loads(settings_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            data = {}
+    data["remind_later_until"] = until_ts
+    settings_path.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
+def is_remind_later_active(
+    settings_path: Path, *, now: float | None = None
+) -> bool:
+    """暂缓是否仍在窗口内。
+
+    Args:
+        now: 当前 unix 时间戳；None 则取 ``time.time()``。测试注入固定时刻用。
+    """
+    current = time.time() if now is None else now
+    until = load_remind_later(settings_path)
+    return until > current

@@ -608,7 +608,9 @@ def launch_application() -> int:
                     project_root,
                     status_callback=window.statusBar().showMessage,  # noqa: F821
                 )
-                await service.check_and_prompt(window)  # noqa: F821
+                # manual=False：启动自动检查。命中「稍后提醒」暂缓窗口则静默跳过，
+                # 不弹窗（用户在 UpdateDialog 点「稍后提醒」后 1 天内）。
+                await service.check_and_prompt(window, manual=False)  # noqa: F821
             except Exception:
                 # ensure_future 会静默吞掉协程异常，这里必须显式捕获，
                 # 否则"检查更新失败"对用户和开发者都不可见。
