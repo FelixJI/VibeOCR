@@ -146,15 +146,15 @@ def _read_windows_features() -> str:
 
 def _read_linux_flags() -> str:
     """Linux: 读取 /proc/cpuinfo 的 flags 行。"""
-    try:
+    try:  # pragma: no cover - Linux-only path
         with open("/proc/cpuinfo", encoding="utf-8") as f:
             for line in f:
                 if line.lower().startswith("flags"):
                     # 行格式: "flags		: fpu vme ... avx avx2 ..."
                     return line.split(":", 1)[-1].lower()
-    except (OSError, IndexError):
+    except (OSError, IndexError):  # pragma: no cover - Linux-only
         pass
-    return ""
+    return ""  # pragma: no cover - Linux-only
 
 
 # ---------------------------------------------------------------------------

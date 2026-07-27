@@ -356,3 +356,169 @@ def test_read_linux_flags_missing_proc(monkeypatch):
     result = _read_linux_flags()
     assert isinstance(result, str)
 
+
+
+def test_get_cpu_thread_count_falls_back_when_cpu_count_raises(monkeypatch):
+    """os.cpu_count() 抛异常时回退（line 55-56）。"""
+    from vibeocr.utils import cpu_info
+
+    monkeypatch.delenv("VIBEOCR_CPU_THREADS", raising=False)
+
+    def _raise():
+        raise OSError("probe failed")
+
+    monkeypatch.setattr(cpu_info.os, "cpu_count", _raise)
+    assert cpu_info.get_cpu_thread_count() == cpu_info.FALLBACK_CPU_THREADS
+
+
+def test_read_cpu_features_dispatches_by_os_name(monkeypatch):
+    """detect_cpu_features 按 os.name 分发；非 nt/posix 返回空（line 98-102）。"""
+    from vibeocr.utils import cpu_info
+
+    # posix 分发到 _read_linux_flags（Windows 测试主机上 /proc 不存在 → 空串）
+    monkeypatch.setattr(cpu_info.os, "name", "posix")
+    flags = cpu_info._read_cpu_flags_text()
+    assert isinstance(flags, str)
+
+    # 未知 os.name → 空串
+    monkeypatch.setattr(cpu_info.os, "name", "unknown_os")
+    assert cpu_info._read_cpu_flags_text() == ""
+
+
+def test_read_windows_features_all_branches_via_fake_kernel(monkeypatch):
+    """用 fake kernel32 精确触发每个 feature 分支（含 avx512f）。
+
+    ctypes.windll 是 C 实现的特殊属性，无法直接 monkeypatch；
+    故改为 patch 模块内的 ctypes 引用，间接注入 fake。
+    """
+    from vibeocr.utils import cpu_info
+    import types as _types
+
+    supported = {1, 10, 13, 39, 40, 43}  # SSE/SSE2/SSE3/AVX/AVX2/AVX512F
+
+    class _FakeKernel:
+        def IsProcessorFeaturePresent(self, fid):
+            return 1 if int(fid) in supported else 0
+
+    class _FakeWindll:
+        kernel32 = _FakeKernel()
+
+    fake_ctypes = _types.SimpleNamespace(
+        windll=_FakeWindll(),
+        c_uint=lambda v: v,
+        sizeof=lambda _c: 0,
+        byref=lambda _x: _x,
+        Structure=type("S", (), {}),
+        c_ulong=int,
+        c_ulonglong=int,
+    )
+    # 函数内 ``import ctypes`` 拿到的是 sys.modules['ctypes']，这里直接替换
+    import sys
+
+    orig_ctypes = sys.modules["ctypes"]
+    try:
+        sys.modules["ctypes"] = fake_ctypes
+        result = cpu_info._read_windows_features()
+    finally:
+        sys.modules["ctypes"] = orig_ctypes
+    flags = set(result.split())
+    assert flags == {"sse", "sse2", "sse3", "avx", "avx2", "avx512f"}
+
+
+def test_read_windows_features_falls_back_when_kernel_call_raises():
+    """kernel32 调用抛异常时返回空串（line 142-144）。"""
+    from vibeocr.utils import cpu_info
+    import types as _types
+    import sys
+
+    class _BrokenKernel:
+        def IsProcessorFeaturePresent(self, _fid):
+            raise OSError("kernel broken")
+
+    class _FakeWindll:
+        kernel32 = _BrokenKernel()
+
+    fake_ctypes = _types.SimpleNamespace(
+        windll=_FakeWindll(),
+        c_uint=lambda v: v,
+        sizeof=lambda _c: 0,
+        byref=lambda _x: _x,
+    )
+    orig_ctypes = sys.modules["ctypes"]
+    try:
+        sys.modules["ctypes"] = fake_ctypes
+        assert cpu_info._read_windows_features() == ""
+    finally:
+        sys.modules["ctypes"] = orig_ctypes
+
+
+def test_read_windows_features_partial_support_exercises_false_branches():
+    """只支持 SSE/AVX2（其余 False），覆盖每个 if 的 False 分支。"""
+    from vibeocr.utils import cpu_info
+    import types as _types
+    import sys
+
+    supported = {1, 40}  # 仅 SSE + AVX2
+
+    class _PartialKernel:
+        def IsProcessorFeaturePresent(self, fid):
+            return 1 if int(fid) in supported else 0
+
+    class _FakeWindll:
+        kernel32 = _PartialKernel()
+
+    fake_ctypes = _types.SimpleNamespace(
+        windll=_FakeWindll(),
+        c_uint=lambda v: v,
+        sizeof=lambda _c: 0,
+        byref=lambda _x: _x,
+    )
+    orig_ctypes = sys.modules["ctypes"]
+    try:
+        sys.modules["ctypes"] = fake_ctypes
+        result = cpu_info._read_windows_features()
+    finally:
+        sys.modules["ctypes"] = orig_ctypes
+    flags = set(result.split())
+    assert flags == {"sse", "avx2"}
+
+
+def test_get_cpu_thread_count_non_positive_override_ignored(monkeypatch):
+    """VIBEOCR_CPU_THREADS 是有效整数但 <=0 时忽略（line 48->53）。"""
+    from vibeocr.utils import cpu_info
+
+    monkeypatch.setenv("VIBEOCR_CPU_THREADS", "0")
+    # 应回退到正常 cpu_count 路径，返回正值
+    result = cpu_info.get_cpu_thread_count()
+    assert result >= 1
+
+    monkeypatch.setenv("VIBEOCR_CPU_THREADS", "-4")
+    result2 = cpu_info.get_cpu_thread_count()
+    assert result2 >= 1
+
+
+def test_read_windows_features_no_support_returns_empty():
+    """CPU 不支持任何已知指令集时返回空串（覆盖所有 if False 分支）。"""
+    from vibeocr.utils import cpu_info
+    import types as _types
+    import sys
+
+    class _NoSupportKernel:
+        def IsProcessorFeaturePresent(self, _fid):
+            return 0
+
+    class _FakeWindll:
+        kernel32 = _NoSupportKernel()
+
+    fake_ctypes = _types.SimpleNamespace(
+        windll=_FakeWindll(),
+        c_uint=lambda v: v,
+        sizeof=lambda _c: 0,
+        byref=lambda _x: _x,
+    )
+    orig_ctypes = sys.modules["ctypes"]
+    try:
+        sys.modules["ctypes"] = fake_ctypes
+        assert cpu_info._read_windows_features() == ""
+    finally:
+        sys.modules["ctypes"] = orig_ctypes
