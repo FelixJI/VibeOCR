@@ -159,3 +159,36 @@ class TestOCRServiceBaseAbstract:
 
         with pytest.raises(TypeError):
             IncompleteService()  # type: ignore[abstract]
+
+
+class TestOCRServiceBaseDefaults:
+    """基类默认实现方法覆盖（recognize_batch/preload/release_idle/set_ttls）。"""
+
+    @pytest.fixture
+    def service(self):
+        return ConcreteOCRService()
+
+    def test_recognize_batch_delegates_to_recognize(self, service):
+        """recognize_batch 默认逐个调用 recognize（line 102）。"""
+        results = service.recognize_batch(["img1", "img2"])
+        assert len(results) == 2
+        assert all(r == {"text": "test result"} for r in results)
+
+    def test_preload_pipelines_swallows_exceptions(self, service):
+        """preload_pipelines 默认实现吞掉异常并记 False（line 126-127）。"""
+        # _preload_pipeline 默认会尝试 get_or_create_pipeline，可能抛
+        results = service.preload_pipelines(["OCR", "Table"])
+        assert set(results.keys()) == {"OCR", "Table"}
+        assert all(isinstance(v, bool) for v in results.values())
+
+    def test_release_idle_returns_and_clears(self, service):
+        """release_pipelines 默认返回当前管道名并清空（line 165-167）。"""
+        # 注入一个伪管道
+        service._pipelines["OCR"] = object()
+        names = service.release_pipelines()
+        assert names == ["OCR"]
+        assert len(service._pipelines) == 0
+
+    def test_set_pipeline_ttls_default_returns_false(self, service):
+        """set_pipeline_ttls 基类默认返回 False（line 177）。"""
+        assert service.set_pipeline_ttls({"OCR": 300}) is False
