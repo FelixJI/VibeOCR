@@ -251,10 +251,10 @@ jobs:
         uses: actions/checkout@v5
         with:
           # 三路径版本来源不同，统一解析后 checkout 对应 tag：
-          #   prepare-release.outputs.version（schedule/dispatch，含 bump）
-          #   inputs.version（workflow_call，调用方已建 tag）
-          #   github.ref_name（tag push，去掉前导 v）
-          ref: ${{ format('refs/tags/v{0}', needs.prepare-release.outputs.version || inputs.version || github.ref_name) }}
+          #   prepare-release.outputs.version（schedule/dispatch，含 bump）→ 裸 X.Y.Z，format 补 v 前缀
+          #   inputs.version（workflow_call，调用方已建 tag）→ 裸 X.Y.Z，format 补 v 前缀
+          #   github.ref（tag push）→ 已是完整 refs/tags/vX.Y.Z，直接用，避免重复 v 前缀
+          ref: ${{ needs.prepare-release.outputs.version != '' && format('refs/tags/v{0}', needs.prepare-release.outputs.version) || (inputs.version != '' && format('refs/tags/v{0}', inputs.version) || github.ref) }}
 
       - name: Set up Python 3.13
         uses: actions/setup-python@v6
