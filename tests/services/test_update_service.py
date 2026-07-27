@@ -2550,3 +2550,187 @@ class TestDownloadUpdateCancelRaceWithShaHang:
         # 第二源（ghproxy）因取消未被尝试
         assert call_count["n"] == 1
         assert reasons == [DOWNLOAD_REASON_HTTP_ERROR]
+
+
+# ---------------------------------------------------------------------------
+# _attempt_or_cancel 直接测试 —— 竞速包装的各分支
+# ---------------------------------------------------------------------------
+#
+# download_update 的多源循环总是传 cancel_event（非 None），且业务路径只覆盖
+# 「取消先到 / 下载先完成」两条主路径。竞速包装自身的退化分支（cancel_event=None
+# 直接 await）、asyncio.wait 自身被 cancel 的清理分支、被 cancel 的下载任务最终抛
+# 非CancelledError 异常时的吞异常分支，只在直接调用 _attempt_or_cancel 时可达——
+# 这些是编排鲁棒性契约，单测直接打到。
+
+
+class TestAttemptOrCancel:
+    """``_attempt_or_cancel`` 竞速包装的直接单元测试。
+
+    覆盖通过 ``download_update`` 业务路径不可达的内部分支：
+    - ``cancel_event=None`` 退化（直接 await，无竞速）。
+    - ``asyncio.wait`` 等待期间自身被 cancel（上层取消整个编排）→ 清理两个子任务
+      并重新抛出（不吞 CancelledError，让上层正确感知取消链）。
+    - 被 cancel 的下载任务最终抛非 CancelledError 异常 → 吞掉，返回 cancelled。
+    """
+
+    def test_no_cancel_event_awaits_directly(self):
+        """cancel_event=None → 退化直接 await 协程，返回其 SourceAttempt。"""
+        from vibeocr.services.update_service import (
+            DOWNLOAD_REASON_OK,
+            SourceAttempt,
+            _attempt_or_cancel,
+        )
+
+        async def _attempt():
+            return SourceAttempt(True, DOWNLOAD_REASON_OK)
+
+        result = _run(_attempt_or_cancel(_attempt()))
+        assert result == SourceAttempt(True, DOWNLOAD_REASON_OK)
+
+    def test_wait_cancelled_cleans_up_and_reraises(self):
+        """``asyncio.wait`` 自身被上层 cancel → 清理两个子任务并重新抛出 CancelledError。
+
+        历史/防御契约：上层（如 ``download_update`` 被取消）取消整个编排时，
+        ``_attempt_or_cancel`` 不能吞掉取消信号，必须透传，且清理它创建的两个
+        ensure_future 子任务，避免悬挂任务。
+        """
+        from vibeocr.services.update_service import _attempt_or_cancel
+
+        cancel_event = asyncio.Event()
+        started = asyncio.Event()
+        cleaned = {"attempt": False, "cancel": False}
+
+        async def _hanging_attempt():
+            started.set()
+            try:
+                await asyncio.sleep(30)
+            except asyncio.CancelledError:
+                cleaned["attempt"] = True
+                raise
+
+        async def driver():
+            # 包一层：启动 _attempt_or_cancel，等它进入 asyncio.wait 后整体 cancel。
+            outer = asyncio.ensure_future(
+                _attempt_or_cancel(_hanging_attempt(), cancel_event=cancel_event)
+            )
+            await started.wait()
+            # 给 ensure_future 调度一点时间真正进入 asyncio.wait
+            await asyncio.sleep(0)
+            outer.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await outer
+
+        _run(driver())
+
+        # 两个子任务都被 cancel（清理生效）
+        assert cleaned["attempt"], "下载子任务应被 cancel 清理"
+        # cancel_wait 是 cancel_event.wait() 的 Task；被 cancel 后无需 is_set 即完成
+        assert not cancel_event.is_set()
+
+    def test_cancelled_attempt_raising_other_exception_is_swallowed(self):
+        """被 cancel 的下载任务最终抛非 CancelledError 异常 → 吞掉，返回 cancelled。
+
+        与 SHA-hang 用例的区别：那里被 cancel 的协程在 CancelledError 路径里清理
+        半成品后 *re-raise* CancelledError；这里模拟协程把异常转译成 RuntimeError
+        （如 except CancelledError 后转抛业务异常的防御写法）。``_attempt_or_cancel``
+        的 ``except (CancelledError, Exception): pass`` 必须吞掉它，仍返回 cancelled，
+        不让异常冒泡破坏编排器（下载取消的最终语义就是 cancelled，不管收尾抛什么）。
+        """
+        from vibeocr.services.update_service import (
+            DOWNLOAD_REASON_CANCELLED,
+            SourceAttempt,
+            _attempt_or_cancel,
+        )
+
+        cancel_event = asyncio.Event()
+        transmuted = {"hit": False}
+
+        async def _attempt_that_transmutes():
+            try:
+                await asyncio.sleep(30)
+            except asyncio.CancelledError:
+                # 收尾时把异常转译成业务异常（防御写法，把取消转成"显式失败"）
+                transmuted["hit"] = True
+                raise RuntimeError("收尾失败")
+
+        async def driver():
+            cancel_event.set()  # 取消先到
+            return await _attempt_or_cancel(
+                _attempt_that_transmutes(), cancel_event=cancel_event
+            )
+
+        result = _run(driver())
+
+        assert transmuted["hit"]
+        assert result == SourceAttempt(False, DOWNLOAD_REASON_CANCELLED)
+
+    def test_attempt_completes_before_cancel_cancels_wait(self):
+        """下载先于取消完成 → 返回其 SourceAttempt，cancel_wait 被取消（无悬挂）。"""
+        from vibeocr.services.update_service import (
+            DOWNLOAD_REASON_OK,
+            SourceAttempt,
+            _attempt_or_cancel,
+        )
+
+        cancel_event = asyncio.Event()  # 永不 set
+
+        async def _quick_attempt():
+            return SourceAttempt(True, DOWNLOAD_REASON_OK)
+
+        result = _run(
+            _attempt_or_cancel(_quick_attempt(), cancel_event=cancel_event)
+        )
+        assert result == SourceAttempt(True, DOWNLOAD_REASON_OK)
+        # cancel_wait 已被 cancel（attempt_task in done 分支），event 不必被 set
+        assert not cancel_event.is_set()
+
+
+# ---------------------------------------------------------------------------
+# save_remind_later 损坏既有文件容错
+# ---------------------------------------------------------------------------
+
+
+class TestSaveRemindLaterCorruptExisting:
+    """``save_remind_later`` 写入时既有文件损坏 → 重置为空 dict 再写，不抛异常。
+
+    与 ``load_remind_later`` 的损坏容错对偶：读取端损坏返回 0.0，写入端损坏重建为
+    空 dict。保证「先损坏、后保存」链路不会因 IO/JSON 异常卡住更新流程。
+    """
+
+    def test_save_over_corrupt_existing_file(self, tmp_path):
+        from vibeocr.services.update_service import (
+            load_remind_later,
+            save_remind_later,
+        )
+
+        settings_path = tmp_path / "update_settings.json"
+        # 既有文件损坏（非合法 JSON）
+        settings_path.write_text("not json {{{", encoding="utf-8")
+
+        until = 1_700_000_000.0 + 86400
+        # 不应抛异常
+        save_remind_later(until, settings_path)
+
+        # 写入后文件合法，能读回正确值
+        assert load_remind_later(settings_path) == until
+        # 其它键被丢弃（损坏文件无可解析内容，重置为空 dict 后只写 remind_later_until）
+        data = json.loads(settings_path.read_text(encoding="utf-8"))
+        assert data == {"remind_later_until": until}
+
+    def test_save_over_unreadable_existing_file(self, tmp_path):
+        """既有文件存在但读取抛 OSError（如权限/IO）→ 重置为空 dict 再写，不抛。"""
+        from vibeocr.services.update_service import (
+            load_remind_later,
+            save_remind_later,
+        )
+
+        settings_path = tmp_path / "update_settings.json"
+        settings_path.write_text('{"skip_version": "0.9.9"}', encoding="utf-8")
+
+        until = 1_700_000_000.0 + 86400
+        # 让 read_text 抛 OSError
+        with patch("pathlib.Path.read_text", side_effect=OSError("io error")):
+            save_remind_later(until, settings_path)
+
+        # 写入成功（read 失败被吞，重建为空 dict 后写入新值）
+        assert load_remind_later(settings_path) == until
