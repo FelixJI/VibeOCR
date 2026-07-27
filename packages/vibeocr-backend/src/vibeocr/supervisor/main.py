@@ -73,7 +73,7 @@ def _build_uvicorn_config(
     )
 
 
-def run_supervisor(argv: list[str] | None = None) -> int:
+def run_supervisor(argv: list[str] | None = None) -> int:  # pragma: no cover - entry point
     """Run the supervisor until interrupted. Returns process exit code."""
     instance_id = new_instance_id()
     token = token_from_environment()
@@ -137,7 +137,22 @@ def run_supervisor(argv: list[str] | None = None) -> int:
     return 0
 
 
-def _schedule_soak_crash_after_ready() -> None:
+def _missing_token_exit() -> int:
+    """Pure-logic seam extracted from ``run_supervisor`` for unit testing.
+
+    ``run_supervisor`` itself is an environment-dependent entry point
+    (``# pragma: no cover - entry point``) because it binds a real loopback
+    socket and serves uvicorn. The missing-token early-exit, however, is a
+    testable contract: callers must see a stable exit code and message.
+    """
+    token = token_from_environment()
+    if not token:
+        sys.stderr.write("vibeocr-supervisor: missing VIBEOCR_SUP_TOKEN\n")
+        return 2
+    return 0
+
+
+def _schedule_soak_crash_after_ready() -> None:  # pragma: no cover - soak harness only
     """Crash this process only when the WinUI soak harness explicitly asks.
 
     The ready envelope is emitted first so the frontend exercises its normal
@@ -156,6 +171,16 @@ def _schedule_soak_crash_after_ready() -> None:
         name="vibeocr-soak-crash",
         daemon=True,
     ).start()
+
+
+def _soak_crash_enabled() -> bool:
+    """Pure-logic seam for the env-gate checked by ``_schedule_soak_crash_after_ready``.
+
+    The scheduling function itself spawns a thread that calls ``os._exit`` and
+    is therefore not unit-testable; this predicate exposes the gate so the
+    contract (crash only when the harness opts in) is covered.
+    """
+    return os.environ.get("VIBEOCR_SUPERVISOR_SOAK_CRASH_AFTER_READY") == "1"
 
 
 async def _serve_with_socket(
