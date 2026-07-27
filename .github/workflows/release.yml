@@ -233,19 +233,28 @@ jobs:
 
   build:
     name: Build & Release (Windows)
+    needs: [detect, quality-gates, prepare-release]
+    # 三条路径汇聚到 build：
+    #   schedule/dispatch：detect→quality-gates→prepare-release 全跑，build 取 prepare-release.version
+    #   tag push / workflow_call：detect/prepare-release 被跳过（result 'skipped'），quality-gates 已过，
+    #     build 从 tag（github.ref_name）或 inputs.version 解析版本。
+    if: >-
+      (needs.prepare-release.result == 'success') ||
+      (needs.detect.result == 'skipped' && needs.quality-gates.result == 'success')
     runs-on: windows-latest
-    # 发版流程含 .NET 契约测试 + Classic(PyInstaller) 打包 + 可选 WinUI(dotnet)
-    # 打包 + 上传 + 镜像，正常 ~5-10min；45min 宽裕上限。dotnet test 同样可能
-    # 因 App.Tests 挂起（见 ci.yml winui job 注释），超时护栏避免烧满 6h 默认配额。
+    # 发版构建发布：构建 wheel + Classic(PyInstaller)/可选 WinUI(dotnet) 打包 +
+    # 上传 + 镜像，正常 ~5-10min；45min 宽裕上限。测试归 ci.yml（quality-gates 已过）。
     timeout-minutes: 45
 
     steps:
       - name: Checkout
         uses: actions/checkout@v5
         with:
-          # workflow_call 的 github.ref 仍是调用方 main；显式 checkout 新 tag，
-          # 保证构建的是含 release commit 的版本。tag push 时 inputs.version 为空。
-          ref: ${{ inputs.version != '' && format('refs/tags/v{0}', inputs.version) || github.ref }}
+          # 三路径版本来源不同，统一解析后 checkout 对应 tag：
+          #   prepare-release.outputs.version（schedule/dispatch，含 bump）
+          #   inputs.version（workflow_call，调用方已建 tag）
+          #   github.ref_name（tag push，去掉前导 v）
+          ref: ${{ format('refs/tags/v{0}', needs.prepare-release.outputs.version || inputs.version || github.ref_name) }}
 
       - name: Set up Python 3.13
         uses: actions/setup-python@v6
@@ -261,9 +270,11 @@ jobs:
         id: version
         shell: bash
         run: |
-          # tag 形如 refs/tags/v0.1.7 → version=0.1.7
+          # 三路径版本来源优先级：prepare-release.outputs.version（schedule/dispatch）>
+          # inputs.version（workflow_call）> GITHUB_REF_NAME（tag push，去掉前导 v）。
+          prep="${{ needs.prepare-release.outputs.version }}"
           input="${{ inputs.version }}"
-          tag="${input:-${GITHUB_REF_NAME#v}}"
+          tag="${prep:-${input:-${GITHUB_REF_NAME#v}}}"
           if ! [[ "$tag" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::版本 '$tag' 不符合 X.Y.Z 格式"
             exit 1
@@ -315,54 +326,6 @@ jobs:
         run: |
           dotnet restore src/dotnet/VibeOCR.slnx --locked-mode
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Validate Python migration and release gates
-        shell: pwsh
-        run: |
-          python -m pytest tests/contracts/v2 tests/supervisor tests/migration tests/parity tests/release_layout tests/application/test_pdf_ocr_orchestrator.py tests/test_compare_release_metrics.py tests/test_startup_metrics.py tests/test_collect_startup_metrics.py tests/test_soak_winui.py tests/test_update_replacer.py tests/test_bump_version.py -q
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Validate Python style
-        shell: pwsh
-        run: |
-          python -m ruff check apps packages tests scripts
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Validate complete .NET solution
-        shell: pwsh
-        run: |
-          # build 整个解决方案（含 App + App.Tests，以捕获编译错误），但只 test
-          # 两个契约层项目。App.Tests 测的是 WinUI 专属 ViewModel 层，不进
-          # PySide6 发布包，且其 testhost 在 Session 0 runner 上会挂起（见
-          # ci.yml winui job 注释）。仍可本地 `dotnet test src/dotnet/VibeOCR.slnx`
-          # 手动验证 WinUI 层。
-          dotnet build src/dotnet/VibeOCR.slnx -c Release --no-restore
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          dotnet test tests/dotnet/VibeOCR.Contracts.Tests/VibeOCR.Contracts.Tests.csproj -c Release --no-build
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          dotnet test tests/dotnet/VibeOCR.Platform.Tests/VibeOCR.Platform.Tests.csproj -c Release --no-build
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Validate Web assets
-        shell: pwsh
-        run: |
-          node --test tests/web/*.test.ts
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Run offline table provider contract gate
-        shell: pwsh
-        run: |
-          ./scripts/run_table_contract_gate.ps1 -PythonPath python -ReportDir reports/table-release-contract
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Validate feature-parity matrix
-        shell: bash
-        run: |
-          python tests/parity/validate_matrix.py docs/quality/feature-parity.md
-          if [[ "${{ steps.variants.outputs.build_winui }}" == "true" ]]; then
-            python tests/parity/validate_matrix.py docs/quality/feature-parity.md --require-pass
-          fi
-          python -m pytest tests/parity -q
 
       - name: Build physical Python workspace wheels
         shell: pwsh
