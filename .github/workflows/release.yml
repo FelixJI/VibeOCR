@@ -10,11 +10,23 @@
 name: Release
 
 on:
+  schedule:
+    # GitHub Actions cron 使用 UTC；北京时间 15:30 = UTC 07:30。
+    - cron: "30 7 * * *"
   push:
     tags:
       - "v*"
   workflow_dispatch:
     inputs:
+      version_bump:
+        description: "选择要增加的版本号：patch（x.y.Z）/ minor（x.Y.0）/ major（X.0.0）。仅 schedule/dispatch 路径生效。"
+        required: true
+        default: "patch"
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
       build_variants:
         description: "生成哪些安装包：pyside6（Classic 主力，PyInstaller）/ winui（Next 开发预览，dotnet）/ all（两者）。默认 pyside6。"
         required: false
@@ -36,10 +48,11 @@ on:
         default: "pyside6"
         type: string
 
-# 同一 tag 重复推送时取消旧 run，避免并发打包
 concurrency:
-  group: release-${{ inputs.version || github.ref }}
-  cancel-in-progress: true
+  # 定时发版用固定 group 且不取消（避免漏发版）；tag push / 手动 / workflow_call
+  # 按版本或 ref 分组并取消旧 run（同 tag 并发只保留最新）。
+  group: release-${{ github.event_name == 'schedule' && 'scheduled' || (inputs.version || github.ref) }}
+  cancel-in-progress: ${{ github.event_name != 'schedule' }}
 
 permissions:
   contents: write  # softprops/action-gh-release 创建 Release 需要
