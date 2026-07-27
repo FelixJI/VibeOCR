@@ -84,3 +84,15 @@ def test_real_matrix_parses() -> None:
     assert len(rows) >= 4
     errors = validate(rows, require_pass=False)
     assert errors == []
+
+
+def test_real_matrix_does_not_claim_winui_table_edit_from_pyside_only_evidence(
+) -> None:
+    repo_root = Path(__file__).parents[2]
+    matrix = repo_root / "docs" / "quality" / "feature-parity.md"
+    rows = parse_matrix(matrix.read_text(encoding="utf-8"))
+    table_edit = next(row for row in rows if row["功能"].startswith("表格编辑"))
+
+    assert table_edit["WinUI 状态"] == "PENDING"
+    assert "PySide" in table_edit["自动化证据"]
+    assert "WinUI 尚无" in table_edit["自动化证据"]

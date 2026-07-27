@@ -8,8 +8,11 @@
 | 取消、generation 丢弃、supervisor 崩溃重试 | inference supervisor (v2) | PASS | `RecognitionViewModelTests` | 长任务取消体感 |
 | 预览编辑（六类标注、移动、缩放、旋转、裁剪、撤销/重做） | PySide editor | PASS | `tests/web/editor.test.ts` | 触控笔与高 DPI |
 | 结果渲染（plain/Markdown/表格/公式/代码/Unicode/XSS） | `ResultViewWidget` | PASS | `tests/web/result-renderer.test.ts` | 高对比度与屏幕阅读器 |
+| 表格渲染（canonical v1、稳定 table/cell ID、rowspan/colspan） | `ResultViewWidget` + `TableModelV1` | PASS | `tests/table_contract/test_table_contract_gate.py` | 真实 provider 漂移另走 slow/gpu |
+| 表格编辑（按 table_id/cell_id 更新并刷新投影） | `BaseTab` table reducer | PENDING | 仅有 PySide 证据：`tests/views/tabs/test_base_tab.py`；WinUI 尚无实现/自动化证据 | WinUI 编辑入口、合并格键盘可达性 |
 | 复制（富文本/Markdown/纯文本） | `ClipboardController` | PASS | `ResultActionsTests` | Office 粘贴矩阵 |
 | 导出（HTML/Markdown/text） | Python `ExportService` | PASS | `single-recognition.spec.ps1` | 系统 picker 覆盖提示 |
+| 合并单元格导出（HTML/XLSX/DOCX） | Python `ExportService` | PASS | `tests/table_contract/test_table_contract_gate.py`、`scripts/verify_table_artifact.py` | 字体渲染差异不纳入语义门禁 |
 | 批量识别 | `BatchRecognitionTab` | PASS | `BatchViewModelTests`、`batch.spec.ps1` | 大队列体感与并发预算上限 |
 | 二维码/条码 | QR services | PASS | `QrCodeViewModelTests`、`qrcode.spec.ps1` | 多码与高 DPI 渲染 |
 | PDF 会话与耐久文字层 | PDF orchestrator/sidecar | PASS | `PdfViewModelTests`、`pdf.spec.ps1`、`test_pdf_ocr_orchestrator.py` | 多批 PDF 崩溃续传、旋转全部、自动摆正 |
@@ -25,3 +28,4 @@
 二维码门禁命令：`powershell -File tests/e2e/winui/qrcode.spec.ps1`。它验证 Python 解码（严格 http/https URL 判定）与生成（QR/条码）真源、WorkerHost `is_url` 字段跨语言一致传播，以及 C# `QrCodeViewModel` 的图片/剪贴板输入、多码/无结果、URL 安全过滤、QR/条码生成与保存（覆盖确认、选择器取消）。`qrcode.decode` 响应的 `is_url` 由 Python 解码服务计算，C# 仅读取，不在客户端重判 URL 安全性。
 
 PDF 门禁命令：`powershell -File tests/e2e/winui/pdf.spec.ps1`。它验证 Python OCR 编排器（逐批 save+sidecar 续传、页边界取消、末尾压缩、写层错误聚合、winui-dev sidecar 隔离）、WorkerHost `pdf.*` 协议与处理器，以及 C# `PdfViewModel` 的打开/旋转（选中/全部）/OCR/删除文字层/保存。按钮语义以当前 `main` 为准（`顺时针90°`/`逆时针90°`/`旋转全部`+90°/`自动摆正`，单绿色页状态）；编排器额外暴露三色文字层来源投影供未来对齐。
+表格语义闸门命令：`powershell -File scripts/run_table_contract_gate.ps1`。它只使用明确标注为 synthetic 的 MinerU legacy/v2、TABLE、PP-Structure、PaddleOCR-VL 双来源夹具，校验 SHA-256、canonical 表格语义、wire block 和 HTML/XLSX/DOCX 合并单元格投影；不下载模型、不启动 MinerU、也不要求 GPU。发布前还会针对实际绑定 wheel/安装包运行 `scripts/verify_table_artifact.py`。

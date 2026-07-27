@@ -77,6 +77,11 @@ def verify(directory: Path) -> None:
         archive_owners["vibeocr/protocol/v2/golden/golden.json"]
         == "vibeocr-contracts-py"
     )
+    table_schema_path = "vibeocr/contracts/schemas/table-v1.schema.json"
+    assert archive_owners.get(table_schema_path) == "vibeocr-contracts-py", (
+        f"{table_schema_path} must be owned by vibeocr-contracts-py, "
+        f"got {archive_owners.get(table_schema_path)!r}"
+    )
     assert not any(
         path.startswith(("vibeocr/worker_host/", "vibeocr/protocol/v1/"))
         for path in archive_owners
