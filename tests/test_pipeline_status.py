@@ -226,3 +226,19 @@ def test_mark_success_upgrades_legacy_to_dated_format(tmp_path):
     assert isinstance(entry, dict)
     assert entry["succeeded"] is True
     assert entry["date"] == "2026-07-24"
+
+
+def test_is_success_entry_today_dict_date_not_string():
+    """succeeded dict 但 date 非 str 时返回 False（line 76-77）。"""
+    from vibeocr.pipeline_status import _is_success_entry_today
+
+    assert _is_success_entry_today({"succeeded": True, "date": 20240101}) is False
+
+
+def test_is_success_entry_today_unknown_entry_type():
+    """entry 既非 bool 也非 dict（如 list/None/int）时返回 False（line 79）。"""
+    from vibeocr.pipeline_status import _is_success_entry_today
+
+    assert _is_success_entry_today(["weird", "value"]) is False
+    assert _is_success_entry_today(None) is False
+    assert _is_success_entry_today(42) is False

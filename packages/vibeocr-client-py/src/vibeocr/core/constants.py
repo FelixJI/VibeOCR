@@ -9,7 +9,7 @@ from enum import Enum, auto
 
 try:
     from vibeocr import __version__ as _APP_VERSION
-except ImportError:
+except ImportError:  # pragma: no cover - defensive fallback when namespace not installed
     _APP_VERSION = "0.1.0"
 
 
