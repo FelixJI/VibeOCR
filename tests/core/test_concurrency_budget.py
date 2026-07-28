@@ -46,3 +46,17 @@ class TestConcurrencyBudget:
             raise AssertionError("frozen dataclass 不应允许修改")
         except dataclasses.FrozenInstanceError:
             pass
+
+
+def test_default_handles_cpu_thread_count_exception(monkeypatch):
+    """get_cpu_thread_count 抛异常时 default 回退到 min(logical, 8)（line 47-49）。"""
+    from vibeocr.core.concurrency_budget import ConcurrencyBudget
+
+    def _raise():
+        raise RuntimeError("probe failed")
+
+    import vibeocr.utils.cpu_info as cpu_info
+
+    monkeypatch.setattr(cpu_info, "get_cpu_thread_count", _raise)
+    budget = ConcurrencyBudget.default()
+    assert budget.omp_threads_per_worker > 0
