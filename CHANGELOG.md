@@ -1,5 +1,100 @@
 # Changelog
 
+## [0.6.2] - 2026-07-28
+
+### Fixed
+- fix(screenshot): hide taskbar during region-pick overlay
+- fix(screenshot): add right-click reset/cancel and too-small feedback
+- fix(shell): honor forwarded --goto and stop hotkey window flicker
+- fix(export): disable 导出当前 button when no result
+- fix(batch): prevent frozen Start button when submit_recognition throws
+- fix(single-tab): surface feedback for silent copy-image/paste/missing-file
+- fix(copy): give feedback when result-area copy silently drops
+- fix(env): raise paddleocr import-check timeout 30s -> 60s
+- fix(update): stop ResponseNotRead aborting update downloads on non-200
+- fix(update): persist remind-later window & immediate cancel-to-idle
+- fix(release): build checkout uses github.ref on tag-push path (avoid double-v)
+
+### Changed
+- test: stop leaked background threads to harden Qt test stability
+- test(update): patch update.py.check_for_updates binding in _mock_has_update
+- ci(coverage): lower fail_under 81 -> 77 to match CI's real measurement
+- test(update): mock _probe_github_reachable in all-sources-fail test
+- lint: clear ruff backlog across test suite (140 violations)
+- test(table-contract): align gate config assertions with current release.yml
+- ci: checkout before local composite action in all Python jobs
+- chore: remove dead ClipboardController and unused ChatWidget
+- test(coverage): add pipeline_cache_manager branch coverage tests
+- test(coverage): push pyside shutdown_jobs to 100%
+- test(coverage): push pyside app_settings to 99% (Qt-free logic)
+- test(coverage): push settings_runtime to 100%, concurrency_budget to 100%
+- test(coverage): cover budgets.py negative device_vram_mb validation
+- test(coverage): push concurrency_budget to 100%
+- chore(coverage): raise fail_under baseline 80 → 81
+- test(coverage): cover supervisor/process _drain_stream log parsing
+- test(coverage): push tables/reducer to 85% (was 82%)
+- test(coverage): cover pipeline_table pure helpers (_point_in_box/_parse_cell_box/_normalize_match_text)
+- test(coverage): push pipeline_pp_structure to 87% (was 71%)
+- test(coverage): push pipeline_paddlocr_vl to 83% (was 74%)
+- test(coverage): push pipeline_ocr to 90% (was 65%)
+- test(coverage): push env_config to 97% (was 46%)
+- test(coverage): push ocr_service to 57% (was 40%) via synthetic output parsing
+- chore(coverage): raise fail_under baseline 70 → 80
+- test(coverage): push machine_cache to 98%
+- test(coverage): push pdf_ocr_orchestrator to 89%
+- test(coverage): push pipeline_cache_manager to ~88%
+- test(pdf_backend_client): fix 3 failing coverage tests
+- test(mineru): fix hanging startup_timeout test
+- test(update_service): fix hanging test by pre-setting cancel_event
+- test(coverage): push tables/reducer to 82% (cancellation + error paths)
+- test(coverage): push ocr_service_base to 97%
+- test(coverage): push http_log to 99%
+- test(coverage): push qrcode_decode to 100%, qrcode_service to 98%
+- test(coverage): push batch_budget+app_paths to 100%, subprocess_log to 99%
+- test(coverage): push gpu_memory_monitor to 98%
+- test(coverage): push pipeline_formula to 92% (was 77%)
+- test(coverage): push client-py coverage up (env_manager/build_manifest/machine_cache/network_detector/supervisor clients)
+- test(coverage): push backend/services coverage up (mineru/pdf/pdf_backend_process/update)
+- test(coverage): push backend/supervisor/** to 100% line coverage
+- test(coverage): push pipeline_status to 100%, logging_context/constants to 98%
+- test(coverage): push ocr_facade to 100%
+- test(coverage): push dependency_bootstrap to 100%
+- test(coverage): push services/__init__ + client/ to 100%
+- test(coverage): push pdf_coords+text_layout to 100%
+- test(coverage): push indent_processor+markdown_converter to ~100%
+- test(coverage): push job_object to 100%
+- test(coverage): push cjk_font_resolver to 100%
+- test(coverage): push ocr_sidecar to 100%
+- test(coverage): push cpu_info to 99% (line 100%)
+- test(coverage): push mime_types+system_memory to 100%
+- test(coverage): push client models+migration+tables to 100%
+- test(contracts): push vibeocr-contracts-py to 100% coverage
+- test(update): cover _attempt_or_cancel branches & save_remind_later corrupt path
+- docs(release): update stale header comment to self-contained trigger model
+- docs: update release workflow references in README
+- ci: remove scheduled-release.yml and ttl-diagnostics.yml (consolidated into release.yml)
+- ci(release): use setup + wheels composite actions in build job
+- ci(release): build job depends on quality-gates, drop 6 duplicate test steps
+- ci(release): add prepare-release job (migrated from scheduled-release)
+- ci(release): add quality-gates job reusing ci.yml
+- ci(release): add detect job (migrated from scheduled-release)
+- ci(release): merge triggers + concurrency from scheduled-release
+- ci: add parity job (migrated from release)
+- ci: use build-workspace-wheels composite in backend job
+- ci: use setup-python-buildshell composite in 5 jobs
+- ci: add build-workspace-wheels composite action
+- ci: add setup-python-buildshell composite action
+- docs(plan): ci/release workflow consolidation implementation plan
+- docs(spec): ci/release workflow consolidation design
+- ci: automate scheduled and manual releases
+
+### Dependencies
+- 升级:
+  - 升级 vibeocr-contracts-py ==0.6.0 → ==0.6.2
+  - 升级 vibeocr-client-py ==0.6.0 → ==0.6.2
+  - 升级 vibeocr-backend ==0.6.0 → ==0.6.2
+  - 升级 vibeocr-pyside ==0.6.0 → ==0.6.2
+
 ## [0.6.1] - 2026-07-27
 
 ### Added

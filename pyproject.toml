@@ -1,14 +1,14 @@
 [project]
 name = "vibeocr"
-version = "0.6.1"
+version = "0.6.2"
 description = "A screenshot OCR application"
 authors = [{name = "Felix Ji"}]
 requires-python = ">=3.13,<3.14"
 dependencies = [
-    "vibeocr-contracts-py==0.6.1",
-    "vibeocr-client-py==0.6.1",
-    "vibeocr-backend==0.6.1",
-    "vibeocr-pyside==0.6.1",
+    "vibeocr-contracts-py==0.6.2",
+    "vibeocr-client-py==0.6.2",
+    "vibeocr-backend==0.6.2",
+    "vibeocr-pyside==0.6.2",
 ]
 
 [dependency-groups]
@@ -201,7 +201,7 @@ exclude_lines = [
 #
 # 注意：本地 ``python qa/coverage.py`` 与 CI coverage job 的实测值长期不一致
 # （本地按本机可跑的测试子集测得更高，CI 在 windows-latest 上全量测得更低）。
-# 历史 CI 实测：v0.6.1 时 70% 阈值下实测 71.27%；table-pipeline 合并后升至
+# 历史 CI 实测：v0.6.2 时 70% 阈值下实测 71.27%；table-pipeline 合并后升至
 # 77.71%（含分支覆盖）。81 是基于本地 81.11% 设的，CI 全量从未达到，会让主干
 # 持续变红。此处回到 CI 实测可达的 77 作为防回归基线（仍高于旧 70% 基线）。
 # 剩余缺口集中在 ocr_service/pipelines 的 PaddleOCR 真实模型路径与 PySide6 UI
