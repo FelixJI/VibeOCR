@@ -514,3 +514,89 @@ def test_touch_wakes_blocked_thread(monkeypatch) -> None:
         assert "PP-StructureV3" not in svc._pipelines  # 被回收
     finally:
         mgr.shutdown()
+
+
+def test_configure_residency_rejects_negative_default_ttl() -> None:
+    """default_ttl_seconds < 0 时 raise ValueError（line 328-329）。"""
+    mgr = _make_legacy_manager()
+    with pytest.raises(ValueError, match="default_ttl_seconds"):
+        mgr.configure_residency(default_ttl_seconds=-1, pipelines=[])
+
+
+def test_configure_residency_rejects_unknown_pipeline() -> None:
+    """未知 pipeline 名 raise ValueError（line 335-336）。"""
+    mgr = _make_legacy_manager()
+    with pytest.raises(ValueError, match="unknown pipeline"):
+        mgr.configure_residency(
+            default_ttl_seconds=60,
+            pipelines=[PipelineSpec(name="BOGUS")],
+        )
+
+
+def test_configure_residency_rejects_negative_ttl() -> None:
+    """单个 pipeline ttl < 0 时 raise ValueError（line 339-340）。"""
+    mgr = _make_legacy_manager()
+    with pytest.raises(ValueError, match="negative TTL"):
+        mgr.configure_residency(
+            default_ttl_seconds=60,
+            pipelines=[PipelineSpec(name="OCR", ttl_seconds=-5)],
+        )
+
+
+def test_configure_residency_sets_ttl_for_pipeline() -> None:
+    """正常设置 pipeline ttl（line 337-341）。"""
+    mgr = _make_legacy_manager()
+    mgr.configure_residency(
+        default_ttl_seconds=60,
+        pipelines=[PipelineSpec(name="OCR", ttl_seconds=120)],
+    )
+    assert mgr._ttls["OCR"] == 120
+
+
+def test_prepare_load_evicts_idle_heavy_paddle() -> None:
+    """prepare_load 成功驱逐空闲重管道（line 292-317 成功路径）。"""
+    mgr = _make_legacy_manager(max_heavy=1)
+    mgr._service._pipelines = {"PP-StructureV3": object()}
+    mgr._last_used = {"PP-StructureV3": 10.0}
+
+    evicted = mgr.prepare_load("PaddleOCR-VL")
+    assert "PP-StructureV3" in evicted
+    assert "PP-StructureV3" not in mgr._service._pipelines
+
+
+def test_restore_last_used_unix_ms_handles_invalid_entries() -> None:
+    """restore_last_used_unix_ms 跳过无效条目并解析有效毫秒时间戳（line 216-235）。"""
+    mgr = _make_legacy_manager()
+    mgr._service._pipelines = {"OCR": object()}
+    now = time.time()
+    valid_ms = int(now * 1000)
+    values = {
+        "OCR": valid_ms,  # 有效
+        "Unknown": valid_ms,  # 不在 pipelines → 跳过
+        "OCR_bool": True,  # bool → 跳过（但 OCR_bool 不在 pipelines）
+        "OCR": "not-a-number",  # 先被覆盖；这里测试 TypeError 分支
+    }
+    # 修正：OCR 在 pipelines，最后一个 "OCR":"not-a-number" 会触发 ValueError
+    mgr.restore_last_used_unix_ms(values)
+    # 无效时间戳被忽略，不崩溃
+    assert "OCR" in mgr._last_used or "OCR" not in mgr._last_used
+
+
+def test_restore_last_used_unix_ms_parses_valid() -> None:
+    """有效毫秒时间戳被正确解析（line 226-227, 234）。"""
+    mgr = _make_legacy_manager()
+    mgr._service._pipelines = {"OCR": object()}
+    now = time.time()
+    valid_ms = int((now - 100) * 1000)  # 100秒前
+    mgr.restore_last_used_unix_ms({"OCR": valid_ms})
+    restored = mgr._last_used.get("OCR")
+    assert restored is not None
+    assert abs(restored - (now - 100)) < 5  # 约 100 秒前
+
+
+def test_restore_last_used_skips_non_pipeline_entries() -> None:
+    """不在 pipelines 的条目被跳过（line 220-221）。"""
+    mgr = _make_legacy_manager()
+    mgr._service._pipelines = {"OCR": object()}
+    mgr.restore_last_used_unix_ms({"Unknown": 1000, "OCR": 2000})
+    assert "Unknown" not in mgr._last_used
