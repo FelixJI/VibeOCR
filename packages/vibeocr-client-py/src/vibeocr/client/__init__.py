@@ -40,5 +40,21 @@ def get_unique_output_path(output_path):
 
 
 def shutdown_backend_client():
-    """No-op; the v2 supervisor owns the backend. Kept for shutdown hooks."""
+    """Tear down process-wide background resources (pdf supervisor loop).
+
+    Called from ``pytest_sessionfinish`` and app shutdown hooks. Previously a
+    no-op, which left the ``pdf-supervisor-loop`` daemon thread running for the
+    whole pytest session and contributed to access-violation crashes when later
+    Qt tests created widgets in the restricted CI session.
+
+    The import is lazy *and* guarded: some CI jobs (e.g. the contracts gate)
+    run with a minimal dependency set that lacks ``httpx``, and
+    ``pdf_client`` imports it at module load. In that case we degrade to the
+    prior no-op rather than crashing session teardown.
+    """
+    try:
+        from vibeocr.supervisor.pdf_client import _shutdown_bg_loop
+    except ImportError:
+        return
+    _shutdown_bg_loop()
 
