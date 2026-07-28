@@ -21,7 +21,10 @@ from vibeocr.core.pipelines.pipeline_ocr import (
     _extract_polygon,
     _extract_preproc_info,
     _parse_single_result,
+    _recognize_ocr,
+    _recognize_ocr_batch,
 )
+from vibeocr.models.ocr_options import OCROptions
 
 
 class TestExtractBbox:
@@ -272,3 +275,140 @@ class TestExtractPreprocInfo:
         res = SimpleNamespace(foo="bar")
         _angle, png, _w, _h = _extract_preproc_info(res)
         assert png is None
+
+
+# ---- _recognize_ocr / _recognize_ocr_batch via fake service/pipeline ----
+
+
+class _FakeOcrPipeline:
+    """模拟 PaddleOCR pipeline.predict 返回合成 dict 输出。"""
+
+    def __init__(self, output_list):
+        self._output = output_list
+
+    def predict(self, input, **kwargs):  # noqa: A002
+        return list(self._output)
+
+
+class _FakeOcrService:
+    def __init__(self, output_list):
+        self._pipeline = _FakeOcrPipeline(output_list)
+
+    def get_or_create_pipeline(self, name):
+        return self._pipeline
+
+
+def _make_ocr_result_dict(texts, scores=None, boxes=None):
+    """构造单个 PaddleOCR OCR 结果 dict。"""
+    return {
+        "rec_texts": list(texts),
+        "rec_scores": scores or [0.9] * len(texts),
+        "rec_boxes": boxes,
+    }
+
+
+class TestRecognizeOcr:
+    def test_recognize_single_image(self):
+        from vibeocr.core.pipelines.pipeline_ocr import _recognize_ocr
+
+        output = [_make_ocr_result_dict(["hello", "world"], boxes=[[0, 0, 10, 10], [1, 1, 2, 2]])]
+        service = _FakeOcrService(output)
+        result = _recognize_ocr(service, image=None, options=OCROptions())
+        assert result.raw_text == "hello\nworld"
+        assert len(result.text_blocks) == 2
+
+    def test_recognize_empty_output(self):
+        from vibeocr.core.pipelines.pipeline_ocr import _recognize_ocr
+
+        service = _FakeOcrService([])
+        result = _recognize_ocr(service, image=None, options=OCROptions())
+        assert result.raw_text == ""
+
+    def test_recognize_with_preproc_info(self):
+        import numpy as np
+
+        from vibeocr.core.pipelines.pipeline_ocr import _recognize_ocr
+
+        arr = np.zeros((2, 3, 3), dtype=np.uint8)
+        output = [
+            {
+                "rec_texts": ["t"],
+                "rec_scores": [0.9],
+                "doc_preprocessor_res": {"angle": 180, "output_img": arr},
+            }
+        ]
+        service = _FakeOcrService(output)
+        result = _recognize_ocr(service, image=None, options=OCROptions())
+        assert result.preproc_angle == 180
+        assert result.preproc_img_w == 3
+        assert result.preprocessed_image is not None
+
+    def test_recognize_predict_exception_propagates(self):
+        from vibeocr.core.pipelines.pipeline_ocr import _recognize_ocr
+
+        class _CrashPipeline:
+            def predict(self, input, **kwargs):  # noqa: A002
+                raise RuntimeError("predict failed")
+
+        class _CrashService:
+            def get_or_create_pipeline(self, name):
+                return _CrashPipeline()
+
+        with pytest.raises(RuntimeError, match="predict failed"):
+            _recognize_ocr(_CrashService(), image=None, options=OCROptions())
+
+
+class TestRecognizeOcrBatch:
+    def test_batch_multiple_images(self):
+        from vibeocr.core.pipelines.pipeline_ocr import _recognize_ocr_batch
+
+        output = [
+            _make_ocr_result_dict(["a"]),
+            _make_ocr_result_dict(["b", "c"]),
+        ]
+        service = _FakeOcrService(output)
+        results = _recognize_ocr_batch(service, images=[None, None], options=OCROptions())
+        assert len(results) == 2
+        assert results[0].raw_text == "a"
+        assert results[1].raw_text == "b\nc"
+
+    def test_batch_pads_missing_results(self):
+        """输出项少于输入图时补空结果（line 474-477）。"""
+        from vibeocr.core.pipelines.pipeline_ocr import _recognize_ocr_batch
+
+        output = [_make_ocr_result_dict(["only-one"])]  # 只返回 1 个
+        service = _FakeOcrService(output)
+        results = _recognize_ocr_batch(
+            service, images=[None, None, None], options=OCROptions()
+        )
+        assert len(results) == 3  # 补齐到 3
+        assert results[0].raw_text == "only-one"
+        assert results[1].raw_text == ""
+        assert results[2].raw_text == ""
+
+    def test_batch_error_item_skipped_preproc(self):
+        """结果项含 error → 跳过 preproc 提取（line 452）。"""
+        from vibeocr.core.pipelines.pipeline_ocr import _recognize_ocr_batch
+
+        output = [{"error": "failed"}]
+        service = _FakeOcrService(output)
+        results = _recognize_ocr_batch(service, images=[None], options=OCROptions())
+        assert len(results) == 1
+        assert results[0].raw_text == ""
+        assert results[0].preprocessed_image is None
+
+    def test_batch_predict_exception_propagates(self):
+        from vibeocr.core.pipelines.pipeline_ocr import _recognize_ocr_batch
+
+        class _CrashPipeline:
+            def predict(self, input, **kwargs):  # noqa: A002
+                raise RuntimeError("batch failed")
+
+        class _CrashService:
+            def get_or_create_pipeline(self, name):
+                return _CrashPipeline()
+
+        with pytest.raises(RuntimeError, match="batch failed"):
+            _recognize_ocr_batch(
+                _CrashService(), images=[None], options=OCROptions()
+            )
