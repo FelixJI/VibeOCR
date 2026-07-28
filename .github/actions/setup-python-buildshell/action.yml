@@ -1,18 +1,20 @@
 name: Setup Python + build-shell.lock
-description: Checkout + setup Python 3.13 + install hash-pinned build-shell dependencies.
+description: Setup Python 3.13 + install hash-pinned build-shell dependencies. Callers must checkout first.
 
-inputs:
-  fetch-depth:
-    description: actions/checkout fetch-depth
-    required: false
-    default: "1"
+# NOTE: this action intentionally does NOT run actions/checkout. Every caller
+# already checks out the exact ref it needs (ci.yml jobs check out the PR/push
+# ref; release.yml's build job checks out the release tag). A bare
+# `actions/checkout@v5` here (with no `ref`) would default to the triggering
+# branch and silently clobber a caller's intentional tag checkout — that is
+# exactly what broke the v0.6.2 release: the build job checked out refs/tags/v0.6.2,
+# then this action re-checked out main (0.6.1), so the wheels built as 0.6.1 and
+# bind_backend_artifact.py failed with "wheel version mismatch".
+# Callers must also checkout before invoking this action so the runner can
+# resolve the local composite action.yml (see ci.yml header comments).
 
 runs:
   using: "composite"
   steps:
-    - uses: actions/checkout@v5
-      with:
-        fetch-depth: ${{ inputs.fetch-depth }}
     - uses: actions/setup-python@v6
       with:
         python-version: "3.13"
