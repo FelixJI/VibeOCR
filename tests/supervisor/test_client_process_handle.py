@@ -416,3 +416,57 @@ def test_supervisor_process_launch_failure_releases_process_and_job(
 
     popen.terminate.assert_called_once_with()
     guard.close.assert_called_once_with()
+
+
+# ---- _drain_stream 日志行解析 ----
+
+
+def test_drain_stream_parses_uvicorn_access_line(caplog):
+    """_drain_stream 解析 uvicorn access 日志并调用 log_http_response（line 220-230）。"""
+    import logging
+
+    from vibeocr.supervisor.process import SupervisorProcess
+
+    proc = SupervisorProcess.__new__(SupervisorProcess)
+    proc._log_lines = []
+
+    lines = [
+        'INFO: 127.0.0.1:0 - "POST /v2/jobs HTTP/1.1" 200',
+        'INFO: 127.0.0.1:0 - "GET /v2/health HTTP/1.1" 500',
+        "plain log line",
+    ]
+    with caplog.at_level(logging.WARNING):
+        proc._drain_stream(iter(lines))
+    # 普通行进 _log_lines
+    assert "plain log line" in proc._log_lines
+    # 500 状态码触发 WARNING 日志
+    assert any("500" in r.message for r in caplog.records)
+
+
+def test_drain_stream_parses_http_request_line(caplog):
+    """_drain_stream 解析 HTTP 请求行（line 232-243）。"""
+    import logging
+
+    from vibeocr.supervisor.process import SupervisorProcess
+
+    proc = SupervisorProcess.__new__(SupervisorProcess)
+    proc._log_lines = []
+
+    lines = [
+        'HTTP Request: GET http://127.0.0.1:1234/v2/health "200 OK"',
+        "another plain line",
+    ]
+    with caplog.at_level(logging.DEBUG):
+        proc._drain_stream(iter(lines))
+    assert "another plain line" in proc._log_lines
+
+
+def test_drain_stream_empty_lines_appended():
+    """空行也进 _log_lines（line 244-246）。"""
+    from vibeocr.supervisor.process import SupervisorProcess
+
+    proc = SupervisorProcess.__new__(SupervisorProcess)
+    proc._log_lines = []
+    proc._drain_stream(iter(["", "non-empty"]))
+    assert "" in proc._log_lines
+    assert "non-empty" in proc._log_lines
