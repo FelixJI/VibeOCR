@@ -18,6 +18,10 @@ jobs:
     # Only checked-in synthetic fixtures; no network/model/GPU dependency.
     timeout-minutes: 10
     steps:
+      # Checkout first so the runner can resolve the local composite action's
+      # action.yml; newer GitHub Actions runners no longer auto-discover it
+      # from an empty workspace. The composite re-checkouts at the same depth.
+      - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-python-buildshell
       - name: Run offline table semantic contract gate
         shell: pwsh
@@ -40,6 +44,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 15
     steps:
+      - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-python-buildshell
       - name: Run expanded table regression matrix
         shell: pwsh
@@ -77,6 +82,7 @@ jobs:
     # 正常 ~2-3min（800+ 测试 + 构 wheel）；30min 宽裕上限防卡死。
     timeout-minutes: 30
     steps:
+      - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-python-buildshell
       - run: python -m pytest tests/architecture tests/contracts/v2 tests/application tests/services tests/supervisor tests/test_dependency_bootstrap.py -q
       - name: Run remaining Python unit tests
@@ -113,6 +119,7 @@ jobs:
     # 正常 ~2-3min；30min 宽裕上限防卡死。
     timeout-minutes: 30
     steps:
+      - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-python-buildshell
       - run: python -m pytest tests/views tests/widgets tests/client tests/architecture/test_ui_backend_import_allowlist.py -q
       - run: python -m ruff check apps packages tests scripts
@@ -148,6 +155,7 @@ jobs:
     # 需全量数据才有意义），但作为独立 job 并行执行，不拖慢其它 job。
     timeout-minutes: 30
     steps:
+      - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-python-buildshell
       - name: Run tests with coverage gate
         shell: pwsh
@@ -175,6 +183,7 @@ jobs:
     # 硬门会使主干变红；WinUI 成熟到默认随发版时再恢复 --require-pass。
     timeout-minutes: 15
     steps:
+      - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-python-buildshell
       - name: Validate feature-parity matrix
         shell: bash
