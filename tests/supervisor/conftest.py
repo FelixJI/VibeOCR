@@ -26,10 +26,11 @@ from vibeocr.supervisor.bootstrap import generate_session_token, new_instance_id
 from vibeocr.supervisor.module import SupervisorModule, SupervisorOptions
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
     from pathlib import Path
 
     from vibeocr.protocol.v2 import CancelMode, ResidencyStatus, SettingsSnapshot
+    from vibeocr.supervisor.inference.mineru_adapter import MinerUProcessAdapter
 
 
 class FakePdfAdapter:
@@ -274,3 +275,45 @@ def supervisor_token() -> str:
 @pytest.fixture()
 def pdf_app(pdf_module: SupervisorModule, supervisor_token: str):
     return create_app(pdf_module, supervisor_token)
+
+
+@pytest.fixture(autouse=True)
+def _stop_mineru_watchers_after_test(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[None]:
+    """Close leaked MinerU residency-watcher threads after each test.
+
+    Several inference tests construct ``MinerUProcessAdapter`` instances (which
+    spawn a resident ``_watch_residency`` daemon when ``_ensure_watcher_locked``
+    runs) without calling ``.close()`` afterwards. Those daemon threads
+    accumulate across the full pytest session and, combined with the
+    pdf-supervisor-loop singleton and Qt widget creation in later view tests,
+    have triggered ``Windows fatal exception: access violation`` crashes in the
+    restricted CI session (run 30357452209, coverage job).
+
+    This wraps ``_ensure_watcher_locked`` to track every adapter that starts a
+    watcher and closes them after each test, so no watcher daemon outlives the
+    test that created it. The lazy import keeps the backend module out of the
+    client-side test path until a test actually touches MinerU.
+    """
+    from vibeocr.supervisor.inference import mineru_adapter as _ma
+
+    created: list = []
+    original: Callable[..., None] = _ma.MinerUProcessAdapter._ensure_watcher_locked
+
+    def _tracking(self: MinerUProcessAdapter) -> None:
+        original(self)
+        if self not in created:
+            created.append(self)
+
+    monkeypatch.setattr(
+        _ma.MinerUProcessAdapter, "_ensure_watcher_locked", _tracking
+    )
+    yield
+    for adapter in created:
+        try:
+            adapter.close()
+        except Exception:
+            # A test may have already torn the adapter down; never let cleanup
+            # mask the real failure or break teardown.
+            pass

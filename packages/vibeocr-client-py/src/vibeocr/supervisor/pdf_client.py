@@ -506,6 +506,19 @@ class _BackgroundLoop:
         asyncio.set_event_loop(self._loop)
         self._loop.run_forever()
 
+    def stop(self) -> None:
+        """Stop the background loop and let its thread exit. Idempotent.
+
+        Production code never calls this (the daemon dies with the process at
+        exit). It exists for test-session teardown so the pdf-supervisor-loop
+        thread does not linger across a full pytest run and collide with later
+        Qt widget creation in the restricted CI session.
+        """
+        if self._loop.is_running():
+            self._loop.call_soon_threadsafe(self._loop.stop)
+        # Daemon thread; bounded join so a wedged loop can't hang teardown.
+        self._thread.join(timeout=2.0)
+
     def run(self, coro: Any, timeout: float | None = None) -> Any:
         with self._lock:
             future = asyncio.run_coroutine_threadsafe(coro, self._loop)
@@ -557,6 +570,23 @@ def _get_bg_loop() -> _BackgroundLoop:
         if _BG_LOOP is None:
             _BG_LOOP = _BackgroundLoop()
         return _BG_LOOP
+
+
+def _shutdown_bg_loop() -> None:
+    """Tear down the process-wide background loop (test/session shutdown).
+
+    Stops the pdf-supervisor-loop daemon thread and drops the singleton so a
+    later call re-creates a fresh loop if needed. Idempotent. Called from
+    ``vibeocr.client.shutdown_backend_client`` (pytest_sessionfinish / app
+    shutdown) to prevent the lingering thread from colliding with later Qt
+    widget creation in the restricted CI session.
+    """
+    global _BG_LOOP
+    with _BG_LOOP_LOCK:
+        loop = _BG_LOOP
+        _BG_LOOP = None
+    if loop is not None:
+        loop.stop()
 
 
 class SyncPdfSupervisorClient:
