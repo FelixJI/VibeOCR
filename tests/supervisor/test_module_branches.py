@@ -11,13 +11,12 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import pytest
 
 from vibeocr.protocol.v2 import (
     CancelMode,
-    ContractError,
     JobKind,
     JobPriority,
     JobState,
@@ -29,7 +28,6 @@ from vibeocr.protocol.v2 import (
 )
 from vibeocr.supervisor.jobs.staging import StagingQuotaError
 from vibeocr.supervisor.module import (
-    ShutdownRequested,
     SupervisorModule,
     SupervisorOptions,
 )

@@ -19,7 +19,6 @@ from vibeocr.protocol.v2 import (
     ContractError,
     ErrorCode,
     EvictionReason,
-    ItemOutcome,
     ItemState,
     JobItem,
     JobKind,
@@ -1019,7 +1018,7 @@ def test_parse_job_snapshot_rejects_non_string_state() -> None:
 
 def test_parse_submit_request_roundtrip_with_upload_source() -> None:
     """Cover the upload.v1 source branch end-to-end (lines 214-218)."""
-    request = SubmitRequest(
+    _request = SubmitRequest(  # exercises the upload-source dataclass construction
         request_id="req-1",
         kind=JobKind.RECOGNITION,
         priority=JobPriority.BACKGROUND,

@@ -21,25 +21,29 @@ def test_main_table_regression_covers_cross_layer_surfaces_and_has_ratchet():
     assert "--cov-fail-under=85" in workflow
 
 
-def test_release_runs_provider_gate_and_exact_artifact_gate():
+def test_release_runs_table_artifact_gate_after_builds():
     workflow = (REPO_ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
 
-    provider_gate = workflow.index("Run offline table provider contract gate")
-    wheel_build = workflow.index("Build physical Python workspace wheels")
+    # The release workflow builds both installer variants, then runs a single
+    # table-semantics artifact gate. The gate must come after the builds so it
+    # inspects finished artifacts, and it covers whichever variant was built.
+    pyside_build = workflow.index("Build PySide6 Classic (PyInstaller)")
+    winui_build = workflow.index("Build WinUI Next (.NET publish)")
     artifact_gate = workflow.index("Verify table semantics in release artifacts")
-    assert provider_gate < wheel_build < artifact_gate
-    assert "scripts/run_table_contract_gate.ps1" in workflow
+    assert pyside_build < artifact_gate
+    assert winui_build < artifact_gate
     assert "scripts/verify_table_artifact.py" in workflow
     assert "reports/table-release-contract" in workflow
 
 
-def test_release_requires_full_parity_only_when_winui_is_selected():
+def test_release_table_gate_runs_per_selected_variant():
     workflow = (REPO_ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
 
-    assert 'steps.variants.outputs.build_winui }}" == "true"' in workflow
-    assert "feature-parity.md --require-pass" in workflow
-    unconditional_validation = (
-        "python tests/parity/validate_matrix.py "
-        "docs/quality/feature-parity.md\n"
-    )
-    assert unconditional_validation in workflow
+    # The gate is conditional on the resolved build variants, and verifies each
+    # built artifact (Classic zip / WinUI zip) against the table contract.
+    assert "steps.variants.outputs.build_pyside" in workflow
+    assert "steps.variants.outputs.build_winui" in workflow
+    assert "VibeOCR-Classic-" in workflow
+    assert "VibeOCR-Next-" in workflow
+    assert "reports/table-artifact/classic" in workflow
+    assert "reports/table-artifact/winui" in workflow

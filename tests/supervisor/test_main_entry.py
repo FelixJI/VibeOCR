@@ -11,8 +11,6 @@ early-exit, the soak-crash env gate, and the uvicorn config builder.
 from __future__ import annotations
 
 import json
-import os
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -21,6 +19,7 @@ from vibeocr.supervisor import main as supervisor_main
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from pathlib import Path
 
 
 @pytest.fixture()

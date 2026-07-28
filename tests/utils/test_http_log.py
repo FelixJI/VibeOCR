@@ -114,7 +114,7 @@ def test_guess_response_size_from_content_and_headers() -> None:
     # bytes content
     assert guess_response_size(None, b"hello") == 5
     # str content → utf-8 编码后长度
-    assert guess_response_size(None, "你好") == len("你好".encode("utf-8"))
+    assert guess_response_size(None, "你好") == len("你好".encode())
     # 无 content，从 headers
     assert guess_response_size({"content-length": "42"}, None) == 42
     assert guess_response_size({"Content-Length": "99"}, None) == 99

@@ -14,8 +14,6 @@ from vibeocr.protocol.v2 import (
     JobKind,
     JobState,
     PipelineSpec,
-    ResidencyEntry,
-    ResidencyKind,
     ResidencyStatus,
     SettingsSnapshot,
 )

@@ -725,14 +725,19 @@ class BatchRecognitionTab(BaseOcrTab):
             (Path(file_info["path"]).name, None, data)
             for file_info, data in loaded
         ]
-        adapter.submit_recognition(
-            uploads,
-            priority=JobPriority.BACKGROUND,
-            pipeline=PipelineSelection(
-                pipeline_id=pipeline_id,
-                options=semantic_options,
-            ),
-        )
+        # submit_recognition 同步抛异常会逃出 Qt slot，导致 _run_state 卡在
+        # STATE_RUNNING、Start 按钮永久禁用。捕获后走统一失败路径，复位状态。
+        try:
+            adapter.submit_recognition(
+                uploads,
+                priority=JobPriority.BACKGROUND,
+                pipeline=PipelineSelection(
+                    pipeline_id=pipeline_id,
+                    options=semantic_options,
+                ),
+            )
+        except Exception as exc:
+            self._fail_supervisor_submission(generation, str(exc))
 
     def _fail_supervisor_submission(
         self, generation: int, error: str

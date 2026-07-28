@@ -24,7 +24,6 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
-import pytest
 
 
 def _run(coro):
@@ -143,9 +142,7 @@ class TestAssetMatching:
         """_find_asset_size 找不到匹配 name → 0（line 203）。"""
         from vibeocr.services.update_service import _find_asset_size
 
-        # release 有匹配 asset 但 size 查询时 name 对不上（构造不一致）
-        release = {"assets": [{"name": "other.zip", "size": 100}]}
-        # _find_asset 找不到 zip（other.zip 不匹配 .zip? 它匹配）—— 用空 assets
+        # _find_asset 找不到 zip（无 assets）→ 返回 0。
         release_empty = {"assets": []}
         assert _find_asset_size(release_empty, ".zip") == 0
 
@@ -185,10 +182,10 @@ class TestReadLocalVersionBranches:
 
     def test_no_version_json_no_dunder_returns_zero(self, tmp_path, monkeypatch):
         """无 version.json + __version__ import 失败 → 0.0.0（line 228-230）。"""
-        from vibeocr.services import update_service
-
         # 让 from vibeocr import __version__ 抛异常
         import sys
+
+        from vibeocr.services import update_service
 
         monkeypatch.setitem(sys.modules, "vibeocr", None)
         assert (
@@ -242,10 +239,10 @@ class TestFetchReleaseException:
 class TestDetectNetworkTypeException:
     def test_exception_returns_international(self, monkeypatch):
         """NetworkDetector 抛异常 → international（line 265-266）。"""
-        from vibeocr.services import update_service
-
         # 让 import 抛异常
         import sys
+
+        from vibeocr.services import update_service
 
         monkeypatch.setitem(sys.modules, "vibeocr.network_detector", None)
         assert update_service._detect_network_type() == "international"
@@ -406,11 +403,14 @@ class TestDownloadZipWithShaCancelAfterSha:
         """sha 下载成功后、zip 下载前取消 → cancelled（line 446-448）。"""
         import threading
 
+        from tests.services.test_update_service import (
+            _make_client,
+            _make_stream_response,
+        )
         from vibeocr.services.update_service import (
             DOWNLOAD_REASON_CANCELLED,
             _download_zip_with_sha,
         )
-        from tests.services.test_update_service import _make_client, _make_stream_response
 
         client = _make_client(
             stream_cm=_make_stream_response(200, [b"zipdata"]),
@@ -546,7 +546,7 @@ class TestDownloadUpdateCacheCleanup:
 
         # unlink 抛 OSError（被清理循环吞掉）
         with patch.object(Path, "unlink", side_effect=OSError("denied")):
-            zip_path, reasons = _run(
+            zip_path, _reasons = _run(
                 download_update(
                     info,
                     cache_dir=cache_dir,

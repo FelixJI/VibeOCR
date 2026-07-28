@@ -197,6 +197,9 @@ class TestSingleRecognitionTabCopyImage:
         tab = SingleRecognitionTab()  # 无图
         tab._on_copy_image()
         assert called["yes"] is False
+        # 无图时应给出明确反馈，而非静默无反应
+        assert tab._copy_toast.isHidden() is False
+        assert "暂无图片可复制" in tab._copy_toast.text()
 
     def test_copy_image_btn_triggers_on_copy(self, qapp, sample_pixmap, monkeypatch):
         called = {"yes": False}
@@ -210,6 +213,45 @@ class TestSingleRecognitionTabCopyImage:
         tab.set_pixmap(sample_pixmap)
         tab._copy_image_btn.click()
         assert called["yes"] is True
+
+
+class TestPasteAndStartFeedback:
+    """「粘贴」「开始识别」失败路径应给出反馈，而非静默无反应。"""
+
+    def test_paste_empty_clipboard_shows_toast(self, qapp, monkeypatch):
+        """剪贴板无图片时点粘贴，应提示「剪贴板中没有图片」。"""
+
+        class EmptyClipboard:
+            def pixmap(self):
+                from PySide6.QtGui import QPixmap
+
+                return QPixmap()  # null pixmap
+
+        monkeypatch.setattr(QGuiApplication, "clipboard", lambda *a, **k: EmptyClipboard())
+        tab = SingleRecognitionTab()
+        tab._on_paste()
+        assert tab._copy_toast.isHidden() is False
+        assert "剪贴板中没有图片" in tab._copy_toast.text()
+
+    def test_process_file_missing_shows_warning(self, qapp, monkeypatch, tmp_path):
+        """待识别文件已被删除时，process_file 应弹警告而非静默。"""
+        warnings: list[tuple] = []
+
+        class FakeQMessageBox:
+            @staticmethod
+            def warning(parent, title, text):
+                warnings.append((title, text))
+
+        monkeypatch.setattr(
+            "PySide6.QtWidgets.QMessageBox", FakeQMessageBox
+        )
+        tab = SingleRecognitionTab()
+        tab._pending_file_path = str(tmp_path / "deleted.png")  # 文件不存在
+        tab.process_file(str(tmp_path / "deleted.png"))
+
+        assert warnings, "文件不存在应弹警告"
+        assert "无法识别" in warnings[0][0]
+        assert "deleted.png" in warnings[0][1]
 
 
 def _make_table_result():

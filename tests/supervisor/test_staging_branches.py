@@ -7,7 +7,7 @@ has_staged_item, release_all, cleanup_stale.
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -15,6 +15,9 @@ from vibeocr.supervisor.jobs.staging import (
     InputStager,
     StagingQuotaError,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _stager(tmp_path: Path, **kwargs) -> InputStager:  # type: ignore[no-untyped-def]
@@ -76,8 +79,6 @@ def test_clone_for_retry_cleans_retry_dir_when_copy_fails(
 
     stager = _stager(tmp_path)
     staged = stager.stage_job("source-job", [("a.png", None, b"x")])
-
-    real_copy2 = shutil.copy2
 
     def boom_copy2(src, dst, *, follow_symlinks=True):  # type: ignore[no-untyped-def]
         raise OSError("disk full")

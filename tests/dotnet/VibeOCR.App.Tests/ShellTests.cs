@@ -51,6 +51,30 @@ public sealed class ShellTests
         Assert.Throws<ArgumentException>(() => AppLaunchOptions.Parse(["--profile"]));
 
     [Fact]
+    public void GotoDestinationIsParsedWhenValid()
+    {
+        AppLaunchOptions result = AppLaunchOptions.Parse(["--goto", "pdf"]);
+        Assert.Equal("pdf", result.Goto);
+    }
+
+    [Fact]
+    public void GotoDefaultsToNullWhenAbsent()
+    {
+        AppLaunchOptions result = AppLaunchOptions.Parse([]);
+        Assert.Null(result.Goto);
+    }
+
+    [Theory]
+    [InlineData("unknown")]
+    [InlineData("")]
+    public void UnsupportedGotoDestinationsAreRejected(string destination) =>
+        Assert.Throws<ArgumentException>(() => AppLaunchOptions.Parse(["--goto", destination]));
+
+    [Fact]
+    public void MissingGotoValueIsRejected() =>
+        Assert.Throws<ArgumentException>(() => AppLaunchOptions.Parse(["--goto"]));
+
+    [Fact]
     public void ProductionSupervisorRootComesFromPackagedRelease()
     {
         string root = Path.Combine(Path.GetTempPath(), $"vibeocr-supervisor-{Guid.NewGuid():N}");

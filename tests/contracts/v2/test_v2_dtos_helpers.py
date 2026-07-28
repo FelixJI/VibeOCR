@@ -7,11 +7,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
-import pytest
+from datetime import UTC, datetime
 
 from vibeocr.protocol.v2 import (
+    ErrorCode,
     ErrorPayload,
     ItemOutcome,
     ItemState,
@@ -19,10 +18,8 @@ from vibeocr.protocol.v2 import (
     ResultEntry,
     SettingsSnapshot,
     UnknownJobError,
-    error_registry,
     new_job_id,
 )
-from vibeocr.protocol.v2 import ErrorCode
 from vibeocr.protocol.v2.dtos import _to_iso
 from vibeocr.protocol.v2.errors import ErrorCategories, entry_for
 
@@ -37,7 +34,7 @@ def test_to_iso_string_passthrough() -> None:
 
 def test_to_iso_naive_datetime_gets_utc() -> None:
     """无时区信息的 datetime 被赋予 UTC 后再 isoformat。"""
-    naive = datetime(2024, 1, 1, 12, 0, 0)
+    naive = datetime(2024, 1, 1, 12, 0, 0)  # noqa: DTZ001 - intentionally naive; the SUT attaches UTC
     result = _to_iso(naive)
     assert result is not None
     assert result.endswith("+00:00")
@@ -46,7 +43,7 @@ def test_to_iso_naive_datetime_gets_utc() -> None:
 
 def test_to_iso_aware_datetime_preserved() -> None:
     """带时区信息的 datetime 直接 isoformat。"""
-    aware = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    aware = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
     result = _to_iso(aware)
     assert result == aware.isoformat()
 

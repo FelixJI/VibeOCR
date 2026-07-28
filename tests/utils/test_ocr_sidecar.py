@@ -262,8 +262,8 @@ def test_growth_ok_false_when_baseline_missing(tmp_path):
 
 def test_growth_ok_false_when_stat_raises(tmp_path, monkeypatch):
     """文件 stat 失败时 _growth_ok 返回 False（line 77-78）。"""
+
     from vibeocr.utils import ocr_sidecar
-    from pathlib import Path
 
     f = tmp_path / "missing.pdf"
     data = {"original_size": 1, "original_mtime_ns": 1}

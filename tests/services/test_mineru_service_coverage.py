@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import base64
 import json
 import logging
 import subprocess
@@ -17,7 +16,7 @@ import pytest
 
 pytest.importorskip("httpx", reason="httpx not installed")
 
-from vibeocr.services.mineru_service import MinerUService  # noqa: E402
+from vibeocr.services.mineru_service import MinerUService
 
 
 def _make_service():
@@ -255,7 +254,6 @@ class TestStartApi:
             def __init__(self, root):
                 self.mineru_source = "modelscope"
 
-        import vibeocr.services.mineru_service as mod
 
         def _capture_popen(cmd, **kwargs):
             captured_env.update(kwargs.get("env", {}))

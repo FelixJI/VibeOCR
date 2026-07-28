@@ -28,11 +28,11 @@ def test_getattr_unknown_attribute_raises():
     import vibeocr.services as services
 
     with pytest.raises(AttributeError, match="has no attribute"):
-        _ = services.OCRServiceSubprocess  # noqa: F841
+        _ = services.OCRServiceSubprocess
 
 
 def test_getattr_other_unknown_attribute_raises():
     with pytest.raises(AttributeError, match="MinerUBatchService"):
         import vibeocr.services as services
 
-        _ = services.MinerUBatchService  # noqa: F841
+        _ = services.MinerUBatchService

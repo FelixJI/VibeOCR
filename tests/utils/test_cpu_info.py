@@ -391,8 +391,9 @@ def test_read_windows_features_all_branches_via_fake_kernel(monkeypatch):
     ctypes.windll 是 C 实现的特殊属性，无法直接 monkeypatch；
     故改为 patch 模块内的 ctypes 引用，间接注入 fake。
     """
-    from vibeocr.utils import cpu_info
     import types as _types
+
+    from vibeocr.utils import cpu_info
 
     supported = {1, 10, 13, 39, 40, 43}  # SSE/SSE2/SSE3/AVX/AVX2/AVX512F
 
@@ -427,9 +428,10 @@ def test_read_windows_features_all_branches_via_fake_kernel(monkeypatch):
 
 def test_read_windows_features_falls_back_when_kernel_call_raises():
     """kernel32 调用抛异常时返回空串（line 142-144）。"""
-    from vibeocr.utils import cpu_info
-    import types as _types
     import sys
+    import types as _types
+
+    from vibeocr.utils import cpu_info
 
     class _BrokenKernel:
         def IsProcessorFeaturePresent(self, _fid):
@@ -454,9 +456,10 @@ def test_read_windows_features_falls_back_when_kernel_call_raises():
 
 def test_read_windows_features_partial_support_exercises_false_branches():
     """只支持 SSE/AVX2（其余 False），覆盖每个 if 的 False 分支。"""
-    from vibeocr.utils import cpu_info
-    import types as _types
     import sys
+    import types as _types
+
+    from vibeocr.utils import cpu_info
 
     supported = {1, 40}  # 仅 SSE + AVX2
 
@@ -499,9 +502,10 @@ def test_get_cpu_thread_count_non_positive_override_ignored(monkeypatch):
 
 def test_read_windows_features_no_support_returns_empty():
     """CPU 不支持任何已知指令集时返回空串（覆盖所有 if False 分支）。"""
-    from vibeocr.utils import cpu_info
-    import types as _types
     import sys
+    import types as _types
+
+    from vibeocr.utils import cpu_info
 
     class _NoSupportKernel:
         def IsProcessorFeaturePresent(self, _fid):

@@ -947,8 +947,7 @@ def build_table_copy_payload(result: Any) -> tuple[str, str]:
 def _create_cf_html(html_fragment: str) -> str:
     """构建 Microsoft Office CF_HTML 剪贴板格式（字节偏移头部 + 片段）。
 
-    复用 ``clipboard_controller`` 的思路：Word/Excel 粘贴时优先读 CF_HTML，
-    能把 ``<table>`` 还原为原生表格。
+    Word/Excel 粘贴时优先读 CF_HTML，能把 ``<table>`` 还原为原生表格。
     """
     full_html = (
         "<!DOCTYPE html>\n<html>\n<head><meta charset='utf-8'></head>\n<body>\n"
@@ -1455,9 +1454,12 @@ class ResultViewWidget(QWidget):
 
     def _on_copy_job_completed(self, payload: object) -> None:
         if not self._is_current_copy_signal():
+            # 结果在复制期间已被刷新/编辑：静默丢弃此次迟到的回调，
+            # 不写剪贴板、不打扰用户（新的复制请求会自行反馈）。
             return
         if not isinstance(payload, tuple) or len(payload) != 3:
             logger.error("忽略无效的复制准备 payload")
+            self._show_copy_toast("复制失败，请重试")
             return
         kind, html, text = payload
         if html and text:
@@ -1467,10 +1469,14 @@ class ResultViewWidget(QWidget):
             self._show_copy_toast(
                 "Markdown 已复制" if kind == "markdown" else "已复制到剪贴板"
             )
+        else:
+            # 结果既无表格也无文本（如纯图片结果）：明确告知用户。
+            self._show_copy_toast("无可复制内容")
 
     def _on_copy_job_failed(self, error: str) -> None:
         if self._is_current_copy_signal():
             logger.error("复制内容准备失败: %s", error)
+            self._show_copy_toast("复制失败，请重试")
 
     def _on_copy_job_stopped(self, job: ExportSaveJob) -> None:
         if job is self._copy_job:
@@ -1482,6 +1488,10 @@ class ResultViewWidget(QWidget):
         self, generation: int, expected_token: str, payload: object
     ) -> None:
         if generation != self._copy_generation:
+            # 迟到的旧回调：必须同样清理 _copy_js_pending，否则该 flag 会
+            # 残留为 True，使下一次渲染后复制按钮一直处于禁用态。
+            self._copy_js_pending = False
+            logger.debug("丢弃迟到的复制回调（generation 已过期）")
             return
         self._copy_js_pending = False
         if not (
@@ -1491,7 +1501,10 @@ class ResultViewWidget(QWidget):
             and isinstance(payload, dict)
             and payload.get("documentToken") == expected_token
         ):
+            # 结果在点击后已被刷新：token 失配，明确告知用户重试。
             self._set_copy_busy(False)
+            self._show_copy_toast("结果已刷新，请重新复制")
+            logger.debug("复制回调 token 失配，未写入剪贴板")
             return
         html = str(payload.get("html") or "")
         text = str(payload.get("text") or "")
@@ -1500,6 +1513,8 @@ class ResultViewWidget(QWidget):
         elif text:
             QGuiApplication.clipboard().setText(text)
             self._show_copy_toast()
+        else:
+            self._show_copy_toast("无可复制内容")
         self._set_copy_busy(False)
 
     def _cancel_copy(self) -> None:

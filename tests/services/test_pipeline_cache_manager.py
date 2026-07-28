@@ -574,7 +574,7 @@ def test_restore_last_used_unix_ms_handles_invalid_entries() -> None:
         "OCR": valid_ms,  # 有效
         "Unknown": valid_ms,  # 不在 pipelines → 跳过
         "OCR_bool": True,  # bool → 跳过（但 OCR_bool 不在 pipelines）
-        "OCR": "not-a-number",  # 先被覆盖；这里测试 TypeError 分支
+        "OCR": "not-a-number",  # noqa: F601 - intentional duplicate to test the invalid-value path (last value wins)
     }
     # 修正：OCR 在 pipelines，最后一个 "OCR":"not-a-number" 会触发 ValueError
     mgr.restore_last_used_unix_ms(values)

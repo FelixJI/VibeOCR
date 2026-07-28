@@ -84,9 +84,9 @@ def test_config_manager_lazy_import_works():
 
 def test_apply_log_level_lazy_import_works(caplog):
     """_apply_log_level 的 lazy import 链可执行（line 19-21）。"""
-    import vibeocr.pyside.settings_runtime as sr
-
     import logging
+
+    import vibeocr.pyside.settings_runtime as sr
 
     logging.getLogger("vibeocr").setLevel("DEBUG")
     sr._apply_log_level("INFO")  # 不应抛

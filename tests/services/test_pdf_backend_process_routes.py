@@ -6,15 +6,17 @@ _render_page_pixels 错误路径。不启动真实子进程。
 
 from __future__ import annotations
 
-import io
 import sys
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import fitz
 import numpy as np
 import pytest
 from fastapi.testclient import TestClient
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @pytest.fixture
@@ -149,7 +151,7 @@ class TestLoadStream:
         resp = client.post(f"/session/{sid}/load")
         assert resp.status_code == 200
         # NDJSON：多行 JSON
-        lines = [l for l in resp.text.strip().split("\n") if l]
+        lines = [line for line in resp.text.strip().split("\n") if line]
         assert len(lines) >= 2  # 至少每页一条 + done
         last = __import__("json").loads(lines[-1])
         assert last["message"] == "done"
@@ -435,7 +437,7 @@ class TestTextLayerRoutes:
         assert body.get("extra") is None
 
     def test_add_text_layer_batch_with_save(self, opened_session):
-        client, _, sid, path = opened_session
+        client, _, sid, _path = opened_session
         resp = client.post(
             f"/session/{sid}/add_text_layer_batch",
             json={
@@ -636,7 +638,7 @@ class TestDeleteLayersStream:
             f"/session/{sid}/delete_text_layers", json={"pages": [0]}
         )
         assert resp.status_code == 200
-        lines = [l for l in resp.text.strip().split("\n") if l]
+        lines = [line for line in resp.text.strip().split("\n") if line]
         assert len(lines) >= 2
         last = __import__("json").loads(lines[-1])
         assert last["message"] == "done"
@@ -665,7 +667,7 @@ class TestDeleteLayersStream:
             f"/session/{sid}/delete_text_layers", json={"pages": [0]}
         )
         assert resp.status_code == 200
-        lines = [l for l in resp.text.strip().split("\n") if l]
+        lines = [line for line in resp.text.strip().split("\n") if line]
         # 第一行 payload 应为 None（异常路径）
         first = __import__("json").loads(lines[0])
         assert first["page_payload"] is None
@@ -883,7 +885,7 @@ class TestLoadEdgeCases:
         resp = client.post(f"/session/{sid}/load")
         assert resp.status_code == 200
         # 仍应有 done 哨兵
-        lines = [l for l in resp.text.strip().split("\n") if l]
+        lines = [line for line in resp.text.strip().split("\n") if line]
         last = __import__("json").loads(lines[-1])
         assert last["message"] == "done"
 
@@ -895,7 +897,7 @@ class TestLoadEdgeCases:
         session.cancel_event.set()
         resp = client.post(f"/session/{sid}/load")
         assert resp.status_code == 200
-        lines = [l for l in resp.text.strip().split("\n") if l]
+        lines = [line for line in resp.text.strip().split("\n") if line]
         # 第一页就 break → 只有 done 哨兵
         assert len(lines) == 1
         last = __import__("json").loads(lines[-1])
@@ -1063,7 +1065,7 @@ class TestDeleteLayersCancelAndPayloads:
             f"/session/{sid}/delete_text_layers", json={"pages": [0, 1]}
         )
         assert resp.status_code == 200
-        lines = [l for l in resp.text.strip().split("\n") if l]
+        lines = [line for line in resp.text.strip().split("\n") if line]
         # 立即 break → 只有 done 哨兵
         assert len(lines) == 1
 
@@ -1093,7 +1095,7 @@ class TestDeleteLayersCancelAndPayloads:
             f"/session/{sid}/delete_text_layers", json={"pages": [0]}
         )
         assert resp.status_code == 200
-        lines = [l for l in resp.text.strip().split("\n") if l]
+        lines = [line for line in resp.text.strip().split("\n") if line]
         last = __import__("json").loads(lines[-1])
         assert last["page_payload"]["residual_pages"] == [0]
 
@@ -1110,7 +1112,7 @@ class TestDeleteLayersCancelAndPayloads:
             f"/session/{sid}/delete_text_layers", json={"pages": [0]}
         )
         assert resp.status_code == 200
-        lines = [l for l in resp.text.strip().split("\n") if l]
+        lines = [line for line in resp.text.strip().split("\n") if line]
         first = __import__("json").loads(lines[0])
         assert first["page_payload"] == [0, 0, False]
 

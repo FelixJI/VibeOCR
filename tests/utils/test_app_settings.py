@@ -97,7 +97,7 @@ class TestAppSettingsConfigManagerMode:
         def __init__(self, stored=None, config_dir=None):
             from pathlib import Path
 
-            self.config_dir = config_dir or Path(".")
+            self.config_dir = config_dir or Path()
             self._stored = stored if stored is not None else {}
 
         def _load_json(self, filename, default=None):

@@ -293,7 +293,6 @@ def test_raw_log_auto_flush_at_threshold(caplog):
         for i in range(3):
             forwarder.forward(f"raw line {i} 内容")
         # 不显式 flush，应已自动产生概括记录
-    summary = [r for r in caplog.records if "raw line" not in r.message]
     # 内容不泄露
     assert all("内容" not in r.message for r in caplog.records)
     # 有概括记录提到 3 行

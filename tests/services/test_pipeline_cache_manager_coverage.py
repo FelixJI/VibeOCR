@@ -15,7 +15,6 @@ from vibeocr.protocol.v2 import PipelineSpec
 from vibeocr.services.pipeline_cache_manager import (
     FALLBACK_MAX_HEAVY,
     PipelineCacheManager,
-    compute_max_heavy_by_vram,
 )
 
 
