@@ -542,6 +542,10 @@ class TestDownloadUpdateMultiSource:
             "vibeocr.services.update_service._detect_network_type",
             return_value="international",
         ), patch(
+            "vibeocr.services.update_service._probe_github_reachable",
+            new_callable=AsyncMock,
+            return_value=True,
+        ), patch(
             "vibeocr.services.update_service._download_zip_with_sha",
             new_callable=AsyncMock,
             return_value=SourceAttempt(False, DOWNLOAD_REASON_SHA_MISMATCH),
