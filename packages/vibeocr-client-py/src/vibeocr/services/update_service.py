@@ -86,8 +86,19 @@ def _log_http_exchange(
         headers = dict(headers_obj) if headers_obj is not None else None
     except Exception:
         headers = None
-    content_obj = getattr(resp, "content", None)
-    content = content_obj if isinstance(content_obj, (bytes, str)) else None
+    # streaming 响应在 body 未消费前访问 ``.content`` 会抛
+    # ``httpx.ResponseNotRead``——它继承 ``RuntimeError``，**非** ``AttributeError``，
+    # 故 ``getattr(resp, "content", None)`` 的默认值兜不住，异常会冒泡。历史上
+    # 这导致非 200 分支（GitHub 404 等）的 zip 下载被误报为「下载异常，换源」，
+    # 三个镜像源全部失败、最终提示「所有更新包下载源均失败」。显式 try/except 才稳。
+    # ``.text`` 同理（成功路径已通过 aiter_bytes 消费流，仅未消费分支会异常）。
+    content: bytes | str | None = None
+    try:
+        content_obj = resp.content
+        if isinstance(content_obj, (bytes, str)):
+            content = content_obj
+    except Exception:
+        content = None
     resp_bytes = (
         response_bytes
         if response_bytes is not None
@@ -95,7 +106,11 @@ def _log_http_exchange(
     )
     reason = getattr(resp, "reason_phrase", None)
     if reason is None:
-        text = getattr(resp, "text", None)
+        text: object = None
+        try:
+            text = resp.text
+        except Exception:
+            text = None
         reason = text[:32] if isinstance(text, str) and text else None
     log_http_response(
         logger=logger,

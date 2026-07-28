@@ -2734,3 +2734,94 @@ class TestSaveRemindLaterCorruptExisting:
 
         # 写入成功（read 失败被吞，重建为空 dict 后写入新值）
         assert load_remind_later(settings_path) == until
+
+
+class TestLogHttpExchangeStreamingSafe:
+    """``_log_http_exchange`` 在 streaming 响应未消费 body 时不得抛异常。
+
+    回归 bug：旧实现 ``getattr(resp, "content", None)`` 试图用 getattr 的默认值
+    兜底，但 ``httpx.ResponseNotRead`` 继承 ``RuntimeError``（**非** ``AttributeError``），
+    getattr 只吞 AttributeError，异常照样冒泡。触发场景是 ``_download_zip_with_sha``
+    的非 200 分支——GitHub 404 时进入该分支、调日志、炸在 ``.content`` 访问上，
+    被 ``except Exception`` 吞成「下载异常，换源」，三个镜像源全部失败，
+    最终用户看到「所有更新包下载源均失败」。本质是日志代码自己把能下的源搞挂了。
+
+    注意：本测试必须用**真实** ``httpx.Response``（带 ``stream=`` 字节迭代器），
+    不能用文件顶部的 ``_make_stream_response``——那个伪 CM 没有 ``.content`` 属性，
+    getattr 静默返回 None，恰好绕过 bug，测不出回归。
+    """
+
+    @staticmethod
+    def _unread_stream_response(status_code: int = 404) -> httpx.Response:
+        """构造一个 body 未消费的真实 httpx 流式响应。
+
+        ``stream=`` 接一个生成器，``is_stream_consumed`` 保持 False，访问 ``.content``
+        / ``.text`` 会抛 ``httpx.ResponseNotRead``——复现生产里非 200 分支的状态。
+        """
+        req = httpx.Request("GET", "https://example.com/x.zip")
+
+        def _byte_gen():
+            yield b"<html>not found</html>"
+
+        return httpx.Response(
+            status_code,
+            headers={"content-type": "text/html"},
+            request=req,
+            stream=_byte_gen(),
+        )
+
+    def test_unread_stream_does_not_raise(self):
+        """非 200 streaming 响应（body 未读）调日志不得抛——日志函数必须吞掉。"""
+        from vibeocr.services.update_service import _log_http_exchange
+
+        resp = self._unread_stream_response(404)
+        assert resp.is_stream_consumed is False  # 前提：确实未消费
+
+        # 关键断言：不抛。修复前此处会冒泡 httpx.ResponseNotRead。
+        _log_http_exchange("GET", "https://example.com/x.zip", resp)
+
+    def test_unread_stream_via_download_zip_non_200_branch(self, tmp_path):
+        """端到端回归：非 200 zip 下载应返回 ``http_error``，而非被日志异常吞成 ``exception``。
+
+        复现生产失败路径——SHA 预检通过后，zip 流返回 404，``_download_zip_with_sha``
+        进非 200 分支调日志。修复前日志炸 ``ResponseNotRead``，被外层 ``except Exception``
+        兜成 ``DOWNLOAD_REASON_EXCEPTION``；修复后应正确归类为 ``DOWNLOAD_REASON_HTTP_ERROR``。
+        用真实 ``httpx.Response`` 触发，确保伪 mock 绕不过。
+        """
+        from vibeocr.services.update_service import (
+            DOWNLOAD_REASON_HTTP_ERROR,
+            _download_zip_with_sha,
+        )
+
+        # 用真实 httpx 流式响应做 stream CM：返回 404，body 不消费就抛 ResponseNotRead。
+        unread_resp = self._unread_stream_response(404)
+
+        class _StreamCM:
+            async def __aenter__(self):
+                return unread_resp
+
+            async def __aexit__(self, *exc):
+                return False
+
+        client = MagicMock()
+        client.stream.return_value = _StreamCM()
+        client.get = AsyncMock()
+        sha_resp = MagicMock()
+        sha_resp.status_code = 200
+        sha_resp.text = "a" * 64  # 合法 SHA 文本（64 hex），通过预检
+        client.get.return_value = sha_resp
+
+        attempt = _run(
+            _download_zip_with_sha(
+                client,
+                "https://example.com/x.zip",
+                "https://example.com/x.zip.sha256",
+                tmp_path / "x.zip",
+                tmp_path / "x.zip.sha256",
+                None,
+            )
+        )
+
+        # 修复前：reason == "exception"（日志异常被吞）。修复后：正确归为 http_error。
+        assert attempt.ok is False
+        assert attempt.reason == DOWNLOAD_REASON_HTTP_ERROR
