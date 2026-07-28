@@ -42,6 +42,9 @@ public sealed class ScreenRegionPicker(Func<nint> ownerWindow) : IScreenRegionPi
         PhysicalRectangle desktop = GetVirtualDesktop();
         nint owner = _ownerWindow();
         ShowWindow(owner, 0);
+        // 暂时强制任务栏自动隐藏，否则它会盖住截图遮罩顶部或因置顶而闪现。
+        // 保存原状态，在 finally 中恢复，避免改变用户的任务栏偏好。
+        AppBarStateScope taskbarState = HideTaskbars();
         try
         {
             await Task.Delay(180, cancellationToken);
@@ -74,9 +77,53 @@ public sealed class ScreenRegionPicker(Func<nint> ownerWindow) : IScreenRegionPi
         }
         finally
         {
+            taskbarState.Dispose();
             ShowWindow(owner, 9);
             SetForegroundWindow(owner);
         }
+    }
+
+    /// <summary>
+    /// Enumerate the primary taskbar (plus any secondary monitor Shell tray
+    /// windows) and force them into auto-hide for the duration of the screenshot
+    /// overlay, returning a scope that restores the prior state on dispose.
+    /// </summary>
+    private static AppBarStateScope HideTaskbars()
+    {
+        var saved = new List<(nint hWnd, uint State)>();
+        nint taskbar = FindWindow("Shell_TrayWnd", null);
+        if (taskbar != nint.Zero)
+        {
+            saved.Add((taskbar, GetTaskbarState(taskbar)));
+            SetTaskbarState(taskbar, AbsAutohide | AbsAlwaysOnTop);
+        }
+
+        // Secondary-monitor taskbars live in windows of class "Shell_SecondaryTrayWnd".
+        nint secondary = nint.Zero;
+        while ((secondary = FindWindowEx(nint.Zero, secondary, "Shell_SecondaryTrayWnd", null)) != nint.Zero)
+        {
+            saved.Add((secondary, GetTaskbarState(secondary)));
+            SetTaskbarState(secondary, AbsAutohide | AbsAlwaysOnTop);
+        }
+
+        return new AppBarStateScope(saved);
+    }
+
+    private static uint GetTaskbarState(nint taskbar)
+    {
+        var data = new AppBarData { cbSize = (uint)Marshal.SizeOf<AppBarData>(), hWnd = taskbar };
+        return (uint)SHAppBarMessage(AbmGetState, ref data);
+    }
+
+    private static void SetTaskbarState(nint taskbar, uint state)
+    {
+        var data = new AppBarData
+        {
+            cbSize = (uint)Marshal.SizeOf<AppBarData>(),
+            hWnd = taskbar,
+            lParam = (nint)(int)state,
+        };
+        SHAppBarMessage(AbmSetState, ref data);
     }
 
     private static async Task<PhysicalRectangle?> ShowOverlayAsync(
@@ -374,4 +421,72 @@ public sealed class ScreenRegionPicker(Func<nint> ownerWindow) : IScreenRegionPi
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool SetForegroundWindow(nint window);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern nint FindWindow(string? lpClassName, string? lpWindowName);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern nint FindWindowEx(nint hWndParent, nint hWndChildAfter, string? lpszClass, string? lpszWindow);
+
+    [DllImport("shell32.dll", CallingConvention = CallingConvention.StdCall)]
+    private static extern nint SHAppBarMessage(uint dwMessage, ref AppBarData pData);
+
+    private const uint AbmGetState = 4;
+    private const uint AbmSetState = 10;
+    private const uint AbsAutohide = 0x0000001;
+    private const uint AbsAlwaysOnTop = 0x0000002;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct AppBarData
+    {
+        public uint cbSize;
+        public nint hWnd;
+        public uint uCallbackMessage;
+        public uint uEdge;
+        public Rect rc;
+        public nint lParam;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Rect
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+
+    /// <summary>
+    /// Restores the saved taskbar auto-hide states on dispose. Holds the saved
+    /// (hWnd, originalState) pairs captured before the screenshot overlay forced
+    /// them into auto-hide.
+    /// </summary>
+    private sealed class AppBarStateScope : IDisposable
+    {
+        private List<(nint HWnd, uint State)>? _saved;
+        private bool _disposed;
+
+        public AppBarStateScope(List<(nint HWnd, uint State)> saved) => _saved = saved;
+
+        public void Dispose()
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            _disposed = true;
+            if (_saved is null)
+            {
+                return;
+            }
+
+            foreach ((nint hWnd, uint state) in _saved)
+            {
+                SetTaskbarState(hWnd, state);
+            }
+
+            _saved = null;
+        }
+    }
 }
