@@ -347,3 +347,114 @@ class TestReducerErrorPathsAndCancellation:
         )
         projections = build_result_projections(result, is_cancelled=lambda: True)
         assert projections is None
+
+
+class TestBuildProjectionsBlockTypes:
+    """build_result_projections 对 content_list 各 block 类型的投影。"""
+
+    def test_table_block_projections(self):
+        """table block → markdown/html/table_model_to_html（line 175-192）。"""
+        from types import SimpleNamespace
+
+        from vibeocr.tables.reducer import build_result_projections
+
+        result = SimpleNamespace(
+            content_list=[
+                {
+                    "type": "table",
+                    "table_body": "<table><tr><td>A</td></tr></table>",
+                    "table_caption": ["Cap"],
+                    "table_footnote": ["Fn"],
+                }
+            ],
+            text_blocks=[],
+        )
+        proj = build_result_projections(result)
+        assert proj is not None
+        raw, md, html = proj
+        assert "<table" in html
+        assert "Cap" in html
+        assert "Fn" in html
+
+    def test_image_block_projections(self):
+        """image block → markdown img + html img（line 193-214）。"""
+        from types import SimpleNamespace
+
+        from vibeocr.tables.reducer import build_result_projections
+
+        result = SimpleNamespace(
+            content_list=[
+                {
+                    "type": "image",
+                    "img_path": "fig.png",
+                    "image_caption": ["Figure 1"],
+                }
+            ],
+            text_blocks=[],
+        )
+        proj = build_result_projections(result)
+        assert proj is not None
+        raw, md, html = proj
+        assert "![Figure 1](fig.png)" in md
+        assert "<img" in html
+
+    def test_list_and_code_block_raw_projection(self):
+        """list/code block 的 raw 投影（line 304-316）。"""
+        from types import SimpleNamespace
+
+        from vibeocr.tables.reducer import build_result_projections
+
+        result = SimpleNamespace(
+            content_list=[
+                {"type": "list", "list_items": ["a", "b"], "block_id": "b1"},
+                {"type": "code", "code_body": "print(1)", "block_id": "b2"},
+            ],
+            text_blocks=[],
+        )
+        proj = build_result_projections(result)
+        assert proj is not None
+        raw = proj[0]
+        assert "a" in raw
+        assert "print(1)" in raw
+
+    def test_raw_parts_from_content_with_matching_text_blocks(self):
+        """text_blocks 通过 content_id 匹配 content_list（line 268-303）。"""
+        from types import SimpleNamespace
+
+        from vibeocr.tables.reducer import build_result_projections
+
+        class _Block:
+            def __init__(self, text, content_id=None, content_index=None, label="text"):
+                self.text = text
+                self.content_id = content_id
+                self.content_index = content_index
+                self.label = label
+
+        result = SimpleNamespace(
+            content_list=[
+                {"type": "text", "text": "", "block_id": "t1"},
+            ],
+            text_blocks=[_Block("matched-text", content_id="t1")],
+        )
+        proj = build_result_projections(result)
+        assert proj is not None
+        assert "matched-text" in proj[0]
+
+    def test_discarded_blocks_skipped_in_projection(self):
+        """DISCARDED_BLOCK_TYPES 被跳过（line 173-174, 298-299）。"""
+        from types import SimpleNamespace
+
+        from vibeocr.tables.reducer import build_result_projections
+
+        result = SimpleNamespace(
+            content_list=[
+                {"type": "header", "text": "SECRET"},
+                {"type": "text", "text": "VISIBLE"},
+                {"type": "footer", "text": "SECRET2"},
+            ],
+            text_blocks=[],
+        )
+        proj = build_result_projections(result)
+        assert proj is not None
+        assert "VISIBLE" in proj[0]
+        assert "SECRET" not in proj[0]
