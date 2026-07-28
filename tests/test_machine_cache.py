@@ -1123,3 +1123,32 @@ class TestMachineCacheBranches:
             ),
         ):
             assert _get_baseboard_serial() == ""
+
+
+def test_get_machine_id_caches_after_first_call(monkeypatch):
+    """第二次调用 generate_machine_id 走缓存（line 166-167）。"""
+    import vibeocr.machine_cache as mc
+
+    monkeypatch.setattr(mc, "_cached_machine_id", None)
+    # 第一次调用（真实或 mock）
+    first = mc.generate_machine_id()
+    assert first  # 非空
+    # 第二次应命中缓存（_cached_machine_id 已设置）
+    assert mc._cached_machine_id == first
+    second = mc.generate_machine_id()
+    assert second == first
+
+
+def test_get_mac_address_returns_empty_when_random(monkeypatch):
+    """uuid.getnode() 两次返回不同（随机 MAC）时返回空串（line 138-140）。"""
+    import vibeocr.machine_cache as mc
+
+    call_count = {"n": 0}
+
+    def fake_getnode():
+        call_count["n"] += 1
+        # 每次返回不同值 → 视为随机
+        return call_count["n"]
+
+    monkeypatch.setattr(mc.uuid, "getnode", fake_getnode)
+    assert mc._get_mac_address() == ""
