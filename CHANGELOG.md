@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.6.3] - 2026-07-28
+
+### Fixed
+- fix(ci): stop setup-python-buildshell from clobbering the release tag checkout
+
+### Dependencies
+- 升级:
+  - 升级 vibeocr-contracts-py ==0.6.1 → ==0.6.3
+  - 升级 vibeocr-client-py ==0.6.1 → ==0.6.3
+  - 升级 vibeocr-backend ==0.6.1 → ==0.6.3
+  - 升级 vibeocr-pyside ==0.6.1 → ==0.6.3
+
 ## [0.6.2] - 2026-07-28
 
 ### Fixed
