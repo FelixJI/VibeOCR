@@ -328,3 +328,45 @@ def test_empty_page_list_is_a_no_op(isolated_sidecar):
 
     assert result.completed == 0
     assert backend.render_calls == []
+
+
+def test_batch_render_exception_marks_all_pages_failed(isolated_sidecar):
+    """render_pages 抛异常时整个 batch 标记失败 + 调 cancel（line 320-323）。"""
+
+    class _CrashBackend(FakeBackend):
+        def render_pages(self, session_id, page_indices, cancel_check):
+            raise RuntimeError("render crashed")
+
+    backend = _CrashBackend()
+    orch = PdfOcrOrchestrator(backend, batch_size=2)
+    result = orch.run_ocr(
+        session_id="s1",
+        file_path=str(isolated_sidecar),
+        page_indices=[0, 1],
+    )
+    assert result.failed == 2
+    assert result.completed == 0
+    assert backend.cancel_calls == ["s1"]
+
+
+def test_compress_with_saved_zero_marks_completed_false(isolated_sidecar):
+    """无 saved 页面时压缩仍执行但 result.completed=0（line 195, 271）。"""
+    backend = FakeBackend(save_batches=False)  # 所有 write 失败
+    orch = PdfOcrOrchestrator(backend, batch_size=1)
+    result = orch.run_ocr(
+        session_id="s2",
+        file_path=str(isolated_sidecar),
+        page_indices=[0],
+    )
+    assert result.completed == 0
+    assert result.failed == 1
+
+
+def test_ocr_run_result_total_property():
+    """OcrRunResult.total = completed + failed（line 104）。"""
+    from vibeocr.application.pdf_ocr_orchestrator import OcrRunResult
+
+    r = OcrRunResult()
+    r.completed = 3
+    r.failed = 2
+    assert r.total == 5
