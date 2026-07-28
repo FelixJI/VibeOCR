@@ -284,6 +284,7 @@ class SingleRecognitionTab(BaseOcrTab):
         clipboard = QGuiApplication.clipboard()
         pixmap = clipboard.pixmap()
         if pixmap.isNull():
+            self._show_copy_toast("剪贴板中没有图片")
             return
 
         if pixmap.devicePixelRatio() != 1.0:
@@ -317,14 +318,18 @@ class SingleRecognitionTab(BaseOcrTab):
         """复制原始图片到剪贴板（取 original_pixmap，非预处理后图像）。"""
         pixmap = self._preview_widget.original_pixmap()
         if pixmap is None or pixmap.isNull():
+            self._show_copy_toast("暂无图片可复制")
             return
         QGuiApplication.clipboard().setPixmap(pixmap)
         self._show_copy_toast()
 
-    def _show_copy_toast(self) -> None:
-        """显示「原图已复制到剪贴板」浮层提示（按钮上方居中，1.5s 自动隐藏）。"""
+    def _show_copy_toast(self, message: str = "原图已复制到剪贴板") -> None:
+        """显示浮层提示（按钮上方居中，1.5s 自动隐藏）。
+
+        默认文案为复制图片成功提示；复制图片/粘贴等失败场景传入对应 message。
+        """
         toast = self._copy_toast
-        toast.setText("原图已复制到剪贴板")
+        toast.setText(message)
         toast.adjustSize()
         x = (self._copy_image_btn.width() - toast.width()) // 2
         y = -toast.height() - 8
@@ -787,6 +792,11 @@ class SingleRecognitionTab(BaseOcrTab):
 
         path = Path(file_path)
         if not path.exists():
+            from PySide6.QtWidgets import QMessageBox
+
+            QMessageBox.warning(
+                self, "无法识别", f"文件不存在：\n{file_path}"
+            )
             return
 
         if is_document_file(file_path):
