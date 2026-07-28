@@ -14,8 +14,6 @@ fixtures，不依赖真实 PaddleOCR 模型加载：
 
 from __future__ import annotations
 
-from typing import Any
-
 import pytest
 
 from vibeocr.models.ocr_result import OCRResult, TextBlock

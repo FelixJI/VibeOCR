@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING, Any
 import httpx
 import pytest
 
-from vibeocr.ipc.schemas import PdfDocumentMirror
 from vibeocr.supervisor.app import create_app
 from vibeocr.supervisor.bootstrap import new_instance_id
 from vibeocr.supervisor.module import SupervisorModule, SupervisorOptions
@@ -23,7 +22,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from conftest import FakePdfAdapter
-    from fastapi import FastAPI
 
 
 # ---------------------------------------------------------------------------
@@ -330,7 +328,7 @@ async def test_command_cancel_on_terminal_returns_not_cancellable(
 ) -> None:
     """Cancelling an already-terminal job raises ShutdownRequested in
     request_cancel; the route maps that to JOB_NOT_CANCELLABLE."""
-    from vibeocr.protocol.v2 import JobKind, JobPriority, TERMINAL_JOB_STATES
+    from vibeocr.protocol.v2 import TERMINAL_JOB_STATES, JobKind, JobPriority
 
     ref = pdf_module.submit(
         kind=JobKind.RECOGNITION,
@@ -650,7 +648,7 @@ async def test_pdf_route_returns_internal_error_when_adapter_fails(
         resp = await http.request(method, path, json=body)
     # All routes should map RuntimeError to INTERNAL_ERROR (500) — except
     # streaming routes which emit an error line and stay 200.
-    if path.endswith("/load") or path.endswith("/delete_text_layers"):
+    if path.endswith(("/load", "/delete_text_layers")):
         assert resp.status_code == 200
         assert "error:" in resp.text
     else:
@@ -908,13 +906,13 @@ async def test_command_cancel_returns_mode_when_job_exists(
     pdf_app, supervisor_token: str, pdf_module: SupervisorModule
 ) -> None:
     """Successful cancel command returns the cancel_mode (line 179-186)."""
-    from vibeocr.protocol.v2 import JobKind, JobPriority, TERMINAL_JOB_STATES
-
     # Submit then immediately cancel — even if the job completes first,
     # cancelling a terminal job returns JOB_NOT_CANCELLABLE which covers
     # the ShutdownRequested path. To hit the success branch we need a
     # non-terminal job, so we use a hanging executor.
     import threading
+
+    from vibeocr.protocol.v2 import JobKind, JobPriority
 
     hang_entered = threading.Event()
     hang_release = threading.Event()
@@ -953,8 +951,9 @@ async def test_command_forget_returns_success_when_job_terminal(
     pdf_app, supervisor_token: str, pdf_module: SupervisorModule
 ) -> None:
     """Successful forget command (line 198-205)."""
-    from vibeocr.protocol.v2 import JobKind, JobPriority, TERMINAL_JOB_STATES
     import time
+
+    from vibeocr.protocol.v2 import TERMINAL_JOB_STATES, JobKind, JobPriority
 
     ref = pdf_module.submit(
         kind=JobKind.RECOGNITION,
@@ -1160,9 +1159,9 @@ async def test_command_retry_returns_new_job_ref(
     import time
 
     from vibeocr.protocol.v2 import (
+        TERMINAL_JOB_STATES,
         JobKind,
         JobPriority,
-        TERMINAL_JOB_STATES,
     )
 
     opts = SupervisorOptions(instance_id=new_instance_id())

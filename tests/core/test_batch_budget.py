@@ -74,9 +74,9 @@ def test_oversized_single_always_enters_one_batch():
 
 def test_batch_budget_rejects_non_positive_limits() -> None:
     """任一限制 <=0 时 raise ValueError（line 25-26）。"""
-    from vibeocr.core.batch_budget import BatchBudget
-
     import pytest
+
+    from vibeocr.core.batch_budget import BatchBudget
 
     with pytest.raises(ValueError, match="positive"):
         BatchBudget(max_items=0, max_encoded_bytes=100, max_pixels=100)
@@ -102,7 +102,6 @@ def test_image_pixel_count_reads_header_from_bytes() -> None:
 
 def test_image_pixel_count_reads_header_from_path(tmp_path) -> None:
     """image_pixel_count 从文件路径读取（line 115 分支）。"""
-    import io
 
     from PIL import Image
 

@@ -1,6 +1,5 @@
 """client 命名空间 SDK helpers 测试。"""
 
-from pathlib import Path
 
 
 def test_get_output_filename_known_formats():

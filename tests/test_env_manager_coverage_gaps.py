@@ -23,7 +23,7 @@ import subprocess
 import tarfile
 import threading
 from pathlib import Path
-from unittest.mock import MagicMock, mock_open, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -48,7 +48,6 @@ from vibeocr.env_manager import (
     is_embedded_python_installed,
     is_production_environment_ready,
 )
-
 
 # ---------------------------------------------------------------------------
 # Path / mode functions
@@ -602,11 +601,11 @@ class TestCheckDependencies:
         def mock_run(cmd, **kw):
             r = MagicMock()
             code = cmd[cmd.index("-c") + 1] if "-c" in cmd else ""
-            if "metadata" in code or code.startswith("import paddle") or code.startswith("import mineru"):
+            if "metadata" in code or code.startswith(("import paddle", "import mineru")):
                 r.returncode = 0
                 r.stderr = ""
                 return r
-            if code.startswith("import PySide6") or code.startswith("import PIL"):
+            if code.startswith(("import PySide6", "import PIL")):
                 raise OSError("boom")
             r.returncode = 0
             r.stderr = ""
@@ -703,7 +702,7 @@ class TestInstallEmbeddedPythonBranches:
                 "vibeocr.env_manager.get_embedded_python_executable",
                 return_value=tmp_path / "python" / "python.exe",
             ),
-            patch("vibeocr.env_manager.subprocess.run") as mock_run,
+            patch("vibeocr.env_manager.subprocess.run"),
         ):
             def _fake_dl(url, dest, *a, **kw):
                 dest.write_bytes(self._make_tar_with_symlink())
@@ -1048,7 +1047,7 @@ class TestSwitchPaddleBackendBranches:
             ),
             patch("vibeocr.env_manager.update_cache_field", return_value=True) as mock_update,
         ):
-            ok, msg = switch_paddle_backend(tmp_path, "cpu")
+            ok, _msg = switch_paddle_backend(tmp_path, "cpu")
         assert ok is True
         mock_update.assert_called_once_with(tmp_path, "pending_backend", "cpu")
 
@@ -1926,7 +1925,6 @@ class TestInstallPaddleStackCancelAndGpuRetry:
         def mock_run(cmd, **kw):
             call["n"] += 1
             r = MagicMock()
-            joined = " ".join(cmd)
             # 第一次（镜像源）失败 - 版本未找到
             if call["n"] == 1 and "-i" in cmd:
                 r.returncode = 1

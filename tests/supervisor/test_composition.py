@@ -12,14 +12,15 @@ import sys
 import types
 from typing import TYPE_CHECKING, Any
 
-import pytest
+if TYPE_CHECKING:
+    import pytest
 
 from vibeocr.supervisor import composition
 from vibeocr.supervisor.composition import (
+    _mineru_available,
     _MinerUServiceLifecycle,
     _NullExecutor,
     _paddle_available,
-    _mineru_available,
     build_supervisor,
 )
 
@@ -311,7 +312,7 @@ def test_paddle_clear_cache_swallows_paddle_error(
 
     real_import = builtins.__import__
 
-    def raise_importerror(name, globals=None, locals=None, fromlist=(), level=0):  # type: ignore[no-untyped-def]
+    def raise_importerror(name, globals=None, locals=None, fromlist=(), level=0):  # type: ignore[no-untyped-def]  # noqa: A002 - mirrors builtins.__import__ signature
         if name == "paddle":
             raise ImportError("simulated paddle absence")
         return real_import(name, globals, locals, fromlist, level)
@@ -496,7 +497,7 @@ def test_paddle_available_returns_false_on_import_error(
 
     real_import = builtins.__import__
 
-    def raise_importerror(name, globals=None, locals=None, fromlist=(), level=0):  # type: ignore[no-untyped-def]
+    def raise_importerror(name, globals=None, locals=None, fromlist=(), level=0):  # type: ignore[no-untyped-def]  # noqa: A002 - mirrors builtins.__import__ signature
         if name == "paddle":
             raise ImportError("no paddle")
         return real_import(name, globals, locals, fromlist, level)
@@ -522,7 +523,7 @@ def test_mineru_available_returns_false_on_import_error(
 
     real_import = builtins.__import__
 
-    def raise_importerror(name, globals=None, locals=None, fromlist=(), level=0):  # type: ignore[no-untyped-def]
+    def raise_importerror(name, globals=None, locals=None, fromlist=(), level=0):  # type: ignore[no-untyped-def]  # noqa: A002 - mirrors builtins.__import__ signature
         if name == "mineru":
             raise ImportError("no mineru")
         return real_import(name, globals, locals, fromlist, level)

@@ -371,7 +371,10 @@ class TestMirrorsAndPlatforms:
         assert url.endswith("/cu126")
 
     def test_get_pytorch_mirror_unknown_name_falls_back(self):
-        from vibeocr.services.env_config import DEFAULT_PYTORCH_MIRROR, get_pytorch_mirror
+        from vibeocr.services.env_config import (
+            DEFAULT_PYTORCH_MIRROR,
+            get_pytorch_mirror,
+        )
 
         url = get_pytorch_mirror(name="bogus")
         default = get_pytorch_mirror(name=DEFAULT_PYTORCH_MIRROR)

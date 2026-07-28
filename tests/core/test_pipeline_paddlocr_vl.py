@@ -293,19 +293,25 @@ def test_vl_projects_content_list_only_table():
 
 class TestVlPureHelpers:
     def test_extract_bbox_from_rec_boxes_polygon(self):
-        from vibeocr.core.pipelines.pipeline_paddlocr_vl import _extract_bbox_from_rec_boxes
+        from vibeocr.core.pipelines.pipeline_paddlocr_vl import (
+            _extract_bbox_from_rec_boxes,
+        )
 
         boxes = [[[0, 0], [10, 0], [10, 5], [0, 5]]]
         assert _extract_bbox_from_rec_boxes(boxes, 0) == (0.0, 0.0, 10.0, 5.0)
 
     def test_extract_bbox_from_rec_boxes_two_point(self):
-        from vibeocr.core.pipelines.pipeline_paddlocr_vl import _extract_bbox_from_rec_boxes
+        from vibeocr.core.pipelines.pipeline_paddlocr_vl import (
+            _extract_bbox_from_rec_boxes,
+        )
 
         boxes = [[[1, 2], [3, 4]]]
         assert _extract_bbox_from_rec_boxes(boxes, 0) == (1.0, 2.0, 3.0, 4.0)
 
     def test_extract_bbox_from_rec_boxes_invalid(self):
-        from vibeocr.core.pipelines.pipeline_paddlocr_vl import _extract_bbox_from_rec_boxes
+        from vibeocr.core.pipelines.pipeline_paddlocr_vl import (
+            _extract_bbox_from_rec_boxes,
+        )
 
         assert _extract_bbox_from_rec_boxes([], 0) is None
         assert _extract_bbox_from_rec_boxes([[]], 0) is None

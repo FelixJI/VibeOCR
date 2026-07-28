@@ -371,7 +371,7 @@ class TestBuildProjectionsBlockTypes:
         )
         proj = build_result_projections(result)
         assert proj is not None
-        raw, md, html = proj
+        _raw, _md, html = proj
         assert "<table" in html
         assert "Cap" in html
         assert "Fn" in html
@@ -394,7 +394,7 @@ class TestBuildProjectionsBlockTypes:
         )
         proj = build_result_projections(result)
         assert proj is not None
-        raw, md, html = proj
+        _raw, md, html = proj
         assert "![Figure 1](fig.png)" in md
         assert "<img" in html
 

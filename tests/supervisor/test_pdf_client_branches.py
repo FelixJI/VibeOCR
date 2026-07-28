@@ -23,9 +23,7 @@ from vibeocr.supervisor.pdf_client import (
     PdfBackendError,
     PdfSupervisorClient,
     SyncPdfSupervisorClient,
-    _get_bg_loop,
 )
-
 
 # ---------------------------------------------------------------------------
 # PdfBackendError legacy single-string form

@@ -195,8 +195,9 @@ class TestPlatformDispatchAndCleanup:
 
     def test_subset_save_failure_deletes_temp_and_reraises(self, monkeypatch, tmp_path):
         """font.save 失败时删除临时文件并 reraise（line 120-123）。"""
-        from vibeocr.utils import cjk_font_resolver
         from fontTools.ttLib import TTFont
+
+        from vibeocr.utils import cjk_font_resolver
 
         r = cjk_font_resolver.CjkFontResolver()
 

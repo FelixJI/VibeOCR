@@ -1086,13 +1086,12 @@ class TestExportCoverageGaps:
 
     def test_xlsx_no_default_sheet_when_active_renamed(self, tmp_path):
         """xlsx has_text=False、table_count>0 但默认 Sheet 已被重命名时 del 跳过（441->444）。"""
-        from openpyxl import load_workbook
-
         # content_list 只有 table 块 → has_text=False、table_count=1
         # 默认 active sheet 重命名发生在 has_text=True 路径，此处 has_text=False
         # 故 'Sheet' 仍在 → del 命中（已被 test_table_only_removes_sheet 覆盖 True 分支）。
         # 为覆盖 False 分支：让 wb 一开始就没有 'Sheet'。
         import openpyxl
+        from openpyxl import load_workbook
 
         from vibeocr.services.export_service import ExportService
 
@@ -1104,8 +1103,6 @@ class TestExportCoverageGaps:
 
         from openpyxl import Workbook
 
-        original_wb = Workbook
-
         class _NoSheetWB(Workbook):
             def __init__(self):
                 super().__init__()
@@ -1113,7 +1110,6 @@ class TestExportCoverageGaps:
                 if self._sheets:
                     self._sheets[0].title = "Renamed"
 
-        import vibeocr.services.export_service as export_mod
 
         # openpyxl.Workbook 在函数内 import，patch openpyxl.Workbook
         monkeypatch_target = openpyxl.Workbook

@@ -2651,7 +2651,7 @@ class TestAttemptOrCancel:
             except asyncio.CancelledError:
                 # 收尾时把异常转译成业务异常（防御写法，把取消转成"显式失败"）
                 transmuted["hit"] = True
-                raise RuntimeError("收尾失败")
+                raise RuntimeError("收尾失败") from None
 
         async def driver():
             cancel_event.set()  # 取消先到

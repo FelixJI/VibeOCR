@@ -43,14 +43,7 @@ def test_estimate_gpu_batch_size_zero_free_returns_fallback():
 
 
 def test_estimate_gpu_batch_size_zero_pixels_returns_1():
-    """非法像素输入（avg_pixels=0）→ 返回 1。"""
-    assert estimate_gpu_batch_size(free_mb=6144, avg_pixels=0) == 1
-
-
-def test_estimate_gpu_batch_size_zero_pixels_returns_1():
     """avg_pixels<=0 时返回 1（line 157-158）。"""
-    from vibeocr.utils.gpu_memory_monitor import estimate_gpu_batch_size
-
     assert estimate_gpu_batch_size(free_mb=4096, avg_pixels=0) == 1
     assert estimate_gpu_batch_size(free_mb=4096, avg_pixels=-10) == 1
 

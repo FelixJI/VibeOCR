@@ -9,7 +9,7 @@ stop-with-error, save_transactional unlink failure).
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 import pytest
 
@@ -211,7 +211,7 @@ def test_render_thumbnail_proxies_with_size() -> None:
     adapter = _adapter(fake)
     out = adapter.render_thumbnail("sid-1", 0, size=99)
     assert out.startswith(b"\x89PNG")
-    name, args, kwargs = fake.calls[-1]
+    name, _args, kwargs = fake.calls[-1]
     assert name == "render_thumbnail"
     assert kwargs == {"size": 99}
 

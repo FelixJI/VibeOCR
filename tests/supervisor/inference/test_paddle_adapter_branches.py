@@ -73,7 +73,6 @@ def test_capability_real_batch_detection_swallows_registry_error(
 ) -> None:
     """When the pipeline registry raises, _pipeline_supports_real_batch returns False
     (lines 92-95)."""
-    fake_core = Any  # placeholder
     # Inject a fake registry module whose get_registry raises.
     import sys
     import types

@@ -13,8 +13,6 @@ from __future__ import annotations
 import threading
 import time
 
-import pytest
-
 from vibeocr.protocol.v2 import JobPriority
 from vibeocr.supervisor.inference.recovery import (
     FailureClass,
@@ -22,7 +20,6 @@ from vibeocr.supervisor.inference.recovery import (
     RecoveryPolicy,
 )
 from vibeocr.supervisor.inference.scheduler import DeviceScheduler
-
 
 # ---------------------------------------------------------------------------
 # DeviceScheduler: idempotent enqueue, cancel unknown, try_acquire unknown

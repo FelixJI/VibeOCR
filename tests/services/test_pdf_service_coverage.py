@@ -106,7 +106,7 @@ class TestCompressInPlaceFailure:
         """_compress_in_place save 抛异常时回滚备份+清理临时文件并 re-raise（lines 210-229）。"""
         path = tmp_path / "compress_fail.pdf"
         _create_test_pdf(path, num_pages=1)
-        doc, pdf_doc = PdfService.open_doc(str(path))
+        doc, _pdf_doc = PdfService.open_doc(str(path))
         try:
             # 让 doc.save 在 _compress_in_place 内抛异常
             original_save = fitz.Document.save
@@ -403,7 +403,6 @@ class TestDetectAndScanEdges:
 
     def test_build_page_infos_scanned_page(self, tmp_path):
         """build_page_infos 对扫描件页填 is_scanned=True（lines 515-531）。"""
-        from vibeocr.models.pdf_document import PdfDocument
 
         path = tmp_path / "bpi.pdf"
         _create_scanned_pdf(path)
@@ -652,7 +651,7 @@ class TestWriteBlocksEdges:
 
         path = tmp_path / "empty_rect.pdf"
         _create_scanned_pdf(path)
-        doc, pdf_doc = PdfService.open_doc(str(path))
+        doc, _pdf_doc = PdfService.open_doc(str(path))
         try:
             # bbox 使 disp_rect.width <= 0（x1 <= x0）
             block = TextBlock(text="x", score=0.9, bbox=(200, 50, 200, 100), page_idx=0)
@@ -672,7 +671,7 @@ class TestWriteBlocksEdges:
 
         path = tmp_path / "poly_v.pdf"
         _create_scanned_pdf(path)
-        doc, pdf_doc = PdfService.open_doc(str(path))
+        doc, _pdf_doc = PdfService.open_doc(str(path))
         try:
             # 竖排多边形：TL,TR,BR,BL，左边比顶边长（竖排）
             block = TextBlock(
@@ -682,7 +681,7 @@ class TestWriteBlocksEdges:
                 polygon=(50, 50, 80, 50, 80, 300, 50, 300),
                 page_idx=0,
             )
-            w, s = PdfService._write_blocks_to_page(
+            w, _s = PdfService._write_blocks_to_page(
                 doc, 0, [block], 0, PdfGlobalSettings()
             )
             assert w == 1
@@ -695,7 +694,7 @@ class TestWriteBlocksEdges:
 
         path = tmp_path / "nofont.pdf"
         _create_scanned_pdf(path)
-        doc, pdf_doc = PdfService.open_doc(str(path))
+        doc, _pdf_doc = PdfService.open_doc(str(path))
         try:
             # 强制 _CJK_RESOLVER.resolve 返回 None → china-s 回退
             import vibeocr.services.pdf_service as psm
@@ -709,7 +708,7 @@ class TestWriteBlocksEdges:
                 bbox=(50, 50, 300, 100),
                 page_idx=0,
             )
-            w, s = PdfService._write_blocks_to_page(
+            w, _s = PdfService._write_blocks_to_page(
                 doc, 0, [block], 0, PdfGlobalSettings()
             )
             assert w == 1
@@ -722,7 +721,7 @@ class TestWriteBlocksEdges:
 
         path = tmp_path / "ins_fail.pdf"
         _create_scanned_pdf(path)
-        doc, pdf_doc = PdfService.open_doc(str(path))
+        doc, _pdf_doc = PdfService.open_doc(str(path))
         try:
             block = TextBlock(
                 text="hello",
@@ -742,7 +741,7 @@ class TestWriteBlocksEdges:
                 return original_insert_text(self, point, text, *args, **kwargs)
 
             monkeypatch.setattr(fitz.Page, "insert_text", _fail)
-            w, s = PdfService._write_blocks_to_page(
+            w, _s = PdfService._write_blocks_to_page(
                 doc, 0, [block], 0, PdfGlobalSettings()
             )
             assert w == 1  # 回退成功
@@ -937,7 +936,7 @@ class TestRemainingBranches:
 
         path = tmp_path / "empty_text.pdf"
         _create_scanned_pdf(path)
-        doc, pdf_doc = PdfService.open_doc(str(path))
+        doc, _pdf_doc = PdfService.open_doc(str(path))
         try:
             block = TextBlock(text="   ", score=0.9, bbox=(50, 50, 200, 100), page_idx=0)
             w, s = PdfService._write_blocks_to_page(
@@ -954,7 +953,7 @@ class TestRemainingBranches:
 
         path = tmp_path / "cjk_h.pdf"
         _create_scanned_pdf(path)
-        doc, pdf_doc = PdfService.open_doc(str(path))
+        doc, _pdf_doc = PdfService.open_doc(str(path))
         try:
             import vibeocr.services.pdf_service as psm
 
@@ -965,7 +964,7 @@ class TestRemainingBranches:
                 bbox=(50, 50, 300, 100),
                 page_idx=0,
             )
-            w, s = PdfService._write_blocks_to_page(
+            w, _s = PdfService._write_blocks_to_page(
                 doc, 0, [block], 0, PdfGlobalSettings()
             )
             assert w == 1
@@ -978,7 +977,7 @@ class TestRemainingBranches:
 
         path = tmp_path / "zero_retry.pdf"
         _create_scanned_pdf(path)
-        doc, pdf_doc = PdfService.open_doc(str(path))
+        doc, _pdf_doc = PdfService.open_doc(str(path))
         try:
             # 竖排多边形 → is_horizontal=False → insert_textbox 路径
             block = TextBlock(
@@ -990,7 +989,7 @@ class TestRemainingBranches:
             )
             settings = PdfGlobalSettings()
             settings.font_size_retry_count = 0
-            w, s = PdfService._write_blocks_to_page(
+            w, _s = PdfService._write_blocks_to_page(
                 doc, 0, [block], 0, settings
             )
             # retry=0 → 直接走兜底 insert_text
@@ -1004,7 +1003,7 @@ class TestRemainingBranches:
 
         path = tmp_path / "both_fail.pdf"
         _create_scanned_pdf(path)
-        doc, pdf_doc = PdfService.open_doc(str(path))
+        doc, _pdf_doc = PdfService.open_doc(str(path))
         try:
             block = TextBlock(
                 text="vertical text here",

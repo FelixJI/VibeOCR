@@ -71,6 +71,7 @@ class TestMarkdownConversionFailure:
     def test_conversion_failure_returns_escaped_text(self, monkeypatch):
         """markdown.markdown 异常 + include_style=False 时返回纯 pre 转义文本（line 158）。"""
         import markdown
+
         from vibeocr.utils import markdown_converter
 
         def _boom(*_args, **_kwargs):
@@ -86,6 +87,7 @@ class TestMarkdownConversionFailure:
     def test_conversion_failure_with_style(self, monkeypatch):
         """include_style=True + 异常时返回带 style 的转义文本（line 156-158）。"""
         import markdown
+
         from vibeocr.utils import markdown_converter
 
         def _boom(*_args, **_kwargs):

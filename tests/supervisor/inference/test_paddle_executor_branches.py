@@ -11,15 +11,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-import pytest
-
 from vibeocr.protocol.v2 import (
     CancelMode,
     ItemState,
     JobKind,
     JobPriority,
     JobState,
-    PipelineSelection,
     ResidencyStatus,
     SettingsSnapshot,
 )
@@ -29,9 +26,6 @@ from vibeocr.supervisor.inference.paddle_executor import (
     PaddleExecutor,
 )
 from vibeocr.supervisor.inference.recovery import (
-    FailureClass,
-    RecoveryAction,
-    RecoveryDecision,
     RecoveryPolicy,
 )
 from vibeocr.supervisor.jobs.registry import JobRegistry
@@ -39,6 +33,8 @@ from vibeocr.supervisor.jobs.staging import StagedInput
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    import pytest
 
 
 def _png_bytes() -> bytes:
@@ -486,7 +482,6 @@ def test_close_tolerates_adapter_without_close_method() -> None:
 
 
 def test_cancel_mode_for_queued_returns_queued_only() -> None:
-    from vibeocr.protocol.v2 import JobState
 
     reg = JobRegistry(instance_id="t")
     record = _make_job(reg, 1)

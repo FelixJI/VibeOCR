@@ -14,11 +14,12 @@ from unittest.mock import MagicMock
 import httpx
 import pytest
 
-from vibeocr.supervisor.client import SupervisorClient
 from vibeocr.supervisor.sync_client import SyncSupervisorClient
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
+
+    from vibeocr.supervisor.client import SupervisorClient
 
 
 # ---------------------------------------------------------------------------
@@ -29,7 +30,6 @@ if TYPE_CHECKING:
 def test_constructor_pins_loopback_via_inner_client() -> None:
     """Non-loopback base_url surfaces InferenceClientError from the inner client."""
     from vibeocr.protocol.v2 import ErrorCode
-
     from vibeocr.supervisor.errors import InferenceClientError
 
     with pytest.raises(InferenceClientError) as exc:
@@ -154,7 +154,6 @@ def test_delegates_all_business_methods(monkeypatch) -> None:
 
     loop = MagicMock()
     loop.run.side_effect = lambda coro: coro
-    import vibeocr.supervisor.pdf_client as module
 
     monkeypatch.setattr("vibeocr.supervisor.sync_client._get_bg_loop", lambda: loop)
 
@@ -195,7 +194,6 @@ def test_submit_passes_attachments_through(monkeypatch) -> None:
 
     loop = MagicMock()
     loop.run.side_effect = lambda coro: coro
-    import vibeocr.supervisor.pdf_client as module
 
     monkeypatch.setattr("vibeocr.supervisor.sync_client._get_bg_loop", lambda: loop)
 
@@ -218,7 +216,6 @@ def test_command_default_args(monkeypatch) -> None:
 
     loop = MagicMock()
     loop.run.side_effect = lambda coro: coro
-    import vibeocr.supervisor.pdf_client as module
 
     monkeypatch.setattr("vibeocr.supervisor.sync_client._get_bg_loop", lambda: loop)
 

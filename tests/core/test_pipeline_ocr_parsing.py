@@ -309,7 +309,6 @@ def _make_ocr_result_dict(texts, scores=None, boxes=None):
 
 class TestRecognizeOcr:
     def test_recognize_single_image(self):
-        from vibeocr.core.pipelines.pipeline_ocr import _recognize_ocr
 
         output = [_make_ocr_result_dict(["hello", "world"], boxes=[[0, 0, 10, 10], [1, 1, 2, 2]])]
         service = _FakeOcrService(output)
@@ -318,7 +317,6 @@ class TestRecognizeOcr:
         assert len(result.text_blocks) == 2
 
     def test_recognize_empty_output(self):
-        from vibeocr.core.pipelines.pipeline_ocr import _recognize_ocr
 
         service = _FakeOcrService([])
         result = _recognize_ocr(service, image=None, options=OCROptions())
@@ -327,7 +325,6 @@ class TestRecognizeOcr:
     def test_recognize_with_preproc_info(self):
         import numpy as np
 
-        from vibeocr.core.pipelines.pipeline_ocr import _recognize_ocr
 
         arr = np.zeros((2, 3, 3), dtype=np.uint8)
         output = [
@@ -344,7 +341,6 @@ class TestRecognizeOcr:
         assert result.preprocessed_image is not None
 
     def test_recognize_predict_exception_propagates(self):
-        from vibeocr.core.pipelines.pipeline_ocr import _recognize_ocr
 
         class _CrashPipeline:
             def predict(self, input, **kwargs):  # noqa: A002
@@ -360,7 +356,6 @@ class TestRecognizeOcr:
 
 class TestRecognizeOcrBatch:
     def test_batch_multiple_images(self):
-        from vibeocr.core.pipelines.pipeline_ocr import _recognize_ocr_batch
 
         output = [
             _make_ocr_result_dict(["a"]),
@@ -374,7 +369,6 @@ class TestRecognizeOcrBatch:
 
     def test_batch_pads_missing_results(self):
         """输出项少于输入图时补空结果（line 474-477）。"""
-        from vibeocr.core.pipelines.pipeline_ocr import _recognize_ocr_batch
 
         output = [_make_ocr_result_dict(["only-one"])]  # 只返回 1 个
         service = _FakeOcrService(output)
@@ -388,7 +382,6 @@ class TestRecognizeOcrBatch:
 
     def test_batch_error_item_skipped_preproc(self):
         """结果项含 error → 跳过 preproc 提取（line 452）。"""
-        from vibeocr.core.pipelines.pipeline_ocr import _recognize_ocr_batch
 
         output = [{"error": "failed"}]
         service = _FakeOcrService(output)
@@ -398,7 +391,6 @@ class TestRecognizeOcrBatch:
         assert results[0].preprocessed_image is None
 
     def test_batch_predict_exception_propagates(self):
-        from vibeocr.core.pipelines.pipeline_ocr import _recognize_ocr_batch
 
         class _CrashPipeline:
             def predict(self, input, **kwargs):  # noqa: A002

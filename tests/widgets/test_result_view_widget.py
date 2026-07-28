@@ -837,7 +837,6 @@ class TestResultViewExportButtons:
     def test_copy_text_token_mismatch_shows_retry_toast(self, widget, monkeypatch):
         """token 失配时（结果在点击后被刷新），「复制文本」不写剪贴板但
         给出重试提示 toast，避免用户点击后毫无反馈。"""
-        from types import SimpleNamespace
 
         class FakePage:
             def __init__(self):
@@ -879,7 +878,6 @@ class TestResultViewExportButtons:
         self, widget, monkeypatch
     ):
         """结果无文本无表格时（如纯图片），「复制文本」给出「无可复制内容」提示。"""
-        from types import SimpleNamespace
 
         class FakePage:
             def __init__(self):
@@ -900,7 +898,7 @@ class TestResultViewExportButtons:
         widget._current_result = self._make_result(raw_text="")
         widget._active_document_token = "doc-1"
         widget._rendered_document_token = "doc-1"
-        fake = self._fake_clipboard(monkeypatch)
+        self._fake_clipboard(monkeypatch)
         toasts: list[str] = []
         monkeypatch.setattr(widget, "_show_copy_toast", lambda msg="x": toasts.append(msg))
 
