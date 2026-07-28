@@ -323,3 +323,139 @@ class TestBuildAssetUrlPairs:
         single = build_github_asset_urls(net, ver, name)
         pairs = build_asset_url_pairs(net, ver, name, f"{name}.sha256")
         assert [z for z, _ in pairs] == single
+
+
+# ---- 新增纯函数覆盖：validate_dep_check_consistency / mirrors / 平台 / 路径 ----
+
+
+class TestValidateDepCheckConsistency:
+    def test_returns_empty_when_no_pyproject(self, tmp_path):
+        """打包态无 pyproject.toml → 跳过校验返回空。"""
+        from vibeocr.services.env_config import validate_dep_check_consistency
+
+        result = validate_dep_check_consistency(tmp_path)
+        assert result == []
+
+    def test_detects_drift_in_real_repo(self, tmp_path):
+        """真实仓库 pyproject.toml 应能解析（可能返回告警或空）。"""
+        from pathlib import Path
+
+        from vibeocr.services.env_config import validate_dep_check_consistency
+
+        root = Path(__file__).parents[2]
+        result = validate_dep_check_consistency(root)
+        assert isinstance(result, list)
+
+    def test_corrupt_pyproject_returns_warning(self, tmp_path):
+        """pyproject.toml 损坏 → 返回告警。"""
+        backend = tmp_path / "packages" / "vibeocr-backend" / "pyproject.toml"
+        backend.parent.mkdir(parents=True)
+        backend.write_text("{ not valid toml")
+        from vibeocr.services.env_config import validate_dep_check_consistency
+
+        result = validate_dep_check_consistency(tmp_path)
+        assert any("无法解析" in w for w in result)
+
+
+class TestMirrorsAndPlatforms:
+    def test_get_pytorch_mirror_default(self):
+        from vibeocr.services.env_config import get_pytorch_mirror
+
+        url = get_pytorch_mirror()
+        assert url.startswith("https://")
+
+    def test_get_pytorch_mirror_with_cuda_tag(self):
+        from vibeocr.services.env_config import get_pytorch_mirror
+
+        url = get_pytorch_mirror(cuda_tag="cu126")
+        assert url.endswith("/cu126")
+
+    def test_get_pytorch_mirror_unknown_name_falls_back(self):
+        from vibeocr.services.env_config import DEFAULT_PYTORCH_MIRROR, get_pytorch_mirror
+
+        url = get_pytorch_mirror(name="bogus")
+        default = get_pytorch_mirror(name=DEFAULT_PYTORCH_MIRROR)
+        assert url == default
+
+    def test_is_windows_returns_bool(self):
+        from vibeocr.services.env_config import is_windows
+
+        assert isinstance(is_windows(), bool)
+
+    def test_is_linux_returns_bool(self):
+        from vibeocr.services.env_config import is_linux
+
+        assert isinstance(is_linux(), bool)
+
+    def test_is_macos_returns_bool(self):
+        from vibeocr.services.env_config import is_macos
+
+        assert isinstance(is_macos(), bool)
+
+
+class TestPathHelpers:
+    def test_get_config_dir_is_path(self):
+        from vibeocr.services.env_config import get_config_dir
+
+        assert isinstance(get_config_dir(), type(__import__("pathlib").Path()))
+
+    def test_ensure_config_dir_creates_and_returns(self):
+        from vibeocr.services.env_config import ensure_config_dir
+
+        p = ensure_config_dir()
+        assert p.exists()
+
+    def test_get_data_dir_is_path(self):
+        from vibeocr.services.env_config import get_data_dir
+
+        assert isinstance(get_data_dir(), type(__import__("pathlib").Path()))
+
+    def test_get_update_cache_dir_is_path(self):
+        from vibeocr.services.env_config import get_update_cache_dir
+
+        assert isinstance(get_update_cache_dir(), type(__import__("pathlib").Path()))
+
+    def test_get_update_settings_path_is_path(self):
+        from vibeocr.services.env_config import get_update_settings_path
+
+        assert isinstance(get_update_settings_path(), type(__import__("pathlib").Path()))
+
+    def test_get_update_progress_path_is_path(self):
+        from vibeocr.services.env_config import get_update_progress_path
+
+        assert isinstance(get_update_progress_path(), type(__import__("pathlib").Path()))
+
+    def test_get_pending_sync_path_is_path(self):
+        from vibeocr.services.env_config import get_pending_sync_path
+
+        assert isinstance(get_pending_sync_path(), type(__import__("pathlib").Path()))
+
+    def test_get_portable_python_dir_is_path(self):
+        from vibeocr.services.env_config import get_portable_python_dir
+
+        assert isinstance(get_portable_python_dir(), type(__import__("pathlib").Path()))
+
+    def test_get_app_paths_returns_object(self):
+        from vibeocr.services.env_config import get_app_paths
+
+        ap = get_app_paths()
+        assert ap is not None
+
+
+class TestParsePep508Name:
+    def test_simple_name(self):
+        from vibeocr.services.env_config import _parse_pep508_name
+
+        assert _parse_pep508_name("paddleocr>=3.0") == "paddleocr"
+        assert _parse_pep508_name("torch==2.0") == "torch"
+
+    def test_name_with_extras(self):
+        from vibeocr.services.env_config import _parse_pep508_name
+
+        assert _parse_pep508_name("package[extra]>=1.0") == "package"
+
+    def test_empty_returns_empty(self):
+        from vibeocr.services.env_config import _parse_pep508_name
+
+        assert _parse_pep508_name("") == ""
+        assert _parse_pep508_name("   ") == ""
