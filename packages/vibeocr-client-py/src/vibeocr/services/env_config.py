@@ -231,9 +231,11 @@ LEAF_TO_TOPLEVEL: dict[str, str] = dict.fromkeys(OCR_CHECK_LEAF_MODULES.values()
 
 # 各模块 import 检测的 timeout（秒）。
 # paddle 首次导入需初始化 CUDA 上下文，显著慢于其他模块。
+# paddleocr 同样会间接触发 paddle 的 CUDA 初始化——实测冷启动 ~45s
+# （Supervisor preload 日志），30s 会误报「import 失败」，故与 paddle 对齐 60s。
 OCR_CHECK_TIMEOUTS: dict[str, int] = {
     "paddle": 60,
-    "paddleocr": 30,
+    "paddleocr": 60,
     "mineru": 15,
     "torch": 15,
     "markdown": 10,

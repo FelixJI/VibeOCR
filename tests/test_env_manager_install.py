@@ -1282,14 +1282,14 @@ class TestCheckImportsPrimitive:
         assert set(result.keys()) == expected
 
     def test_uses_extended_timeout_for_paddle(self, tmp_path):
-        """paddle 首次导入需初始化 CUDA，应使用延长 timeout（而非默认 15s）"""
+        """paddle / paddleocr 首次导入需初始化 CUDA，应使用延长 timeout（而非默认 15s）"""
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
 
         captured = []
 
         def mock_run(cmd, **kwargs):
-            captured.append(kwargs.get("timeout"))
+            captured.append((cmd, kwargs.get("timeout")))
             r = MagicMock()
             r.returncode = 0
             r.stderr = ""
@@ -1298,14 +1298,31 @@ class TestCheckImportsPrimitive:
         with patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run):
             _check_imports(python_exe)
 
-        # 从 cmd 取出 import 的模块名，对应其 timeout
         from vibeocr.services.env_config import OCR_CHECK_TIMEOUTS
 
-        # OCR_CHECK_TIMEOUTS 应存在且 paddle 的 timeout 显著大于默认
+        # OCR_CHECK_TIMEOUTS 应存在且 paddle / paddleocr 的 timeout 显著大于默认
         assert "paddle" in OCR_CHECK_TIMEOUTS
         assert OCR_CHECK_TIMEOUTS["paddle"] >= 60, (
             "paddle 首次导入需初始化 CUDA，timeout 应 >= 60s"
         )
+        # paddleocr 同样会间接触发 paddle 的 CUDA 初始化——实测冷启动 ~45s
+        # （Supervisor preload 日志），30s 会误报「import 失败」。须与 paddle 对齐。
+        assert OCR_CHECK_TIMEOUTS.get("paddleocr", 0) >= 60, (
+            "paddleocr import 会触发 paddle CUDA 初始化，实测冷启动 ~45s，"
+            "timeout 应 >= 60s（历史 bug：30s 导致依赖检测误报 import 失败）"
+        )
+
+        # 校验 _check_imports 真正下传给 subprocess.run 的 timeout 与常量一致——
+        # 历史上 ``captured`` 已收集但未被断言，常量改了但代码不取的话测试仍会绿。
+        # 取 import 那层（cmd 含 "-c" 且代码是 "import <mod>"）的 timeout。
+        def _import_timeout(module: str) -> int | None:
+            for cmd, timeout in captured:
+                if "-c" in cmd and cmd[cmd.index("-c") + 1] == f"import {module}":
+                    return timeout
+            return None
+
+        assert _import_timeout("paddle") == OCR_CHECK_TIMEOUTS["paddle"]
+        assert _import_timeout("paddleocr") == OCR_CHECK_TIMEOUTS["paddleocr"]
 
 
 class TestProbeModuleDoubleLayer:
