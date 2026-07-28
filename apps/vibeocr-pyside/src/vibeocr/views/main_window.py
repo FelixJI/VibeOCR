@@ -7,7 +7,7 @@ import os
 import time
 from importlib import import_module
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from PySide6.QtCore import (
     QPoint,
@@ -44,16 +44,12 @@ from vibeocr.ui.ui_main_window import Ui_MainWindowWidget
 from vibeocr.utils.image_jobs import GenerationImageJobs, decode_image_file
 from vibeocr.utils.shutdown_jobs import ExternalShutdownJob
 from vibeocr.views.background_tasks import DependencyUpdateCheckTask, FunctionTask
-from vibeocr.views.clipboard_controller import ClipboardController
 from vibeocr.views.settings_page_controller import SettingsPageController
 from vibeocr.views.tabs.single_recognition_tab import SingleRecognitionTab
 from vibeocr.widgets.runtime_status_bar import RuntimeStatusBar
 from vibeocr.widgets.screen_capture_overlay import ScreenCaptureOverlay
 from vibeocr.widgets.toast_widget import show_toast
 from vibeocr.widgets.toolbar import EdgeToolbar
-
-if TYPE_CHECKING:
-    from vibeocr.models.ocr_result import OCRResult
 
 # 延迟导入: OCR 服务模块导入很慢（~33s），延迟到首次使用时导入
 
@@ -124,9 +120,6 @@ class MainWindow(QMainWindow):
         self._shutdown_poll_timer = QTimer(self)
         self._shutdown_poll_timer.setInterval(self._SHUTDOWN_POLL_INTERVAL_MS)
         self._shutdown_poll_timer.timeout.connect(self._poll_shutdown_state)
-
-        # 当前 OCR 结果（用于复制操作）
-        self._current_ocr_result: OCRResult | None = None
 
         # 依赖管理器
         self._dependency_manager = DependencyManager(self._project_root, self)
@@ -679,17 +672,6 @@ class MainWindow(QMainWindow):
         )
         self._single_tab.task_status_changed.connect(self._statusbar.showMessage)
         self._single_tab.result_status_changed.connect(self._statusbar.finish_task)
-
-        # 剪贴板控制器（连接到 UI 中的复制按钮）
-        self._clipboard_controller = ClipboardController(
-            status_callback=self._statusbar.set_result,
-            copy_button=self._ui.btnCopyRich,
-        )
-        self._ui.btnCopyRich.clicked.connect(self._clipboard_controller.copy_rich)
-        self._ui.btnCopyMarkdown.clicked.connect(
-            self._clipboard_controller.copy_markdown
-        )
-        self._ui.btnCopyPlain.clicked.connect(self._clipboard_controller.copy_plain)
 
         # 设置页面控制器
         self._settings_controller = SettingsPageController(
