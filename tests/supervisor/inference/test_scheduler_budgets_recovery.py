@@ -169,6 +169,16 @@ def test_budget_limits_must_be_positive() -> None:
         raise AssertionError("expected ValueError")
 
 
+def test_budget_planner_rejects_negative_device_vram() -> None:
+    """device_vram_mb < 0 raise ValueError（line 86-87）。"""
+    try:
+        BudgetPlanner(device_vram_mb=-1)
+    except ValueError as exc:
+        assert "device_vram_mb" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("expected ValueError for negative device_vram_mb")
+
+
 def test_compute_plan_real_batch_caps_at_capability() -> None:
     planner = BudgetPlanner()
     cap = AdapterCapability(name="OCR", real_batch=True, max_compute_batch=4)
