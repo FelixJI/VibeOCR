@@ -118,13 +118,48 @@ public sealed partial class MainWindow : Window
         ContentFrame.Content = new RecognitionPage(_recognition);
     }
 
+    /// <summary>
+    /// Switch to the navigation item whose <c>Tag</c> matches <paramref name="destination"/>.
+    /// Setting <see cref="NavigationView.SelectedItem"/> raises <see cref="OnSelectionChanged"/>,
+    /// which owns the actual content swap, so this method stays a pure selection helper.
+    /// An unknown destination (e.g. <c>home</c>, which has no backing item) logs a warning and
+    /// falls back to recognition instead of throwing — keeping the shell alive.
+    /// </summary>
+    internal void NavigateTo(string? destination)
+    {
+        NavigationViewItem? item = FindNavigationItem(destination);
+        if (item is null)
+        {
+            AppLog.Warn(
+                $"Navigation destination '{destination}' has no backing item; falling back to recognition.");
+            // Still show recognition content and keep the selection in sync so the
+            // highlighted nav item matches what is on screen.
+            ShowRecognition();
+            RootNavigation.SelectedItem = FindNavigationItem("recognition");
+            return;
+        }
+
+        RootNavigation.SelectedItem = item;
+    }
+
+    /// <summary>Show, activate, and optionally switch tab in one call. Used by external
+    /// activation paths (tray, single-instance forwarding) that need the window brought
+    /// forward alongside a destination.</summary>
+    internal void ShowAndNavigate(string? destination)
+    {
+        AppWindow.Show();
+        Activate();
+        NavigateTo(destination);
+    }
+
+    private NavigationViewItem? FindNavigationItem(string? tag) =>
+        RootNavigation.MenuItems
+            .OfType<NavigationViewItem>()
+            .FirstOrDefault(candidate => Equals(candidate.Tag, tag));
+
     internal async Task RecognizeScreenshotAsync()
     {
-        NavigationViewItem item = RootNavigation.MenuItems
-            .OfType<NavigationViewItem>()
-            .Single(candidate => Equals(candidate.Tag, "recognition"));
-        RootNavigation.SelectedItem = item;
-        ShowRecognition();
+        NavigateTo("recognition");
         await _recognition!.RecognizeScreenshotAsync(CancellationToken.None);
     }
 }

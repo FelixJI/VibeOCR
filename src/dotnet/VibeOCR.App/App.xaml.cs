@@ -82,9 +82,25 @@ public sealed partial class App : Application
         _startupHealthFile = options.HealthFile;
         _singleInstance = new SingleInstanceService(
             $"VibeOCR-{options.Profile}",
-            _ =>
+            arguments =>
             {
-                _window?.DispatcherQueue.TryEnqueue(ShowMainWindow);
+                _window?.DispatcherQueue.TryEnqueue(() =>
+                {
+                    // Parse the forwarded arguments so a secondary launch can
+                    // carry intent (e.g. --goto pdf). Unknown flags are ignored
+                    // by Parse, so a plain re-activation still just shows the
+                    // window on its current tab.
+                    string? destination = null;
+                    try
+                    {
+                        destination = AppLaunchOptions.Parse(arguments).Goto;
+                    }
+                    catch (ArgumentException error)
+                    {
+                        AppLog.Warn($"Forwarded activation had invalid arguments: {error.Message}");
+                    }
+                    _window!.ShowAndNavigate(destination);
+                });
                 return Task.CompletedTask;
             });
         if (!_singleInstance.IsPrimary)
@@ -286,7 +302,10 @@ public sealed partial class App : Application
 
     private async Task RecognizeFromHotkeyAsync()
     {
-        ShowMainWindow();
+        // Do NOT ShowMainWindow up front: ScreenRegionPicker hides the owner
+        // window itself before capturing the desktop, and showing it here would
+        // cause a visible flash (window appears, then gets hidden by the picker).
+        // We activate the window after the screenshot flow finishes instead.
         try
         {
             await _window!.RecognizeScreenshotAsync();
@@ -295,6 +314,10 @@ public sealed partial class App : Application
             error is InvalidOperationException or IOException or UnauthorizedAccessException)
         {
             // RecognitionViewModel owns localized status; activation must keep the shell alive.
+        }
+        finally
+        {
+            ShowMainWindow();
         }
     }
 
@@ -681,13 +704,14 @@ public sealed partial class App : Application
     }
 }
 
-public sealed record AppLaunchOptions(string Profile, string? HealthFile, bool ShellOnly)
+public sealed record AppLaunchOptions(string Profile, string? HealthFile, bool ShellOnly, string? Goto = null)
 {
     public static AppLaunchOptions Parse(IReadOnlyList<string> args)
     {
         string profile = AppBuildDefaults.Profile;
         string? healthFile = null;
         bool shellOnly = false;
+        string? gotoDestination = null;
         for (int index = 0; index < args.Count; index++)
         {
             if (string.Equals(args[index], "--profile", StringComparison.Ordinal))
@@ -710,6 +734,20 @@ public sealed record AppLaunchOptions(string Profile, string? HealthFile, bool S
             {
                 shellOnly = true;
             }
+            else if (string.Equals(args[index], "--goto", StringComparison.Ordinal))
+            {
+                if (index + 1 >= args.Count)
+                {
+                    throw new ArgumentException("--goto requires a value.", nameof(args));
+                }
+                string destination = args[++index];
+                if (!ShellNavigation.Destinations.Contains(destination))
+                {
+                    throw new ArgumentException(
+                        $"Unsupported --goto destination: {destination}.", nameof(args));
+                }
+                gotoDestination = destination;
+            }
         }
 
         if (profile is not ("production" or "winui-dev"))
@@ -717,7 +755,7 @@ public sealed record AppLaunchOptions(string Profile, string? HealthFile, bool S
             throw new ArgumentException($"Unsupported profile: {profile}.", nameof(args));
         }
 
-        return new AppLaunchOptions(profile, healthFile, shellOnly);
+        return new AppLaunchOptions(profile, healthFile, shellOnly, gotoDestination);
     }
 }
 
