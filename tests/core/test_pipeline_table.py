@@ -921,3 +921,67 @@ def test_recognize_table_html_projection_preserves_rowspan():
     )
 
     assert 'rowspan="2"' in result.html_text
+
+
+# ---- 纯函数覆盖：_point_in_box / _parse_cell_box / _normalize_match_text ----
+
+
+class TestTablePureHelpers:
+    def test_point_in_box_inside(self):
+        from vibeocr.core.pipelines.pipeline_table import _point_in_box
+
+        assert _point_in_box(5, 5, (0, 0, 10, 10)) is True
+
+    def test_point_in_box_on_boundary(self):
+        from vibeocr.core.pipelines.pipeline_table import _point_in_box
+
+        assert _point_in_box(0, 0, (0, 0, 10, 10)) is True
+        assert _point_in_box(10, 10, (0, 0, 10, 10)) is True
+
+    def test_point_in_box_outside(self):
+        from vibeocr.core.pipelines.pipeline_table import _point_in_box
+
+        assert _point_in_box(11, 5, (0, 0, 10, 10)) is False
+        assert _point_in_box(5, -1, (0, 0, 10, 10)) is False
+
+    def test_parse_cell_box_valid(self):
+        from vibeocr.core.pipelines.pipeline_table import _parse_cell_box
+
+        assert _parse_cell_box([1, 2, 3, 4]) == (1.0, 2.0, 3.0, 4.0)
+
+    def test_parse_cell_box_degenerate_returns_none(self):
+        """退化框（x0>=x2 或 y0>=y3）返回 None。"""
+        from vibeocr.core.pipelines.pipeline_table import _parse_cell_box
+
+        assert _parse_cell_box([5, 2, 3, 4]) is None  # x0 > x2
+        assert _parse_cell_box([1, 5, 3, 4]) is None  # y0 > y3
+
+    def test_parse_cell_box_non_finite_returns_none(self):
+        from vibeocr.core.pipelines.pipeline_table import _parse_cell_box
+
+        assert _parse_cell_box([1, 2, float("inf"), 4]) is None
+        assert _parse_cell_box([1, 2, 3, float("nan")]) is None
+
+    def test_parse_cell_box_invalid_type_returns_none(self):
+        from vibeocr.core.pipelines.pipeline_table import _parse_cell_box
+
+        assert _parse_cell_box(None) is None
+        assert _parse_cell_box("not-a-box") is None
+        assert _parse_cell_box([1, 2]) is None  # 太短
+        assert _parse_cell_box([True, 2, 3, 4]) is None  # bool 不算 Real
+
+    def test_parse_cell_box_with_tolist(self):
+        from vibeocr.core.pipelines.pipeline_table import _parse_cell_box
+
+        class _FakeArray:
+            def tolist(self):
+                return [1, 2, 3, 4]
+
+        assert _parse_cell_box(_FakeArray()) == (1.0, 2.0, 3.0, 4.0)
+
+    def test_normalize_match_text(self):
+        from vibeocr.core.pipelines.pipeline_table import _normalize_match_text
+
+        assert _normalize_match_text("Hello World") == "helloworld"
+        assert _normalize_match_text("  a\tb\n") == "ab"
+        assert _normalize_match_text("") == ""
