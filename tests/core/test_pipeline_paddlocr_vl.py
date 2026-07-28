@@ -286,3 +286,81 @@ def test_vl_projects_content_list_only_table():
     assert "rowspan=\"2\"" in result.html_text
     warnings = result.content_list[0]["table"]["provenance"]["warnings"]
     assert "lossy_markdown_source" in warnings
+
+
+# ---- 纯函数覆盖：bbox/score/canonical table 投影 ----
+
+
+class TestVlPureHelpers:
+    def test_extract_bbox_from_rec_boxes_polygon(self):
+        from vibeocr.core.pipelines.pipeline_paddlocr_vl import _extract_bbox_from_rec_boxes
+
+        boxes = [[[0, 0], [10, 0], [10, 5], [0, 5]]]
+        assert _extract_bbox_from_rec_boxes(boxes, 0) == (0.0, 0.0, 10.0, 5.0)
+
+    def test_extract_bbox_from_rec_boxes_two_point(self):
+        from vibeocr.core.pipelines.pipeline_paddlocr_vl import _extract_bbox_from_rec_boxes
+
+        boxes = [[[1, 2], [3, 4]]]
+        assert _extract_bbox_from_rec_boxes(boxes, 0) == (1.0, 2.0, 3.0, 4.0)
+
+    def test_extract_bbox_from_rec_boxes_invalid(self):
+        from vibeocr.core.pipelines.pipeline_paddlocr_vl import _extract_bbox_from_rec_boxes
+
+        assert _extract_bbox_from_rec_boxes([], 0) is None
+        assert _extract_bbox_from_rec_boxes([[]], 0) is None
+
+    def test_extract_block_bbox_4_floats(self):
+        from vibeocr.core.pipelines.pipeline_paddlocr_vl import _extract_block_bbox
+
+        assert _extract_block_bbox([1, 2, 3, 4]) == (1.0, 2.0, 3.0, 4.0)
+
+    def test_extract_block_bbox_polygon_points(self):
+        from vibeocr.core.pipelines.pipeline_paddlocr_vl import _extract_block_bbox
+
+        # 多点 → 外接矩形
+        result = _extract_block_bbox([[0, 0], [10, 0], [10, 5], [0, 5]])
+        assert result == (0.0, 0.0, 10.0, 5.0)
+
+    def test_extract_block_bbox_empty_returns_none(self):
+        from vibeocr.core.pipelines.pipeline_paddlocr_vl import _extract_block_bbox
+
+        assert _extract_block_bbox(None) is None
+        assert _extract_block_bbox([]) is None
+
+    def test_get_block_score_default(self):
+        from vibeocr.core.pipelines.pipeline_paddlocr_vl import _get_block_score
+
+        # 无 layout_det_res → 默认 0.9
+        assert _get_block_score({}, {"block_order": 0}) == 0.9
+
+    def test_get_block_score_from_layout_det_res(self):
+        from vibeocr.core.pipelines.pipeline_paddlocr_vl import _get_block_score
+
+        class _FakeBoxes:
+            def __init__(self, boxes):
+                self._boxes = boxes
+
+            def __getitem__(self, idx):
+                return self._boxes[idx]
+
+            def __len__(self):
+                return len(self._boxes)
+
+        class _FakeLayoutDet:
+            boxes = _FakeBoxes([{"score": 0.75}])
+
+        class _FakeRes:
+            layout_det_res = _FakeLayoutDet()
+
+        assert _get_block_score(_FakeRes(), {"block_order": 0}) == 0.75
+
+    def test_project_canonical_table(self):
+        from vibeocr.core.pipelines.pipeline_paddlocr_vl import _project_canonical_table
+
+        block = {"type": "table", "table_body": "<table><tr><td>x</td></tr></table>"}
+        result = _project_canonical_table(block)
+        # 返回 (html, markdown) 元组
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+        assert all(isinstance(x, str) for x in result)
