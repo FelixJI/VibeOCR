@@ -834,6 +834,94 @@ class TestResultViewExportButtons:
 
         assert fake.text() == "SENTINEL"
 
+    def test_copy_text_token_mismatch_shows_retry_toast(self, widget, monkeypatch):
+        """token 失配时（结果在点击后被刷新），「复制文本」不写剪贴板但
+        给出重试提示 toast，避免用户点击后毫无反馈。"""
+        from types import SimpleNamespace
+
+        class FakePage:
+            def __init__(self):
+                self.callbacks = []
+
+            def runJavaScript(self, _script, callback):
+                self.callbacks.append(callback)
+
+        class FakeWebView:
+            def __init__(self):
+                self.fake_page = FakePage()
+
+            def page(self):
+                return self.fake_page
+
+        web = FakeWebView()
+        widget._web_view = web
+        widget._current_result = self._make_result(raw_text="stale")
+        # 点击时 token 匹配（按钮可点）
+        widget._active_document_token = "doc-1"
+        widget._rendered_document_token = "doc-1"
+        fake = self._fake_clipboard(monkeypatch)
+        fake.setText("SENTINEL")
+        toasts: list[str] = []
+        monkeypatch.setattr(widget, "_show_copy_toast", lambda msg="x": toasts.append(msg))
+
+        widget._on_copy_text()
+        callback = web.fake_page.callbacks.pop()
+        # 点击后结果被刷新：active token 变了，回调带的还是旧 token
+        widget._active_document_token = "doc-2"
+        callback({"documentToken": "doc-1", "html": "", "text": "old"})
+
+        # 不写剪贴板
+        assert fake.text() == "SENTINEL"
+        # 但给出重试提示
+        assert any("重新复制" in t for t in toasts)
+
+    def test_copy_text_empty_payload_shows_no_content_toast(
+        self, widget, monkeypatch
+    ):
+        """结果无文本无表格时（如纯图片），「复制文本」给出「无可复制内容」提示。"""
+        from types import SimpleNamespace
+
+        class FakePage:
+            def __init__(self):
+                self.callbacks = []
+
+            def runJavaScript(self, _script, callback):
+                self.callbacks.append(callback)
+
+        class FakeWebView:
+            def __init__(self):
+                self.fake_page = FakePage()
+
+            def page(self):
+                return self.fake_page
+
+        web = FakeWebView()
+        widget._web_view = web
+        widget._current_result = self._make_result(raw_text="")
+        widget._active_document_token = "doc-1"
+        widget._rendered_document_token = "doc-1"
+        fake = self._fake_clipboard(monkeypatch)
+        toasts: list[str] = []
+        monkeypatch.setattr(widget, "_show_copy_toast", lambda msg="x": toasts.append(msg))
+
+        widget._on_copy_text()
+        callback = web.fake_page.callbacks.pop()
+        callback({"documentToken": "doc-1", "html": "", "text": ""})
+
+        assert any("无可复制内容" in t for t in toasts)
+
+    def test_copy_markdown_empty_result_shows_toast(self, widget, qtbot, monkeypatch):
+        """结果 markdown_text 与 raw_text 均为空时，复制MD 提示「无可复制内容」。"""
+        result = self._make_result(markdown_text="", raw_text="")
+        widget._current_result = result
+        self._fake_clipboard(monkeypatch)
+        toasts: list[str] = []
+        monkeypatch.setattr(widget, "_show_copy_toast", lambda msg="x": toasts.append(msg))
+
+        widget._on_copy_markdown()
+        qtbot.waitUntil(lambda: widget._copy_job is None, timeout=2000)
+        assert any("无可复制内容" in t for t in toasts)
+
     def test_copy_text_with_table_writes_rich_mime(self, widget, qtbot, monkeypatch):
         """结果含表格时，「复制文本」写入 HTML + Tab 文本 + CF_HTML。
 
