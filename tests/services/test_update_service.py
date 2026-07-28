@@ -2256,13 +2256,22 @@ class TestCheckAndPromptRemindLater:
         return update_ui.UpdateService(tmp_path)
 
     def _mock_has_update(self, monkeypatch):
-        """mock check_for_updates 返回有更新（远程版本更高）。"""
+        """mock check_for_updates 返回有更新（远程版本更高）。
+
+        必须同时 patch 源模块（update_service.check_for_updates，供直接调用它的
+        测试）与 ``vibeocr.pyside.update`` 模块里 ``from ... import check_for_updates``
+        绑定的本地名——``check_and_prompt`` 用的是后者。只 patch 源模块时，CI 会
+        走真实网络拉 GitHub release，被 rate-limit（403）后早退到「检查失败」对话框，
+        而不是 UpdateDialog，导致依赖 UpdateDialog 的断言失败。
+        """
+        from vibeocr.pyside import update as update_ui
         from vibeocr.services import update_service
 
         info = _make_update_info(version="9.9.9")
         async def fake_check(current):
             return info, True
         monkeypatch.setattr(update_service, "check_for_updates", fake_check)
+        monkeypatch.setattr(update_ui, "check_for_updates", fake_check)
         return info
 
     def test_auto_check_skips_prompt_when_remind_later_active(
