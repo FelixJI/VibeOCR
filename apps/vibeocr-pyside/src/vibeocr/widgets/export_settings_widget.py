@@ -81,6 +81,8 @@ class ExportSettingsWidget(QWidget):
         btn_layout = QHBoxLayout()
         self._export_btn = QPushButton("导出当前")
         self._export_all_btn = QPushButton("导出全部")
+        # 初始无结果，「导出当前」禁用（set_current_result 会随结果切换）
+        self._export_btn.setEnabled(False)
         btn_layout.addWidget(self._export_btn)
         btn_layout.addWidget(self._export_all_btn)
         layout.addLayout(btn_layout)
@@ -180,8 +182,13 @@ class ExportSettingsWidget(QWidget):
         self.export_all_requested.emit(self._settings.format)
 
     def set_current_result(self, result) -> None:
-        """设置当前显示的结果"""
+        """设置当前显示的结果。
+
+        同时据此启用/禁用「导出当前」按钮：无结果时禁用，避免点击后静默无反应。
+        （「导出全部」不依赖单个结果，始终保持可用。）
+        """
         self._current_result = result
+        self._export_btn.setEnabled(result is not None)
 
     def get_export_dir(self, source_path: str = "") -> str:
         """获取导出目录"""
