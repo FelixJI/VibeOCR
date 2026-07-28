@@ -119,7 +119,7 @@ public sealed class ScreenRegionPicker(Func<nint> ownerWindow) : IScreenRegionPi
             CornerRadius = new CornerRadius(6),
             Child = new TextBlock
             {
-                Text = "拖动框选识别区域 · Esc 取消",
+                Text = "拖动框选识别区域 · 右键重新框选 / 取消 · Esc 取消",
                 Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 255, 255, 255)),
             },
         });
@@ -128,7 +128,34 @@ public sealed class ScreenRegionPicker(Func<nint> ownerWindow) : IScreenRegionPi
         Windows.Foundation.Point? start = null;
         canvas.PointerPressed += (_, args) =>
         {
-            if (!args.GetCurrentPoint(canvas).Properties.IsLeftButtonPressed)
+            var properties = args.GetCurrentPoint(canvas).Properties;
+
+            // 右键按状态分支：已有框选→清空重选；空状态→取消并关闭遮罩。
+            if (properties.IsRightButtonPressed)
+            {
+                if (start is not null)
+                {
+                    // 兜底：拖拽进行中收到右键（左键 capture 时一般不触发，但保险）。
+                    start = null;
+                    canvas.ReleasePointerCapture(args.Pointer);
+                }
+
+                if (selection.Visibility == Visibility.Visible)
+                {
+                    selection.Visibility = Visibility.Collapsed;
+                    selection.Width = 0;
+                    selection.Height = 0;
+                }
+                else
+                {
+                    completion.TrySetResult(null);
+                    overlay.Close();
+                }
+                args.Handled = true;
+                return;
+            }
+
+            if (!properties.IsLeftButtonPressed)
             {
                 return;
             }
@@ -175,6 +202,13 @@ public sealed class ScreenRegionPicker(Func<nint> ownerWindow) : IScreenRegionPi
                     canvas.ActualWidth,
                     canvas.ActualHeight));
                 overlay.Close();
+            }
+            else
+            {
+                // 选区太小：清空并留在遮罩等待重新框选，替代原来的静默保留。
+                selection.Visibility = Visibility.Collapsed;
+                selection.Width = 0;
+                selection.Height = 0;
             }
         };
         var keyboardSink = new Button
