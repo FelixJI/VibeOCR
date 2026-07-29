@@ -1038,10 +1038,17 @@ class SingleRecognitionTab(BaseOcrTab):
         # 的块类型渲染。二者都会为左侧预览回填 content_list（块级编辑入口）。
         if self._plain_text_at_recognition and self._result_widget is not None:
             text_opts = self._text_options_widget.get_text_options()
-            # 仍走 _display_result 以回填 content_list / 同步预览，随后用
-            # display_text_layout 覆盖右侧渲染，体现排版选项。
-            self._pending_text_layout = (result, text_opts)
-            self._display_result(result)
+            # 纯文本路径只渲染一次（display_text_layout），不再先 display_result。
+            # 此前先 display_result（文档 token A）再 display_text_layout（token B）
+            # 的双重渲染会作废 A：两次渲染之间点「复制文本」，异步 JS 回调返回
+            # 旧 token A，命中 _on_web_copy_payload 的「结果已刷新」toast。
+            # 这里仅做 _display_result 的准备（重置 rebuild/取消后台 job/清状态）
+            # 并回填 content_list / 同步预览（_apply_content_index，不渲染 WebEngine），
+            # 随后用 display_text_layout 渲染一次。
+            self._pending_text_layout = None
+            self._prepare_result_display_state(result)
+            self._apply_content_index(result, self._build_content_list(result))
+            self._result_widget.display_text_layout(result, text_opts)
         else:
             self._pending_text_layout = None
             self._display_result(result)

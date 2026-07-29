@@ -670,3 +670,58 @@ class TestTabOrder:
         settings_idx = next(i for i in range(tw.count()) if tw.tabText(i) == "设置")
         about_idx = tw.count() - 1
         assert settings_idx < about_idx, "设置页应在关于页之前"
+
+
+class TestPrewarmResultWebEngine:
+    """prewarm_result_webengine：窗口显示后延迟预热单次识别结果页 WebEngine。
+
+    见 .superpowers/sdd/fix-task2-brief.md：消除首次截图结果前主界面闪烁，
+    把 Chromium 冷启动成本从「首次结果渲染时」前移到「启动空闲片段」。
+    用 __new__ + mock 注入轻量构造，仅测该方法逻辑（不拉起真实 MainWindow）。
+    """
+
+    def _make_window_with_single_tab(self, prewarm):
+        """构造一个仅含 mock _single_tab._result_widget 的 MainWindow 外壳。
+
+        参考 TestMainWindowClosePolls 的 __new__ 风格：避免真实 MainWindow 构造
+        的重型依赖，直接验证 prewarm_result_webengine 的转发 + 守卫逻辑。
+        """
+        window = MainWindow.__new__(MainWindow)
+        window._closing = False
+        window._single_tab = SimpleNamespace(
+            _result_widget=SimpleNamespace(prewarm_webengine=prewarm)
+        )
+        return window
+
+    def test_prewarm_result_webengine_invokes_single_tab_prewarm_once(self):
+        """非 closing 状态下应调用 _single_tab._result_widget.prewarm_webengine 一次。"""
+        calls = []
+        window = self._make_window_with_single_tab(
+            prewarm=lambda: calls.append(1)
+        )
+
+        window.prewarm_result_webengine()
+
+        assert len(calls) == 1, "应转发调用到单次识别结果页的 prewarm_webengine"
+
+    def test_prewarm_result_webengine_respects_closing_guard(self):
+        """_closing 为真时不应调用 prewarm_webengine。"""
+        calls = []
+        window = self._make_window_with_single_tab(
+            prewarm=lambda: calls.append(1)
+        )
+        window._closing = True
+
+        window.prewarm_result_webengine()
+
+        assert calls == [], "_closing 为真时不应转发预热调用"
+
+    def test_prewarm_result_webengine_handles_missing_result_widget(self):
+        """_result_widget 缺失（或无 prewarm_webengine）时应静默跳过，不抛异常。"""
+        window = MainWindow.__new__(MainWindow)
+        window._closing = False
+        # _single_tab 存在但 _result_widget 为 None（防御性 getattr 路径）。
+        window._single_tab = SimpleNamespace(_result_widget=None)
+
+        # 不应抛异常。
+        window.prewarm_result_webengine()

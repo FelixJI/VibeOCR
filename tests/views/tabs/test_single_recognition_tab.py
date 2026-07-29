@@ -893,3 +893,118 @@ class TestResultBlockEditedFormulaSync:
         assert tab._current_ocr_result.text_blocks[0].is_manually_edited is True
         # has_content_list → 块类型模式刷新
         assert refreshed and refreshed[0][0] == "content_list"
+
+
+class TestPlainTextRendersOnce:
+    """纯文本 OCR 结果在 _on_ocr_finished 后只渲染一次（display_text_layout），
+    不再先 display_result 再 display_text_layout 双重渲染。
+
+    根因：双重渲染时 display_result 先 bump 文档 token 为 A，display_text_layout
+    又 bump 为 B 并清空 _rendered_document_token；两次渲染之间用户点「复制文本」，
+    异步 JS 回调返回旧 token A，命中 _on_web_copy_payload 的「结果已刷新」toast。
+    修法：纯文本分支只回填 content_list（_apply_content_index），随后用
+    display_text_layout 渲染一次。
+    """
+
+    def test_plain_text_does_not_call_display_result(self, qapp, monkeypatch):
+        """纯文本识别完成时，result_view_widget.display_result 不应被调用。"""
+        tab = SingleRecognitionTab()
+        counts = {"display_result": 0, "display_text_layout": 0}
+        monkeypatch.setattr(
+            tab._result_widget, "display_result",
+            lambda *a, **k: counts.__setitem__("display_result", counts["display_result"] + 1),
+        )
+        monkeypatch.setattr(
+            tab._result_widget, "display_text_layout",
+            lambda *a, **k: counts.__setitem__("display_text_layout", counts["display_text_layout"] + 1),
+        )
+
+        tab._on_ocr_finished(_make_plain_text_result())
+
+        assert counts["display_result"] == 0, (
+            "纯文本结果不应触发 display_result（会 bump 文档 token 引发复制竞态）"
+        )
+
+    def test_plain_text_calls_display_text_layout_exactly_once(self, qapp, monkeypatch):
+        """纯文本识别完成时，display_text_layout 恰好被调用一次。"""
+        tab = SingleRecognitionTab()
+        counts = {"display_result": 0, "display_text_layout": 0}
+        monkeypatch.setattr(
+            tab._result_widget, "display_result",
+            lambda *a, **k: counts.__setitem__("display_result", counts["display_result"] + 1),
+        )
+        monkeypatch.setattr(
+            tab._result_widget, "display_text_layout",
+            lambda *a, **k: counts.__setitem__("display_text_layout", counts["display_text_layout"] + 1),
+        )
+
+        tab._on_ocr_finished(_make_plain_text_result())
+
+        assert counts["display_text_layout"] == 1, (
+            "纯文本结果应只渲染一次（display_text_layout）"
+        )
+
+    def test_plain_text_backfills_content_list_for_preview(self, qapp, monkeypatch):
+        """纯文本路径仍需为左侧预览回填 content_list（块级编辑入口）。
+
+        回填由 _apply_content_index 完成（不渲染 WebEngine）。
+        """
+        tab = SingleRecognitionTab()
+        monkeypatch.setattr(tab._result_widget, "display_text_layout", lambda *a, **k: None)
+        monkeypatch.setattr(tab._result_widget, "display_result", lambda *a, **k: None)
+
+        result = _make_plain_text_result()
+        tab._on_ocr_finished(result)
+
+        assert result.content_list, "纯文本路径应回填 content_list 使预览可块级编辑"
+        assert len(result.content_list) == len(result.text_blocks)
+        # text_blocks 补建 content_index（编辑回调按此反查）
+        assert result.text_blocks[0].content_index == 0
+        assert result.text_blocks[1].content_index == 1
+
+    def test_plain_text_no_pending_text_layout_leftover(self, qapp, monkeypatch):
+        """纯文本分支同步渲染后，_pending_text_layout 不应残留（避免
+        _on_content_list_ready 二次触发 display_text_layout）。"""
+        tab = SingleRecognitionTab()
+        monkeypatch.setattr(tab._result_widget, "display_text_layout", lambda *a, **k: None)
+        monkeypatch.setattr(tab._result_widget, "display_result", lambda *a, **k: None)
+
+        tab._on_ocr_finished(_make_plain_text_result())
+
+        assert tab._pending_text_layout is None
+
+    def test_structured_result_still_uses_display_result(self, qapp, monkeypatch):
+        """结构化结果（表格）仍走 display_result（恰好一次），不调 display_text_layout。"""
+        tab = SingleRecognitionTab()
+        counts = {"display_result": 0, "display_text_layout": 0}
+        monkeypatch.setattr(
+            tab._result_widget, "display_result",
+            lambda *a, **k: counts.__setitem__("display_result", counts["display_result"] + 1),
+        )
+        monkeypatch.setattr(
+            tab._result_widget, "display_text_layout",
+            lambda *a, **k: counts.__setitem__("display_text_layout", counts["display_text_layout"] + 1),
+        )
+
+        tab._on_ocr_finished(_make_table_result())
+
+        assert counts["display_result"] == 1, "结构化结果应走 display_result 一次"
+        assert counts["display_text_layout"] == 0, "结构化结果不应触发 display_text_layout"
+
+    def test_structured_formula_result_still_uses_display_result(self, qapp, monkeypatch):
+        """结构化结果（公式）仍走 display_result（恰好一次）。"""
+        tab = SingleRecognitionTab()
+        counts = {"display_result": 0, "display_text_layout": 0}
+        monkeypatch.setattr(
+            tab._result_widget, "display_result",
+            lambda *a, **k: counts.__setitem__("display_result", counts["display_result"] + 1),
+        )
+        monkeypatch.setattr(
+            tab._result_widget, "display_text_layout",
+            lambda *a, **k: counts.__setitem__("display_text_layout", counts["display_text_layout"] + 1),
+        )
+
+        tab._on_ocr_finished(_make_formula_result())
+
+        assert counts["display_result"] == 1
+        assert counts["display_text_layout"] == 0
