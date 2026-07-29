@@ -185,8 +185,13 @@ class BaseOcrTab(QWidget):
             tuple(missing_content_indices),
         )
 
-    def _display_result(self, result) -> None:
-        """显示 OCR 结果到结果面板和预览面板"""
+    def _prepare_result_display_state(self, result) -> None:
+        """重置与新结果展示相关的状态（rebuild、后台 content 准备、索引）。
+
+        抽自 ``_display_result`` 的非渲染步骤，供纯文本路径复用：纯文本路径
+        不调用 ``_display_result``（避免 ``display_result`` 渲染 bump 文档 token），
+        但仍需重置这些状态以保证前一次结果的残留不污染本次展示。
+        """
         self._current_ocr_result = result
         self._reset_text_rebuild_state(result)
         self._content_jobs.cancel_current()
@@ -197,6 +202,10 @@ class BaseOcrTab(QWidget):
         self._text_index_by_content = {}
         if self._preview_widget:
             self._preview_widget.setEnabled(True)
+
+    def _display_result(self, result) -> None:
+        """显示 OCR 结果到结果面板和预览面板"""
+        self._prepare_result_display_state(result)
         content_count = len(getattr(result, "content_list", ()) or ())
         text_count = len(getattr(result, "text_blocks", ()) or ())
         if max(content_count, text_count) > _ASYNC_CONTENT_THRESHOLD:
@@ -214,13 +223,23 @@ class BaseOcrTab(QWidget):
 
         self._apply_content_list(result, self._build_content_list(result))
 
-    def _apply_content_list(
+    def _apply_content_index(
         self,
         result,
         content_list: list[dict],
         text_index_by_content: dict[int, int] | None = None,
     ) -> None:
-        """Apply a detached content list and start the two presentation paths."""
+        """只回填 content_list / 设置索引 / 同步左侧预览，不渲染右侧 WebEngine。
+
+        与 ``_apply_content_list`` 的区别：不调用 ``result_widget.display_result``，
+        也不在末尾触发 ``_on_content_list_ready``。用于纯文本路径——回填后由
+        调用方用 ``display_text_layout`` 渲染一次（避免 display_result 先 bump
+        文档 token、display_text_layout 再 bump 一次，引发复制回调 token 失配）。
+
+        回填逻辑与 ``_apply_content_list`` 的回填部分逐行等价（content_list 回填、
+        content_index 补建、``_content_index_result`` / ``_text_index_by_content``
+        设置、preview.set_content_list / set_text_content_index）。
+        """
         # 统一构建 content_list 并回填到 result，保证右侧结果区与左侧预览、
         # 编辑回调用同一套索引。通用 OCR 管道的 content_list 为空（只有 text_blocks），
         # 若不回填，display_result 会走 raw_text 的 <pre> 分支，无法按块编辑；
@@ -241,10 +260,6 @@ class BaseOcrTab(QWidget):
                         text_index_by_content[int(content_index)] = i
         self._content_index_result = result
         self._text_index_by_content = text_index_by_content or {}
-        if self._result_widget:
-            if self._preview_widget:
-                self._preview_widget.setEnabled(False)
-            self._result_widget.display_result(result)
         if self._preview_widget:
             self._preview_widget.set_content_list(content_list)
             set_text_index = getattr(
@@ -252,6 +267,26 @@ class BaseOcrTab(QWidget):
             )
             if callable(set_text_index):
                 set_text_index(self._text_index_by_content)
+
+    def _apply_content_list(
+        self,
+        result,
+        content_list: list[dict],
+        text_index_by_content: dict[int, int] | None = None,
+    ) -> None:
+        """Apply a detached content list and start the two presentation paths.
+
+        结构化结果路径：回填 content_list + 同步预览（``_apply_content_index``），
+        随后用 ``display_result`` 渲染右侧（渲染前冻结预览编辑，因 snapshot 在
+        后台线程读活模型），末尾触发 ``_on_content_list_ready`` 供子类做二次展示。
+        """
+        self._apply_content_index(result, content_list, text_index_by_content)
+        if self._result_widget:
+            if self._preview_widget:
+                # 渲染前冻结预览编辑：snapshot 在后台线程读取左侧预览的活模型，
+                # 并发 GUI 改动会产生残缺 DTO。
+                self._preview_widget.setEnabled(False)
+            self._result_widget.display_result(result)
         self._on_content_list_ready(result)
 
     def _on_content_list_ready(self, result) -> None:

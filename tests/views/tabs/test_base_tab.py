@@ -324,6 +324,214 @@ class TestDisplayResultContentListBackfill:
         assert "<pre" not in body
 
 
+class TestApplyContentIndex:
+    """_apply_content_index 只回填 content_list / 设置索引 / 同步预览，
+    不调用 result_widget.display_result（避免 bump 文档 token）。
+
+    用于纯文本路径：回填后由调用方用 display_text_layout 渲染一次。
+    """
+
+    def test_does_not_call_display_result(self, qapp, monkeypatch):
+        from vibeocr.models.ocr_result import OCRResult, TextBlock
+
+        tab = ConcreteTab()
+        # 注入 mock 的 preview/result widget
+        from unittest.mock import Mock
+        tab._preview_widget = Mock()
+        tab._result_widget = Mock()
+
+        result = OCRResult(
+            text_blocks=[TextBlock(text="A", score=0.9, bbox=(0, 0, 10, 10))],
+            content_list=[],
+        )
+        content_list = tab._build_content_list(result)
+
+        tab._apply_content_index(result, content_list)
+
+        tab._result_widget.display_result.assert_not_called()
+
+    def test_backfills_content_list_and_indexes(self, qapp):
+        """_apply_content_index 回填 result.content_list、设置 _content_index_result
+        与 _text_index_by_content，并为缺失 content_index 的 text_blocks 补建索引。"""
+        from unittest.mock import Mock
+
+        from vibeocr.models.ocr_result import OCRResult, TextBlock
+
+        tab = ConcreteTab()
+        tab._preview_widget = Mock()
+        tab._result_widget = Mock()
+
+        result = OCRResult(
+            text_blocks=[
+                TextBlock(text="A", score=0.9, bbox=(0, 0, 10, 10)),
+                TextBlock(text="B", score=0.9, bbox=(0, 0, 10, 10)),
+            ],
+            content_list=[],
+        )
+        content_list = tab._build_content_list(result)
+
+        tab._apply_content_index(result, content_list)
+
+        assert len(result.content_list) == 2
+        assert result.text_blocks[0].content_index == 0
+        assert result.text_blocks[1].content_index == 1
+        assert tab._content_index_result is result
+        assert tab._text_index_by_content == {0: 0, 1: 1}
+
+    def test_syncs_preview_widget(self, qapp):
+        """_apply_content_index 调用 preview_widget.set_content_list 和
+        set_text_content_index，使左侧预览进入块类型模式（块级编辑入口）。"""
+        from unittest.mock import Mock
+
+        from vibeocr.models.ocr_result import OCRResult, TextBlock
+
+        tab = ConcreteTab()
+        preview = Mock()
+        tab._preview_widget = preview
+        tab._result_widget = Mock()
+
+        result = OCRResult(
+            text_blocks=[TextBlock(text="A", score=0.9, bbox=(0, 0, 10, 10))],
+            content_list=[],
+        )
+        content_list = tab._build_content_list(result)
+
+        tab._apply_content_index(result, content_list)
+
+        preview.set_content_list.assert_called_once_with(content_list)
+        preview.set_text_content_index.assert_called_once_with({0: 0})
+
+    def test_does_not_call_on_content_list_ready(self, qapp, monkeypatch):
+        """_apply_content_index 末尾不应触发 _on_content_list_ready
+        （由调用方决定后续渲染，避免二次触发）。"""
+        from unittest.mock import Mock
+
+        from vibeocr.models.ocr_result import OCRResult, TextBlock
+
+        tab = ConcreteTab()
+        tab._preview_widget = Mock()
+        tab._result_widget = Mock()
+
+        called = {"ready": False}
+        monkeypatch.setattr(
+            tab, "_on_content_list_ready", lambda r: called.__setitem__("ready", True)
+        )
+
+        result = OCRResult(
+            text_blocks=[TextBlock(text="A", score=0.9, bbox=(0, 0, 10, 10))],
+            content_list=[],
+        )
+        content_list = tab._build_content_list(result)
+
+        tab._apply_content_index(result, content_list)
+
+        assert called["ready"] is False
+
+    def test_preserves_existing_content_index(self, qapp):
+        """结构化管道已设的 content_index 不应被覆盖。"""
+        from unittest.mock import Mock
+
+        from vibeocr.models.ocr_result import OCRResult, TextBlock
+
+        tab = ConcreteTab()
+        tab._preview_widget = Mock()
+        tab._result_widget = Mock()
+
+        result = OCRResult(
+            text_blocks=[
+                TextBlock(text="<table/>", score=0.9, bbox=(0, 0, 10, 10),
+                          content_index=5, label="table"),
+            ],
+            content_list=[{"type": "table", "table_body": "<table/>"}],
+        )
+        content_list = tab._build_content_list(result)
+        text_index_by_content = {5: 0}
+
+        tab._apply_content_index(result, content_list, text_index_by_content)
+
+        assert result.text_blocks[0].content_index == 5
+        assert tab._text_index_by_content == {5: 0}
+
+
+class TestApplyContentListStructuredPathUnchanged:
+    """原 _apply_content_list（结构化路径）行为不回归：仍调用 display_result
+    并末尾触发 _on_content_list_ready。
+    """
+
+    def test_calls_display_result_and_on_content_list_ready(self, qapp, monkeypatch):
+        from unittest.mock import Mock
+
+        from vibeocr.models.ocr_result import OCRResult, TextBlock
+
+        tab = ConcreteTab()
+        preview = Mock()
+        tab._preview_widget = preview
+        result_widget = Mock()
+        tab._result_widget = result_widget
+
+        ready_called = {"yes": False}
+        monkeypatch.setattr(
+            tab, "_on_content_list_ready",
+            lambda r: ready_called.__setitem__("yes", True),
+        )
+
+        result = OCRResult(
+            text_blocks=[
+                TextBlock(text="A", score=0.9, bbox=(0, 0, 10, 10), content_index=0),
+            ],
+            content_list=[{"type": "text", "text": "A"}],
+        )
+        content_list = tab._build_content_list(result)
+
+        tab._apply_content_list(result, content_list)
+
+        result_widget.display_result.assert_called_once_with(result)
+        # 结构化路径在渲染前冻结预览编辑（snapshot 在后台线程读活模型）
+        preview.setEnabled.assert_called_once_with(False)
+        preview.set_content_list.assert_called_once_with(content_list)
+        assert ready_called["yes"] is True
+
+    def test_backfill_logic_identical_to_index_method(self, qapp):
+        """_apply_content_list 与 _apply_content_index 的回填逻辑等价
+        （content_list 回填、索引设置、preview 同步）。"""
+        from unittest.mock import Mock
+
+        from vibeocr.models.ocr_result import OCRResult, TextBlock
+
+        def make_result():
+            return OCRResult(
+                text_blocks=[
+                    TextBlock(text="A", score=0.9, bbox=(0, 0, 10, 10)),
+                    TextBlock(text="B", score=0.9, bbox=(0, 0, 10, 10)),
+                ],
+                content_list=[],
+            )
+
+        # 走 _apply_content_index
+        tab1 = ConcreteTab()
+        tab1._preview_widget = Mock()
+        tab1._result_widget = Mock()
+        r1 = make_result()
+        cl1 = tab1._build_content_list(r1)
+        tab1._apply_content_index(r1, cl1)
+
+        # 走 _apply_content_list
+        tab2 = ConcreteTab()
+        tab2._preview_widget = Mock()
+        tab2._result_widget = Mock()
+        r2 = make_result()
+        cl2 = tab2._build_content_list(r2)
+        tab2._apply_content_list(r2, cl2)
+
+        # 回填等价
+        assert len(r1.content_list) == len(r2.content_list)
+        assert r1.text_blocks[0].content_index == r2.text_blocks[0].content_index
+        assert r1.text_blocks[1].content_index == r2.text_blocks[1].content_index
+        assert tab1._text_index_by_content == tab2._text_index_by_content
+        assert tab1._content_index_result is r1
+        assert tab2._content_index_result is r2
+
+
 def test_large_content_preparation_keeps_gui_responsive(qapp, qtbot, monkeypatch):
     """五万块归一化必须在后台执行，调用槽本身保持在 150ms 内。"""
     import threading

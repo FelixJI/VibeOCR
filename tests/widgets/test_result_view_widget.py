@@ -975,6 +975,99 @@ class TestResultViewExportButtons:
         assert fake.mime is None
         assert fake.text() == "普通文本，无表格"
 
+    def test_plain_text_render_once_copy_does_not_hit_refresh_toast(
+        self, widget, qtbot, monkeypatch
+    ):
+        """纯文本结果经 display_text_layout 单次渲染完成后，立即点「复制文本」，
+        异步 JS 回调返回的 token 与当前活动 token 匹配 → 不应出现「结果已刷新」。
+
+        本测试模拟修复后的端到端流程：display_text_layout（仅渲染一次）→
+        loadFinished 回填 _rendered_document_token → 复制 → 回调匹配 → 写入剪贴板。
+        修复前会先 display_result（token A）再 display_text_layout（token B），
+        回调带旧 token A 触发 toast。
+        """
+        from vibeocr.models.ocr_result import TextBlock
+        from vibeocr.models.text_block_options import TextBlockOptions
+
+        class FakePage:
+            def __init__(self, widget_ref):
+                self._widget_ref = widget_ref
+                self.copy_callbacks = []
+
+            def runJavaScript(self, script, callback):
+                if "_documentToken" in script:
+                    # 加载完成后的 token 探测：返回 setHtml 写入的活动 token。
+                    # 该 token == display_text_layout 调用时的 _active_document_token。
+                    callback(self._widget_ref._active_document_token)
+                else:
+                    # 复制载荷查询（getCopyPayload）：由测试显式触发回调。
+                    self.copy_callbacks.append(callback)
+
+        class FakeWebView:
+            def __init__(self, widget_ref):
+                self._widget_ref = widget_ref
+                self.fake_page = FakePage(widget_ref)
+                self.set_html_calls = []
+
+            def page(self):
+                return self.fake_page
+
+            def setHtml(self, html, base_url):
+                # 记录 setHtml（占位符已被替换为活动 token），并同步触发 loadFinished。
+                self.set_html_calls.append(html)
+                # _on_render_completed 已设置 _pending_document_token；
+                # 模拟 WebEngine 加载完成 → JS 读取 _documentToken 回填 rendered token。
+                self._widget_ref._on_web_load_finished(True)
+
+        result = self._make_result(raw_text="第一行\n第二行")
+        result.text_blocks = [
+            TextBlock("第一行", 0.95, (0, 0, 10, 10)),
+            TextBlock("第二行", 0.93, (0, 10, 10, 20)),
+        ]
+        options = TextBlockOptions()
+
+        fake_view = FakeWebView(widget)
+        # 桩掉惰性 WebEngine 创建，直接返回我们的 fake view，并同步写入 _web_view
+        # （_on_web_load_finished 用 self._web_view 做非空守卫）。
+        widget._web_view = fake_view
+        monkeypatch.setattr(widget, "_ensure_web_view", lambda: fake_view)
+
+        widget.display_text_layout(result, options)
+
+        # 等待渲染作业完成并触发 setHtml（进而触发 loadFinished 回填 rendered token）。
+        qtbot.waitUntil(lambda: len(fake_view.set_html_calls) > 0, timeout=3000)
+        # loadFinished 已在 setHtml 内同步触发，此时 _rendered_document_token 应已回填。
+        assert widget._rendered_document_token == widget._active_document_token, (
+            "单次渲染后 rendered token 应等于 active token（无双重 bump）"
+        )
+        assert widget._rendered_document_token != ""
+        assert widget._copy_btn.isVisible() or not widget._copy_btn.isHidden()
+
+        toasts: list[str] = []
+        monkeypatch.setattr(
+            widget, "_show_copy_toast", lambda msg="x": toasts.append(msg)
+        )
+        fake_clip = self._fake_clipboard(monkeypatch)
+        fake_clip.setText("SENTINEL")
+
+        widget._on_copy_text()
+        # _on_copy_text 调 getCopyPayload()，回调挂在 fake_page.copy_callbacks 上。
+        assert fake_view.fake_page.copy_callbacks, "应发起一次 JS 复制载荷查询"
+        callback = fake_view.fake_page.copy_callbacks.pop()
+        # 回调携带当前活动 token（匹配）。
+        callback(
+            {
+                "documentToken": widget._active_document_token,
+                "html": "",
+                "text": "第一行\n第二行",
+            }
+        )
+
+        assert fake_clip.text() == "第一行\n第二行", "匹配 token 应写入剪贴板"
+        assert not any("重新复制" in t for t in toasts), (
+            "单次渲染后复制不应出现「结果已刷新」toast"
+        )
+
     def test_buttons_hidden_initially(self, widget):
         """初始（无结果）三个新按钮隐藏。
 
