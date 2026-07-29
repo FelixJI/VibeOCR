@@ -1,6 +1,6 @@
 # Runtime API v2 drift report
 
-Generated from commit: `eb8b6a6715599332ccf331dabf02468d7b1df40c`
+Generated from commit: `a0bc24ca07e123e4aad423213c55931a61c837be`
 
 The historical `openapi.snapshot.json` is **non-authoritative**. This report compares its operation surface with `create_app(...).openapi()` from the real Backend without starting OCR providers.
 
@@ -10,10 +10,14 @@ The historical `openapi.snapshot.json` is **non-authoritative**. This report com
 |---|---:|
 | Historical operations | 16 |
 | Actual Backend operations | 35 |
+| Python Runtime Client operations | 23 |
+| C# Next Runtime Client operations | 14 |
 | Shared operations | 8 |
 | Actual-only operations | 27 |
 | Snapshot-only operations | 8 |
-| Operations without a concrete response content schema | 0 |
+| Client-only operations | 1 |
+| Backend operations not observed in either client | 10 |
+| Operations without a concrete response content schema | 23 |
 | Duplicate generated operation IDs | 0 |
 
 ## Actual-only operations
@@ -61,11 +65,54 @@ The historical `openapi.snapshot.json` is **non-authoritative**. This report com
 | `POST` | `/v2/jobs/{job_id}/retry` |
 | `PUT` | `/v2/runtime/residency` |
 
+## Client-only operations
+
+| Method | Path |
+|---|---|
+| `GET` | `/v2/pdf/health` |
+
+## Backend operations not observed in either client
+
+| Method | Path |
+|---|---|
+| `POST` | `/v2/pdf/sessions/{session_id}/add_text_layer` |
+| `POST` | `/v2/pdf/sessions/{session_id}/delete_text_layers` |
+| `POST` | `/v2/pdf/sessions/{session_id}/insert_blank` |
+| `POST` | `/v2/pdf/sessions/{session_id}/insert_from` |
+| `POST` | `/v2/pdf/sessions/{session_id}/load` |
+| `POST` | `/v2/pdf/sessions/{session_id}/move_page` |
+| `POST` | `/v2/pdf/sessions/{session_id}/reorder` |
+| `POST` | `/v2/pdf/sessions/{session_id}/rewrite_text_layer` |
+| `POST` | `/v2/pdf/sessions/{session_id}/save_transactional` |
+| `POST` | `/v2/pdf/sessions/{session_id}/update_block_text` |
+
 ## Untyped actual operations
 
 | Method | Path |
 |---|---|
-| — | — |
+| `GET` | `/v2/pdf/sessions/{session_id}/render` |
+| `POST` | `/v2/pdf/sessions/open` |
+| `POST` | `/v2/pdf/sessions/{session_id}/add_text_layer` |
+| `POST` | `/v2/pdf/sessions/{session_id}/add_text_layer_batch` |
+| `POST` | `/v2/pdf/sessions/{session_id}/cancel` |
+| `POST` | `/v2/pdf/sessions/{session_id}/close` |
+| `POST` | `/v2/pdf/sessions/{session_id}/delete_pages` |
+| `POST` | `/v2/pdf/sessions/{session_id}/delete_text_layers` |
+| `POST` | `/v2/pdf/sessions/{session_id}/detect_text_layers` |
+| `POST` | `/v2/pdf/sessions/{session_id}/insert_blank` |
+| `POST` | `/v2/pdf/sessions/{session_id}/insert_from` |
+| `POST` | `/v2/pdf/sessions/{session_id}/load` |
+| `POST` | `/v2/pdf/sessions/{session_id}/model` |
+| `POST` | `/v2/pdf/sessions/{session_id}/move_page` |
+| `POST` | `/v2/pdf/sessions/{session_id}/render_preview` |
+| `POST` | `/v2/pdf/sessions/{session_id}/render_thumbnail` |
+| `POST` | `/v2/pdf/sessions/{session_id}/reorder` |
+| `POST` | `/v2/pdf/sessions/{session_id}/reset_cancel` |
+| `POST` | `/v2/pdf/sessions/{session_id}/rewrite_text_layer` |
+| `POST` | `/v2/pdf/sessions/{session_id}/rotate` |
+| `POST` | `/v2/pdf/sessions/{session_id}/save` |
+| `POST` | `/v2/pdf/sessions/{session_id}/save_transactional` |
+| `POST` | `/v2/pdf/sessions/{session_id}/update_block_text` |
 
 ## Consequence
 

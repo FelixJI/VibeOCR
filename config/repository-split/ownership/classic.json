@@ -17,5 +17,8 @@
   ],
   "forbidden_dependencies": [
     "vibeocr.backend"
+  ],
+  "allowed_repository_dependencies": [
+    "FelixJI/vibeocr-protocol"
   ]
 }

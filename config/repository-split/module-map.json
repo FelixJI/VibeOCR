@@ -3,6 +3,11 @@
   "source_commit": "eb8b6a6715599332ccf331dabf02468d7b1df40c",
   "mapping": [
     {
+      "current": "packages/vibeocr-contracts-py/src/vibeocr/__init__.py",
+      "owner": "FelixJI/vibeocr-protocol",
+      "target": "(delete for PEP 420 namespace)"
+    },
+    {
       "current": "packages/vibeocr-contracts-py/src/vibeocr/contracts/**",
       "owner": "FelixJI/vibeocr-protocol",
       "target": "src/vibeocr/runtime_contracts/**"
@@ -11,6 +16,11 @@
       "current": "packages/vibeocr-contracts-py/src/vibeocr/protocol/**",
       "owner": "FelixJI/vibeocr-protocol",
       "target": "src/vibeocr/runtime_contracts/**"
+    },
+    {
+      "current": "packages/vibeocr-contracts-py/src/vibeocr/utils/**",
+      "owner": "FelixJI/vibeocr-protocol",
+      "target": "src/vibeocr/runtime_client/observability/**"
     },
     {
       "current": "packages/vibeocr-client-py/src/vibeocr/client/**",

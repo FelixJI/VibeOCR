@@ -20,5 +20,6 @@
     "vibeocr.backend",
     "vibeocr.classic",
     "VibeOCR.Next"
-  ]
+  ],
+  "allowed_repository_dependencies": []
 }

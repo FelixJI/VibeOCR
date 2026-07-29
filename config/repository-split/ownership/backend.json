@@ -27,5 +27,12 @@
     "vibeocr.runtime_client",
     "vibeocr.classic",
     "VibeOCR.Next"
+  ],
+  "allowed_repository_dependencies": [
+    "FelixJI/vibeocr-protocol"
+  ],
+  "allowed_current_import_prefixes": [
+    "vibeocr.contracts",
+    "vibeocr.protocol"
   ]
 }

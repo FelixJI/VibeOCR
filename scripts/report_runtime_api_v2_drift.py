@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -13,6 +15,13 @@ ROOT = Path(__file__).resolve().parents[1]
 SNAPSHOT = (
     ROOT
     / "packages/vibeocr-contracts-py/src/vibeocr/protocol/v2/openapi.snapshot.json"
+)
+PYTHON_CLIENT_FILES = (
+    ROOT / "packages/vibeocr-client-py/src/vibeocr/supervisor/client.py",
+    ROOT / "packages/vibeocr-client-py/src/vibeocr/supervisor/pdf_client.py",
+)
+CSHARP_CLIENT_FILES = tuple(
+    ROOT.joinpath("src/dotnet/VibeOCR.Platform/Inference").glob("*HttpClient.cs")
 )
 
 for source in (
@@ -54,13 +63,124 @@ def actual_openapi() -> dict:
         return create_app(module, "0" * 64).openapi()
 
 
+def _placeholder(expression: ast.AST) -> str:
+    text = ast.unparse(expression)
+    lowered = text.lower()
+    if "job" in lowered:
+        return "{job_id}"
+    if "session" in lowered or text == "sid":
+        return "{session_id}"
+    return "{" + text + "}"
+
+
+def _python_url(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        value = node.value
+    elif isinstance(node, ast.JoinedStr):
+        value = "".join(
+            part.value
+            if isinstance(part, ast.Constant) and isinstance(part.value, str)
+            else _placeholder(part.value)
+            if isinstance(part, ast.FormattedValue)
+            else ""
+            for part in node.values
+        )
+    else:
+        return None
+    return value.split("?", 1)[0] if value.startswith("/v2/") else None
+
+
+def python_client_operations() -> set[tuple[str, str]]:
+    operations: set[tuple[str, str]] = set()
+    for path in PYTHON_CLIENT_FILES:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or not isinstance(
+                node.func, ast.Attribute
+            ):
+                continue
+            call_name = node.func.attr.lower()
+            method: str | None = None
+            url_node: ast.AST | None = None
+            if call_name in {"get", "post", "put", "delete"} and node.args:
+                method = call_name.upper()
+                url_node = node.args[0]
+            elif call_name == "request" and len(node.args) >= 2:
+                if isinstance(node.args[0], ast.Constant):
+                    method = str(node.args[0].value).upper()
+                    url_node = node.args[1]
+            elif call_name == "_mutation" and node.args:
+                if isinstance(node.args[0], ast.Constant):
+                    method = "POST"
+                    operations.add(
+                        (
+                            method,
+                            f"/v2/pdf/sessions/{{session_id}}/{node.args[0].value}",
+                        )
+                    )
+            if method and url_node:
+                url = _python_url(url_node)
+                if url and "{op}" not in url:
+                    operations.add((method, url))
+    return operations
+
+
+_CSHARP_CALL = re.compile(
+    r"\b(?P<method>Get|Post|Put|Delete)Async\s*\(\s*"
+    r'\$?"(?P<url>/v2/[^"]+)"',
+    re.DOTALL,
+)
+
+
+def _normalize_csharp_url(url: str) -> str:
+    url = re.sub(
+        r"\{Uri\.EscapeDataString\((?P<name>[^)]+)\)\}",
+        lambda match: _csharp_placeholder(match.group("name")),
+        url,
+    )
+    url = re.sub(
+        r"\{(?P<name>[^{}]+)\}",
+        lambda match: _csharp_placeholder(match.group("name")),
+        url,
+    )
+    return url.split("?", 1)[0]
+
+
+def _csharp_placeholder(name: str) -> str:
+    lowered = name.lower()
+    if "job" in lowered:
+        return "{job_id}"
+    if "session" in lowered:
+        return "{session_id}"
+    return "{" + name + "}"
+
+
+def csharp_client_operations() -> set[tuple[str, str]]:
+    operations: set[tuple[str, str]] = set()
+    for path in CSHARP_CLIENT_FILES:
+        text = path.read_text(encoding="utf-8")
+        for match in _CSHARP_CALL.finditer(text):
+            operations.add(
+                (
+                    match.group("method").upper(),
+                    _normalize_csharp_url(match.group("url")),
+                )
+            )
+    return operations
+
+
 def build_report() -> str:
     snapshot = json.loads(SNAPSHOT.read_text(encoding="utf-8"))
     actual = actual_openapi()
     snapshot_ops = _operations(snapshot)
     actual_ops = _operations(actual)
+    python_ops = python_client_operations()
+    csharp_ops = csharp_client_operations()
+    client_ops = python_ops | csharp_ops
     only_actual = sorted(actual_ops.keys() - snapshot_ops.keys())
     only_snapshot = sorted(snapshot_ops.keys() - actual_ops.keys())
+    client_only = sorted(client_ops - actual_ops.keys())
+    backend_without_client = sorted(actual_ops.keys() - client_ops)
     shared = sorted(actual_ops.keys() & snapshot_ops.keys())
     untyped = [
         key
@@ -93,9 +213,13 @@ The historical `openapi.snapshot.json` is **non-authoritative**. This report com
 |---|---:|
 | Historical operations | {len(snapshot_ops)} |
 | Actual Backend operations | {len(actual_ops)} |
+| Python Runtime Client operations | {len(python_ops)} |
+| C# Next Runtime Client operations | {len(csharp_ops)} |
 | Shared operations | {len(shared)} |
 | Actual-only operations | {len(only_actual)} |
 | Snapshot-only operations | {len(only_snapshot)} |
+| Client-only operations | {len(client_only)} |
+| Backend operations not observed in either client | {len(backend_without_client)} |
 | Operations without a concrete response content schema | {len(untyped)} |
 | Duplicate generated operation IDs | {len(duplicate_ids)} |
 
@@ -110,6 +234,18 @@ The historical `openapi.snapshot.json` is **non-authoritative**. This report com
 | Method | Path |
 |---|---|
 {rows(only_snapshot)}
+
+## Client-only operations
+
+| Method | Path |
+|---|---|
+{rows(client_only)}
+
+## Backend operations not observed in either client
+
+| Method | Path |
+|---|---|
+{rows(backend_without_client)}
 
 ## Untyped actual operations
 
