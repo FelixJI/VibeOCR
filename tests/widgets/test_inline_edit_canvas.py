@@ -4,8 +4,9 @@ from unittest.mock import MagicMock
 
 from PySide6.QtCore import QPointF, QRect, QRectF
 from PySide6.QtGui import QColor, QPixmap
-from PySide6.QtWidgets import QGraphicsRectItem
+from PySide6.QtWidgets import QGraphicsItem, QGraphicsRectItem
 
+from vibeocr.widgets.editor.annotation_items import ArrowAnnotation, EditTool
 from vibeocr.widgets.inline_edit_canvas import InlineEditCanvas
 
 
@@ -149,3 +150,319 @@ class TestFillProperties:
         canvas = InlineEditCanvas()
         canvas.set_fill_opacity(80)
         assert canvas._fill_opacity == 80
+
+
+class TestTrivialSetters:
+    """10 个 trivial setter：写入对应内部属性（draw 管线读取这些值）。"""
+
+    def test_set_pen_width(self, qapp):
+        canvas = InlineEditCanvas()
+        canvas.set_pen_width(7)
+        assert canvas._pen_width == 7
+
+    def test_set_fill_enabled(self, qapp):
+        canvas = InlineEditCanvas()
+        canvas.set_fill_enabled(True)
+        assert canvas._fill_enabled is True
+
+    def test_set_fill_color(self, qapp):
+        canvas = InlineEditCanvas()
+        canvas.set_fill_color(QColor(10, 20, 30))
+        assert canvas._fill_color.red() == 10
+        assert canvas._fill_color.green() == 20
+        assert canvas._fill_color.blue() == 30
+
+    def test_set_font(self, qapp):
+        from PySide6.QtGui import QFont
+
+        canvas = InlineEditCanvas()
+        f = QFont("Courier", 22)
+        canvas.set_font(f)
+        assert canvas._font.family() == "Courier"
+
+    def test_set_font_size(self, qapp):
+        canvas = InlineEditCanvas()
+        canvas.set_font_size(33)
+        assert canvas._font.pointSize() == 33
+
+    def test_set_bold(self, qapp):
+        canvas = InlineEditCanvas()
+        canvas.set_bold(True)
+        assert canvas._font.bold() is True
+
+    def test_set_italic(self, qapp):
+        canvas = InlineEditCanvas()
+        canvas.set_italic(True)
+        assert canvas._font.italic() is True
+
+    def test_set_mosaic_strength(self, qapp):
+        canvas = InlineEditCanvas()
+        canvas.set_mosaic_strength(25)
+        assert canvas._mosaic_strength == 25
+
+    def test_set_blur_radius(self, qapp):
+        canvas = InlineEditCanvas()
+        canvas.set_blur_radius(18)
+        assert canvas._blur_radius == 18
+
+
+class TestSetToolCursorAndDrag:
+    """``set_tool``：SELECT/TEXT/其它三档 cursor 与 drag 模式。"""
+
+    def test_select_tool_sets_rubberband_and_arrow_cursor(self, qapp):
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QGraphicsView
+
+        canvas = InlineEditCanvas()
+        canvas.set_tool(EditTool.SELECT)
+        assert canvas._current_tool == EditTool.SELECT
+        assert canvas.dragMode() == QGraphicsView.DragMode.RubberBandDrag
+        assert canvas.viewport().cursor().shape() == Qt.CursorShape.ArrowCursor
+
+    def test_text_tool_sets_nodrag_and_ibeam_cursor(self, qapp):
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QGraphicsView
+
+        canvas = InlineEditCanvas()
+        canvas.set_tool(EditTool.TEXT)
+        assert canvas.dragMode() == QGraphicsView.DragMode.NoDrag
+        assert canvas.viewport().cursor().shape() == Qt.CursorShape.IBeamCursor
+
+    def test_rect_tool_sets_cross_cursor(self, qapp):
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QGraphicsView
+
+        canvas = InlineEditCanvas()
+        canvas.set_tool(EditTool.RECT)
+        assert canvas.dragMode() == QGraphicsView.DragMode.NoDrag
+        assert canvas.viewport().cursor().shape() == Qt.CursorShape.CrossCursor
+
+    def test_set_tool_finishes_previous_drawing(self, qapp):
+        canvas = InlineEditCanvas()
+        canvas._drawing = True
+        canvas._draw_start = QPointF(1, 1)
+        canvas._temp_item = QGraphicsRectItem(QRectF(0, 0, 5, 5))
+        canvas._scene.addItem(canvas._temp_item)
+        canvas.set_tool(EditTool.SELECT)
+        # 切工具应取消当前绘制
+        assert canvas._drawing is False
+        assert canvas._draw_start is None
+        assert canvas._temp_item is None
+
+
+class TestSelectedAnnotationProperty:
+    def test_returns_none_when_no_selection(self, qapp):
+        canvas = InlineEditCanvas()
+        assert canvas.selected_annotation is None
+
+    def test_returns_selected_non_background_item(self, qapp):
+        canvas = InlineEditCanvas()
+        item = QGraphicsRectItem(QRectF(0, 0, 10, 10))
+        item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
+        canvas._scene.addItem(item)
+        item.setSelected(True)
+        assert canvas.selected_annotation is item
+
+    def test_skips_background_item(self, qapp):
+        canvas = InlineEditCanvas()
+        bg = QPixmap(50, 50)
+        bg.fill()
+        canvas.set_background(bg)
+        # 即便背景被选中也不应返回它
+        canvas._background_item.setSelected(True)
+        assert canvas.selected_annotation is None
+
+
+class TestCreateTempItem:
+    """``_create_temp_item``：5 工具分支（RECT/ELLIPSE/ARROW/MOSAIC+BLUR/其它）。"""
+
+    def test_rect_temp_item_created(self, qapp):
+        canvas = InlineEditCanvas()
+        canvas.set_tool(EditTool.RECT)
+        canvas._create_temp_item(QPointF(10, 10))
+        assert isinstance(canvas._temp_item, QGraphicsRectItem)
+        assert canvas._temp_item in canvas._scene.items()
+
+    def test_ellipse_temp_item_created(self, qapp):
+        from PySide6.QtWidgets import QGraphicsEllipseItem
+
+        canvas = InlineEditCanvas()
+        canvas.set_tool(EditTool.ELLIPSE)
+        canvas._create_temp_item(QPointF(5, 5))
+        assert isinstance(canvas._temp_item, QGraphicsEllipseItem)
+
+    def test_arrow_temp_item_created(self, qapp):
+        canvas = InlineEditCanvas()
+        canvas.set_tool(EditTool.ARROW)
+        canvas._create_temp_item(QPointF(0, 0))
+        assert isinstance(canvas._temp_item, ArrowAnnotation)
+
+    def test_mosaic_temp_item_is_rect_placeholder(self, qapp):
+        canvas = InlineEditCanvas()
+        canvas.set_tool(EditTool.MOSAIC)
+        canvas._create_temp_item(QPointF(0, 0))
+        # MOSAIC/BLUR 用蓝色虚线占位矩形（非 MosaicItem）
+        assert isinstance(canvas._temp_item, QGraphicsRectItem)
+
+    def test_blur_temp_item_is_rect_placeholder(self, qapp):
+        canvas = InlineEditCanvas()
+        canvas.set_tool(EditTool.BLUR)
+        canvas._create_temp_item(QPointF(0, 0))
+        assert isinstance(canvas._temp_item, QGraphicsRectItem)
+
+    def test_select_tool_creates_no_temp(self, qapp):
+        canvas = InlineEditCanvas()
+        canvas.set_tool(EditTool.SELECT)
+        canvas._create_temp_item(QPointF(0, 0))
+        assert canvas._temp_item is None
+
+
+class TestUpdateTempItem:
+    def test_arrow_temp_updates_end(self, qapp):
+        canvas = InlineEditCanvas()
+        canvas.set_tool(EditTool.ARROW)
+        # 注意：QPointF(0,0) 在 PySide6 中为 falsy（__bool__ 走 isNull），
+        # _update_temp_item 的 `if not self._draw_start` 守卫会早返回，故用非原点。
+        canvas._draw_start = QPointF(10, 10)
+        canvas._create_temp_item(QPointF(10, 10))
+        before_end = QPointF(canvas._temp_item._end)
+        canvas._update_temp_item(QPointF(80, 60))
+        assert canvas._temp_item._end != before_end
+        assert canvas._temp_item._end.x() == 80
+
+    def test_rect_temp_updates_rect(self, qapp):
+        canvas = InlineEditCanvas()
+        canvas.set_tool(EditTool.RECT)
+        canvas._draw_start = QPointF(10, 10)
+        canvas._create_temp_item(QPointF(10, 10))
+        canvas._update_temp_item(QPointF(60, 50))
+        r = canvas._temp_item.rect()
+        assert r.width() == 50
+        assert r.height() == 40
+
+    def test_update_without_draw_start_is_noop(self, qapp):
+        canvas = InlineEditCanvas()
+        canvas.set_tool(EditTool.RECT)
+        canvas._temp_item = QGraphicsRectItem(QRectF(0, 0, 5, 5))
+        canvas._draw_start = None
+        # 不抛异常、不修改 temp_item
+        canvas._update_temp_item(QPointF(99, 99))
+
+
+class TestFinishDrawingAt:
+    """``_finish_drawing_at``：min-size 检查 + 5 标注创建分支。"""
+
+    def test_too_small_removes_temp_no_command(self, qapp):
+        canvas = InlineEditCanvas()
+        canvas.set_tool(EditTool.RECT)
+        canvas._drawing = True
+        canvas._draw_start = QPointF(20, 20)
+        canvas._create_temp_item(QPointF(20, 20))
+        undo_before = canvas._undo_stack.count()
+        canvas._finish_drawing_at(QPointF(21, 21))  # < 3x3
+        assert canvas._drawing is False
+        assert canvas._temp_item is None
+        assert canvas._undo_stack.count() == undo_before  # 无命令
+
+    def test_no_draw_start_removes_temp(self, qapp):
+        canvas = InlineEditCanvas()
+        canvas._drawing = True
+        canvas._draw_start = None
+        canvas._finish_drawing_at(QPointF(50, 50))
+        assert canvas._drawing is False
+
+    def test_rect_creates_annotation_and_command(self, qapp):
+        canvas = InlineEditCanvas()
+        canvas.set_tool(EditTool.RECT)
+        canvas._drawing = True
+        canvas._draw_start = QPointF(10, 10)
+        canvas._create_temp_item(QPointF(10, 10))
+        before = canvas._undo_stack.count()
+        canvas._finish_drawing_at(QPointF(40, 30))
+        assert canvas._undo_stack.count() == before + 1
+        # 场景中应有 1 个 RectAnnotation
+        from vibeocr.widgets.editor.annotation_items import RectAnnotation as RA
+
+        rect_anns = [i for i in canvas._scene.items() if isinstance(i, RA)]
+        assert len(rect_anns) == 1
+
+    def test_ellipse_creates_annotation(self, qapp):
+        from vibeocr.widgets.editor.annotation_items import EllipseAnnotation
+
+        canvas = InlineEditCanvas()
+        canvas.set_tool(EditTool.ELLIPSE)
+        canvas._drawing = True
+        canvas._draw_start = QPointF(10, 10)
+        canvas._create_temp_item(QPointF(10, 10))
+        before = canvas._undo_stack.count()
+        canvas._finish_drawing_at(QPointF(50, 40))
+        assert canvas._undo_stack.count() == before + 1
+        ellipses = [i for i in canvas._scene.items() if isinstance(i, EllipseAnnotation)]
+        assert len(ellipses) == 1
+
+    def test_arrow_creates_annotation(self, qapp):
+        canvas = InlineEditCanvas()
+        canvas.set_tool(EditTool.ARROW)
+        canvas._drawing = True
+        canvas._draw_start = QPointF(10, 10)
+        canvas._create_temp_item(QPointF(10, 10))
+        before = canvas._undo_stack.count()
+        canvas._finish_drawing_at(QPointF(60, 40))
+        assert canvas._undo_stack.count() == before + 1
+        arrows = [i for i in canvas._scene.items() if isinstance(i, ArrowAnnotation)]
+        assert len(arrows) == 1
+
+    def test_mosaic_creates_item_only_with_background(self, qapp):
+        from vibeocr.widgets.editor.annotation_items import MosaicItem
+
+        canvas = InlineEditCanvas()
+        canvas.set_background(_make_pixmap(200, 200))  # Mosaic 需背景
+        canvas.set_tool(EditTool.MOSAIC)
+        canvas._drawing = True
+        canvas._draw_start = QPointF(10, 10)
+        canvas._create_temp_item(QPointF(10, 10))
+        before = canvas._undo_stack.count()
+        canvas._finish_drawing_at(QPointF(50, 50))
+        assert canvas._undo_stack.count() == before + 1
+        mosaics = [i for i in canvas._scene.items() if isinstance(i, MosaicItem)]
+        assert len(mosaics) == 1
+
+    def test_mosaic_without_background_creates_nothing(self, qapp):
+        canvas = InlineEditCanvas()  # 无背景
+        canvas.set_tool(EditTool.MOSAIC)
+        canvas._drawing = True
+        canvas._draw_start = QPointF(10, 10)
+        canvas._create_temp_item(QPointF(10, 10))
+        before = canvas._undo_stack.count()
+        canvas._finish_drawing_at(QPointF(50, 50))
+        # 无 background_pixmap → 不创建 MosaicItem，无命令
+        assert canvas._undo_stack.count() == before
+
+    def test_blur_creates_item_only_with_background(self, qapp):
+        from vibeocr.widgets.editor.annotation_items import BlurItem
+
+        canvas = InlineEditCanvas()
+        canvas.set_background(_make_pixmap(200, 200))
+        canvas.set_tool(EditTool.BLUR)
+        canvas._drawing = True
+        canvas._draw_start = QPointF(10, 10)
+        canvas._create_temp_item(QPointF(10, 10))
+        before = canvas._undo_stack.count()
+        canvas._finish_drawing_at(QPointF(50, 50))
+        assert canvas._undo_stack.count() == before + 1
+        blurs = [i for i in canvas._scene.items() if isinstance(i, BlurItem)]
+        assert len(blurs) == 1
+
+
+class TestCreateTextAt:
+    def test_creates_text_annotation_and_command(self, qapp):
+        from vibeocr.widgets.editor.annotation_items import TextAnnotation
+
+        canvas = InlineEditCanvas()
+        before = canvas._undo_stack.count()
+        canvas._create_text_at(QPointF(20, 30))
+        assert canvas._undo_stack.count() == before + 1
+        texts = [i for i in canvas._scene.items() if isinstance(i, TextAnnotation)]
+        assert len(texts) == 1
+        assert texts[0].toPlainText() == "文字"
+
