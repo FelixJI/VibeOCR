@@ -14,14 +14,14 @@ def test_python_and_csharp_client_surfaces_are_extracted() -> None:
     csharp = csharp_client_operations()
     assert ("POST", "/v2/jobs") in python
     assert ("POST", "/v2/jobs") in csharp
-    assert ("GET", "/v2/pdf/health") in python
+    assert ("GET", "/v2/health") in python
     assert ("POST", "/v2/qrcode/generate") in csharp
 
 
-def test_report_exposes_client_only_routes() -> None:
+def test_report_confirms_clients_have_no_nonexistent_routes() -> None:
     actual = set(_operations(actual_openapi()))
     python = python_client_operations()
-    assert ("GET", "/v2/pdf/health") in python - actual
+    assert not python - actual
     report = build_report()
     assert "Client-only operations" in report
-    assert "`GET` | `/v2/pdf/health`" in report
+    assert "| Client-only operations | 0 |" in report

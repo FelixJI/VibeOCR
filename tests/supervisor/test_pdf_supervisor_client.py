@@ -142,8 +142,9 @@ async def test_async_remaining_session_and_mutation_routes(
 ) -> None:
     client = _build_async_client(pdf_app, supervisor_token)
 
-    with pytest.raises(PdfBackendError):
-        await client.health()
+    health = await client.health()
+    assert health["protocol_version"] == 2
+    assert "pdf.edit.v2" in health["capabilities"]
     assert (await client.get_model("sid-1")).file_path == "doc.pdf"
     assert (await client.detect_text_layers("sid-1", 0)).text_layers == []
     assert (await client.delete_pages("sid-1", [0])).diff.structural_change is True

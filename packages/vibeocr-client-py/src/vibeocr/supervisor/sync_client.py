@@ -49,8 +49,17 @@ class SyncSupervisorClient:
     def close(self) -> None:
         if not self._entered:
             return
+        closing = self._async.__aexit__(None, None, None)
         try:
-            _get_bg_loop().run(self._async.__aexit__(None, None, None))
+            result = _get_bg_loop().run(closing)
+            # Defensive test/dry-run seam: a fake loop may echo the coroutine
+            # instead of consuming it. Close it so resource warnings remain a
+            # real signal in the Phase 1 gate.
+            if result is closing:
+                closing.close()
+        except Exception:
+            closing.close()
+            raise
         finally:
             self._entered = False
 

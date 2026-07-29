@@ -1,29 +1,26 @@
 // HttpClient-based PDF session client for the v2 supervisor's /v2/pdf/sessions/* routes.
-using System.Net.Http.Headers;
 using System.Text.Json;
+using VibeOCR.Runtime.Client;
+using VibeOCR.Runtime.Contracts.Generated;
 
 namespace VibeOCR.Platform.Inference;
 
 public sealed class PdfSessionHttpClient : IPdfSessionClient
 {
-    private readonly HttpClient _http;
+    private readonly RuntimeHttpClient _runtime;
 
     public PdfSessionHttpClient(Uri baseUrl, string sessionToken, HttpMessageHandler? handler = null)
     {
-        _http = handler is null ? new HttpClient() : new HttpClient(handler);
-        _http.BaseAddress = baseUrl;
-        _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", sessionToken);
+        _runtime = new RuntimeHttpClient(baseUrl, sessionToken, handler);
     }
 
     public async Task<PdfSessionOpenResult> OpenAsync(string path, string? password, CancellationToken ct)
     {
-        using StringContent content = new(
-            JsonSerializer.Serialize(new { path, password }),
-            System.Text.Encoding.UTF8, "application/json");
-        using HttpResponseMessage resp = await _http.PostAsync("/v2/pdf/sessions/open", content, ct);
-        resp.EnsureSuccessStatusCode();
-        string body = await resp.Content.ReadAsStringAsync(ct);
-        using JsonDocument doc = JsonDocument.Parse(body);
+        using StringContent content = _runtime.CreateJsonContent(new { path, password });
+        using HttpResponseMessage resp = await _runtime.PostAsync(
+            RuntimeOperationPaths.OpenPdfSession, content, ct);
+        await _runtime.EnsureSuccessAsync(resp, ct);
+        using JsonDocument doc = await _runtime.ReadJsonDocumentAsync(resp, ct);
         JsonElement root = doc.RootElement;
         return new PdfSessionOpenResult(
             root.GetProperty("session_id").GetString()!,
@@ -33,61 +30,56 @@ public sealed class PdfSessionHttpClient : IPdfSessionClient
 
     public async Task<byte[]> RenderAsync(string sessionId, int page, int size, CancellationToken ct)
     {
-        using HttpResponseMessage resp = await _http.GetAsync(
-            $"/v2/pdf/sessions/{sessionId}/render?page={page}&size={size}", ct);
-        resp.EnsureSuccessStatusCode();
-        return await resp.Content.ReadAsByteArrayAsync(ct);
+        using HttpResponseMessage resp = await _runtime.GetAsync(
+            $"{BindSessionPath(RuntimeOperationPaths.RenderPdfPage, sessionId)}?page={page}&size={size}", ct);
+        await _runtime.EnsureSuccessAsync(resp, ct);
+        return await _runtime.ReadBinaryAsync(resp, "image/png", ct);
     }
 
     public async Task<PdfMutateResult> RotateAsync(string sessionId, int[] pages, int angle, CancellationToken ct)
     {
-        using StringContent content = new(
-            JsonSerializer.Serialize(new { pages, angle }),
-            System.Text.Encoding.UTF8, "application/json");
-        using HttpResponseMessage resp = await _http.PostAsync(
-            $"/v2/pdf/sessions/{sessionId}/rotate", content, ct);
-        resp.EnsureSuccessStatusCode();
-        string body = await resp.Content.ReadAsStringAsync(ct);
-        using JsonDocument doc = JsonDocument.Parse(body);
+        using StringContent content = _runtime.CreateJsonContent(new { pages, angle });
+        using HttpResponseMessage resp = await _runtime.PostAsync(
+            BindSessionPath(RuntimeOperationPaths.RotatePdfPages, sessionId), content, ct);
+        await _runtime.EnsureSuccessAsync(resp, ct);
+        using JsonDocument doc = await _runtime.ReadJsonDocumentAsync(resp, ct);
         return new PdfMutateResult(doc.RootElement.GetProperty("page_count").GetInt32());
     }
 
     public async Task<PdfMutateResult> DeletePagesAsync(string sessionId, int[] pages, CancellationToken ct)
     {
-        using StringContent content = new(
-            JsonSerializer.Serialize(new { pages }),
-            System.Text.Encoding.UTF8, "application/json");
-        using HttpResponseMessage resp = await _http.PostAsync(
-            $"/v2/pdf/sessions/{sessionId}/delete_pages", content, ct);
-        resp.EnsureSuccessStatusCode();
-        string body = await resp.Content.ReadAsStringAsync(ct);
-        using JsonDocument doc = JsonDocument.Parse(body);
+        using StringContent content = _runtime.CreateJsonContent(new { pages });
+        using HttpResponseMessage resp = await _runtime.PostAsync(
+            BindSessionPath(RuntimeOperationPaths.DeletePdfPages, sessionId), content, ct);
+        await _runtime.EnsureSuccessAsync(resp, ct);
+        using JsonDocument doc = await _runtime.ReadJsonDocumentAsync(resp, ct);
         return new PdfMutateResult(doc.RootElement.GetProperty("page_count").GetInt32());
     }
 
     public async Task<string> SaveAsync(string sessionId, string outputPath, CancellationToken ct)
     {
-        using StringContent content = new(
-            JsonSerializer.Serialize(new { output_path = outputPath }),
-            System.Text.Encoding.UTF8, "application/json");
-        using HttpResponseMessage resp = await _http.PostAsync(
-            $"/v2/pdf/sessions/{sessionId}/save", content, ct);
-        resp.EnsureSuccessStatusCode();
-        string body = await resp.Content.ReadAsStringAsync(ct);
-        using JsonDocument doc = JsonDocument.Parse(body);
+        using StringContent content = _runtime.CreateJsonContent(
+            new { output_path = outputPath });
+        using HttpResponseMessage resp = await _runtime.PostAsync(
+            BindSessionPath(RuntimeOperationPaths.SavePdfSession, sessionId), content, ct);
+        await _runtime.EnsureSuccessAsync(resp, ct);
+        using JsonDocument doc = await _runtime.ReadJsonDocumentAsync(resp, ct);
         return doc.RootElement.GetProperty("saved_path").GetString()!;
     }
 
     public async Task CloseAsync(string sessionId, CancellationToken ct)
     {
-        using HttpResponseMessage resp = await _http.PostAsync(
-            $"/v2/pdf/sessions/{sessionId}/close", content: null, ct);
-        resp.EnsureSuccessStatusCode();
+        using HttpResponseMessage resp = await _runtime.PostAsync(
+            BindSessionPath(RuntimeOperationPaths.ClosePdfSession, sessionId), content: null, ct);
+        await _runtime.EnsureSuccessAsync(resp, ct);
     }
 
     public ValueTask DisposeAsync()
     {
-        _http.Dispose();
-        return ValueTask.CompletedTask;
+        return _runtime.DisposeAsync();
     }
+
+    private static string BindSessionPath(string template, string sessionId) =>
+        template.Replace(
+            "{session_id}", Uri.EscapeDataString(sessionId), StringComparison.Ordinal);
 }

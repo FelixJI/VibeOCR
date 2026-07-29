@@ -19,6 +19,7 @@ LEGACY_DEBT = ROOT / "config/repository-split/legacy-import-debt.json"
 
 SOURCE_TREES = (
     ROOT / "packages/vibeocr-contracts-py",
+    ROOT / "packages/vibeocr-runtime-client-py",
     ROOT / "packages/vibeocr-client-py",
     ROOT / "packages/vibeocr-backend",
     ROOT / "apps/vibeocr-pyside",
@@ -30,6 +31,7 @@ SOURCE_TREES = (
 
 PYTHON_SOURCE_ROOTS = (
     ROOT / "packages/vibeocr-contracts-py/src",
+    ROOT / "packages/vibeocr-runtime-client-py/src",
     ROOT / "packages/vibeocr-client-py/src",
     ROOT / "packages/vibeocr-backend/src",
     ROOT / "apps/vibeocr-pyside/src",
@@ -37,6 +39,7 @@ PYTHON_SOURCE_ROOTS = (
 
 WHEEL_SOURCE_ROOTS = {
     "vibeocr-contracts-py": ROOT / "packages/vibeocr-contracts-py/src",
+    "vibeocr-runtime-client": ROOT / "packages/vibeocr-runtime-client-py/src",
     "vibeocr-client-py": ROOT / "packages/vibeocr-client-py/src",
     "vibeocr-backend": ROOT / "packages/vibeocr-backend/src",
     "vibeocr-pyside": ROOT / "apps/vibeocr-pyside/src",
@@ -244,12 +247,9 @@ def _legacy_import_violations() -> tuple[str, ...]:
                 allowed_repo = (
                     imported_owner in manifest.allowed_repository_dependencies
                 )
-                allowed_prefix = (
-                    not manifest.allowed_current_import_prefixes
-                    or any(
-                        module == prefix or module.startswith(f"{prefix}.")
-                        for prefix in manifest.allowed_current_import_prefixes
-                    )
+                allowed_prefix = not manifest.allowed_current_import_prefixes or any(
+                    module == prefix or module.startswith(f"{prefix}.")
+                    for prefix in manifest.allowed_current_import_prefixes
                 )
                 if not (allowed_repo and allowed_prefix):
                     violations.append(
@@ -291,6 +291,7 @@ def check_release_dependencies_are_immutable() -> None:
     pyprojects = (
         ROOT / "pyproject.toml",
         ROOT / "packages/vibeocr-contracts-py/pyproject.toml",
+        ROOT / "packages/vibeocr-runtime-client-py/pyproject.toml",
         ROOT / "packages/vibeocr-client-py/pyproject.toml",
         ROOT / "packages/vibeocr-backend/pyproject.toml",
         ROOT / "apps/vibeocr-pyside/pyproject.toml",
@@ -311,9 +312,8 @@ def check_release_dependencies_are_immutable() -> None:
         text = path.read_text(encoding="utf-8")
         for line_number, line in enumerate(text.splitlines(), 1):
             lowered = line.lower()
-            if (
-                ("pip install" in lowered or "uv pip install" in lowered)
-                and ("git+" in lowered or " -e " in lowered or "../" in lowered)
+            if ("pip install" in lowered or "uv pip install" in lowered) and (
+                "git+" in lowered or " -e " in lowered or "../" in lowered
             ):
                 violations.append(
                     f"{path.relative_to(ROOT)}:{line_number}: {line.strip()}"

@@ -4,7 +4,8 @@ version = "0.6.3"
 description = "Python client and PySide adapter for the VibeOCR Supervisor"
 requires-python = ">=3.13,<3.14"
 dependencies = [
-    "vibeocr-contracts-py==0.6.3",
+    "vibeocr-contracts-py==2.0.0rc1",
+    "vibeocr-runtime-client==2.0.0rc1",
     "pydantic>=2.13.4",
     "httpx>=0.28.1",
     "packaging>=24.0",

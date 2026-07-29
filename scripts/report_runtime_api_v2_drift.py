@@ -13,10 +13,13 @@ from unittest.mock import MagicMock
 
 ROOT = Path(__file__).resolve().parents[1]
 SNAPSHOT = (
-    ROOT
-    / "packages/vibeocr-contracts-py/src/vibeocr/protocol/v2/openapi.snapshot.json"
+    ROOT / "packages/vibeocr-contracts-py/src/vibeocr/protocol/v2/openapi.snapshot.json"
+)
+FORMAL_OPENAPI = (
+    ROOT / "packages/vibeocr-contracts-py/src/vibeocr/protocol/v2/openapi.yaml"
 )
 PYTHON_CLIENT_FILES = (
+    ROOT / "packages/vibeocr-runtime-client-py/src/vibeocr/protocol/v2/client.py",
     ROOT / "packages/vibeocr-client-py/src/vibeocr/supervisor/client.py",
     ROOT / "packages/vibeocr-client-py/src/vibeocr/supervisor/pdf_client.py",
 )
@@ -26,6 +29,7 @@ CSHARP_CLIENT_FILES = tuple(
 
 for source in (
     ROOT / "packages/vibeocr-contracts-py/src",
+    ROOT / "packages/vibeocr-runtime-client-py/src",
     ROOT / "packages/vibeocr-client-py/src",
     ROOT / "packages/vibeocr-backend/src",
 ):
@@ -60,7 +64,7 @@ def actual_openapi() -> dict:
             stager_root=Path(temp),
             executor=MagicMock(),
         )
-        return create_app(module, "0" * 64).openapi()
+        return create_app(module, "0" * 64).state.generated_openapi
 
 
 def _placeholder(expression: ast.AST) -> str:
@@ -85,6 +89,16 @@ def _python_url(node: ast.AST) -> str | None:
             else ""
             for part in node.values
         )
+    elif (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in {"operation_path", "_bind_path", "bind_operation_path"}
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and isinstance(node.args[0].value, str)
+    ):
+        operation_id = node.args[0].value
+        value = _formal_operations_by_id()[operation_id][1]
     else:
         return None
     return value.split("?", 1)[0] if value.startswith("/v2/") else None
@@ -130,6 +144,22 @@ _CSHARP_CALL = re.compile(
     r'\$?"(?P<url>/v2/[^"]+)"',
     re.DOTALL,
 )
+_CSHARP_OPERATION_PATH = re.compile(r"\bRuntimeOperationPaths\.(?P<name>\w+)")
+
+
+def _formal_operations_by_id() -> dict[str, tuple[str, str]]:
+    document = json.loads(FORMAL_OPENAPI.read_text(encoding="utf-8"))
+    return {
+        operation["operationId"]: key
+        for key, operation in _operations(document).items()
+    }
+
+
+def _csharp_operation_constants() -> dict[str, tuple[str, str]]:
+    return {
+        operation_id[:1].upper() + operation_id[1:]: key
+        for operation_id, key in _formal_operations_by_id().items()
+    }
 
 
 def _normalize_csharp_url(url: str) -> str:
@@ -157,6 +187,7 @@ def _csharp_placeholder(name: str) -> str:
 
 def csharp_client_operations() -> set[tuple[str, str]]:
     operations: set[tuple[str, str]] = set()
+    constants = _csharp_operation_constants()
     for path in CSHARP_CLIENT_FILES:
         text = path.read_text(encoding="utf-8")
         for match in _CSHARP_CALL.finditer(text):
@@ -166,6 +197,10 @@ def csharp_client_operations() -> set[tuple[str, str]]:
                     _normalize_csharp_url(match.group("url")),
                 )
             )
+        for match in _CSHARP_OPERATION_PATH.finditer(text):
+            name = match.group("name")
+            if name in constants:
+                operations.add(constants[name])
     return operations
 
 
@@ -193,13 +228,18 @@ def build_report() -> str:
     ]
     generated_ids: dict[str, list[tuple[str, str]]] = {}
     for key, operation in actual_ops.items():
-        generated_ids.setdefault(operation.get("operationId", "<missing>"), []).append(key)
+        generated_ids.setdefault(operation.get("operationId", "<missing>"), []).append(
+            key
+        )
     duplicate_ids = {
         name: keys for name, keys in generated_ids.items() if len(keys) > 1
     }
 
     def rows(items: list[tuple[str, str]]) -> str:
-        return "\n".join(f"| `{method}` | `{path}` |" for method, path in items) or "| — | — |"
+        return (
+            "\n".join(f"| `{method}` | `{path}` |" for method, path in items)
+            or "| — | — |"
+        )
 
     return f"""# Runtime API v2 drift report
 

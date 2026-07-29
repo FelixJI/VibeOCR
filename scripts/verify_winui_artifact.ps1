@@ -82,11 +82,12 @@ if (Test-Path $manifestPath -PathType Leaf) {
             $errors.Add("product manifest protocol_major must be 2")
         }
         $records = @($manifest.python_wheels)
-        if ($records.Count -ne 3) {
-            $errors.Add("expected 3 WinUI runtime wheels, found $($records.Count)")
+        if ($records.Count -ne 4) {
+            $errors.Add("expected 4 WinUI runtime wheels, found $($records.Count)")
         }
         $expectedWheelPrefixes = @(
             'vibeocr_contracts_py-',
+            'vibeocr_runtime_client-',
             'vibeocr_client_py-',
             'vibeocr_backend-'
         )

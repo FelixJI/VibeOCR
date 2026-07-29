@@ -1,6 +1,6 @@
 [project]
 name = "vibeocr-contracts-py"
-version = "0.6.3"
+version = "2.0.0rc1"
 description = "Qt-free VibeOCR protocol and DTO contracts"
 requires-python = ">=3.13,<3.14"
 dependencies = []
@@ -15,7 +15,15 @@ packages = ["src/vibeocr"]
 [tool.hatch.build.targets.wheel.force-include]
 "src/vibeocr/protocol/v2/errors.json" = "vibeocr/protocol/v2/errors.json"
 "src/vibeocr/protocol/v2/openapi.snapshot.json" = "vibeocr/protocol/v2/openapi.snapshot.json"
+"src/vibeocr/protocol/v2/openapi.yaml" = "vibeocr/protocol/v2/openapi.yaml"
+"src/vibeocr/protocol/v2/baselines/openapi-2.0.0-rc.1.yaml" = "vibeocr/protocol/v2/baselines/openapi-2.0.0-rc.1.yaml"
+"src/vibeocr/protocol/v2/baselines/README.md" = "vibeocr/protocol/v2/baselines/README.md"
+"src/vibeocr/protocol/v2/bootstrap.schema.json" = "vibeocr/protocol/v2/bootstrap.schema.json"
+"src/vibeocr/protocol/v2/capabilities.json" = "vibeocr/protocol/v2/capabilities.json"
+"src/vibeocr/protocol/v2/generated/RuntimeProtocol.g.cs" = "vibeocr/protocol/v2/generated/RuntimeProtocol.g.cs"
+"src/vibeocr/protocol/v2/generated/RuntimeWireTypes.g.cs" = "vibeocr/protocol/v2/generated/RuntimeWireTypes.g.cs"
 "src/vibeocr/protocol/v2/golden/golden.json" = "vibeocr/protocol/v2/golden/golden.json"
+"src/vibeocr/protocol/v2/golden/runtime-api.json" = "vibeocr/protocol/v2/golden/runtime-api.json"
 "src/vibeocr/protocol/v2/schemas/errors.schema.json" = "vibeocr/protocol/v2/schemas/errors.schema.json"
 "src/vibeocr/protocol/v2/schemas/job.schema.json" = "vibeocr/protocol/v2/schemas/job.schema.json"
 "src/vibeocr/protocol/v2/schemas/job-interface.schema.json" = "vibeocr/protocol/v2/schemas/job-interface.schema.json"

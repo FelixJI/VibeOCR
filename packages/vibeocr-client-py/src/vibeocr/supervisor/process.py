@@ -28,6 +28,13 @@ import threading
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from vibeocr.protocol.v2.generated import (
+    ALL_CAPABILITIES,
+    PROTOCOL_VERSION,
+    READY_ENVELOPE_VERSION,
+    SCHEMA_VERSION,
+    RuntimeReadyEnvelope,
+)
 from vibeocr.utils.http_log import guess_response_size, log_http_response
 from vibeocr.utils.job_object import JobObjectGuard
 
@@ -60,19 +67,42 @@ class ReadyEnvelope:
     protocol_version: int
     schema_version: int
     capabilities: tuple[str, ...]
+    ready_version: int
 
     @classmethod
     def from_line(cls, line: str) -> ReadyEnvelope:
-        data = json.loads(line)
-        return cls(
-            ready=bool(data["ready"]),
-            pid=int(data["pid"]),
-            port=int(data["port"]),
-            instance_id=data["instance_id"],
-            protocol_version=int(data["protocol_version"]),
-            schema_version=int(data["schema_version"]),
-            capabilities=tuple(data.get("capabilities", [])),
+        data = RuntimeReadyEnvelope.from_payload(json.loads(line))
+        envelope = cls(
+            ready=data.ready,
+            pid=data.pid,
+            port=data.port,
+            instance_id=data.instance_id,
+            protocol_version=data.protocol_version,
+            schema_version=data.schema_version,
+            capabilities=data.capabilities,
+            ready_version=data.ready_version,
         )
+        if (
+            not envelope.ready
+            or envelope.pid <= 0
+            or not 1 <= envelope.port <= 65535
+            or not envelope.instance_id
+        ):
+            raise SupervisorLaunchError("invalid supervisor ready envelope")
+        if (
+            envelope.protocol_version != PROTOCOL_VERSION
+            or envelope.schema_version != SCHEMA_VERSION
+            or envelope.ready_version != READY_ENVELOPE_VERSION
+        ):
+            raise SupervisorLaunchError("incompatible supervisor protocol")
+        if len(envelope.capabilities) != len(set(envelope.capabilities)):
+            raise SupervisorLaunchError("duplicate supervisor capability")
+        unknown = set(envelope.capabilities) - set(ALL_CAPABILITIES)
+        if unknown:
+            raise SupervisorLaunchError(
+                f"unknown supervisor capabilities: {sorted(unknown)}"
+            )
+        return envelope
 
     @property
     def base_url(self) -> str:

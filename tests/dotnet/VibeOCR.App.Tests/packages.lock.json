@@ -266,21 +266,27 @@
           "xunit.v3.runner.common": "[3.2.2]"
         }
       },
-      "vibeocr.contracts": {
-        "type": "Project"
-      },
       "vibeocr.platform": {
         "type": "Project",
         "dependencies": {
-          "VibeOCR.Contracts": "[1.0.0, )"
+          "VibeOCR.Runtime.Client": "[2.0.0-rc.1, )"
         }
+      },
+      "vibeocr.runtime.client": {
+        "type": "Project",
+        "dependencies": {
+          "VibeOCR.Runtime.Contracts": "[2.0.0-rc.1, )"
+        }
+      },
+      "VibeOCR.Runtime.Contracts": {
+        "type": "Project"
       },
       "VibeOCR.WinUI": {
         "type": "Project",
         "dependencies": {
           "Microsoft.WindowsAppSDK": "[2.2.0, )",
-          "VibeOCR.Contracts": "[1.0.0, )",
-          "VibeOCR.Platform": "[1.0.0, )"
+          "VibeOCR.Platform": "[1.0.0, )",
+          "VibeOCR.Runtime.Contracts": "[2.0.0-rc.1, )"
         }
       },
       "Microsoft.Web.WebView2": {

@@ -17,6 +17,7 @@ VERIFIER = REPO_ROOT / "scripts" / "verify_winui_artifact.ps1"
 FIXTURE_VERSION = "0.0.0"
 RUNTIME_WHEELS = (
     f"vibeocr_contracts_py-{FIXTURE_VERSION}-py3-none-any.whl",
+    f"vibeocr_runtime_client-{FIXTURE_VERSION}-py3-none-any.whl",
     f"vibeocr_client_py-{FIXTURE_VERSION}-py3-none-any.whl",
     f"vibeocr_backend-{FIXTURE_VERSION}-py3-none-any.whl",
 )
@@ -88,6 +89,7 @@ def _build_layout(root: Path, *, forbidden: list[str] | None = None) -> None:
         "backend_sha256": backend_record["sha256"],
         "python_wheels": wheel_records,
         "protocol_major": 2,
+        "protocol_version": FIXTURE_VERSION,
         "source_commit": "0" * 40,
     }
     (root / "product-manifest.json").write_text(

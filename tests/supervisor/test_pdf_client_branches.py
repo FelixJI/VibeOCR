@@ -2,7 +2,7 @@
 
 The happy-path contract is in test_pdf_supervisor_client.py. Here we cover:
 - PdfBackendError legacy single-string constructor form.
-- health() happy path (parses HealthResponse).
+- health() happy path (parses the shared runtime health envelope).
 - load_stream / delete_text_layers_stream empty-line skip + HTTPError branch.
 - SyncPdfSupervisorClient: _ensure_entered via real bg loop, base_url property,
   close() after start(), close() before start() no-op, start() idempotency.
@@ -50,18 +50,30 @@ def test_pdf_backend_error_typed_form() -> None:
 
 
 async def test_health_returns_health_response() -> None:
-    """health() parses HealthResponse (line 218)."""
+    """health() returns the shared runtime health envelope."""
     c = PdfSupervisorClient(
         base_url="http://127.0.0.1", session_token="t", instance_id="x"
     )
     c._client = httpx.AsyncClient(
-        transport=httpx.MockTransport(lambda req: httpx.Response(200, json={})),
+        transport=httpx.MockTransport(
+            lambda req: httpx.Response(
+                200,
+                json={
+                    "schema_version": 2,
+                    "instance_id": "x",
+                    "protocol_version": 2,
+                    "ready": True,
+                    "draining": False,
+                    "capabilities": ["pdf.edit.v2"],
+                },
+            )
+        ),
         base_url="http://127.0.0.1",
         headers={"Authorization": "Bearer t"},
     )
     try:
         resp = await c.health()
-        assert resp is not None
+        assert resp["protocol_version"] == 2
     finally:
         await c._client.aclose()
 
@@ -203,7 +215,7 @@ async def test_log_http_response_elapsed_exception(monkeypatch) -> None:
 
     monkeypatch.setattr("vibeocr.supervisor.pdf_client.log_http_response", capture)
 
-    request = httpx.Request("GET", "http://127.0.0.1/v2/pdf/health")
+    request = httpx.Request("GET", "http://127.0.0.1/v2/health")
 
     class _BadTimedelta:
         def total_seconds(self) -> float:

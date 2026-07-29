@@ -139,6 +139,7 @@ def main() -> int:
             "vibeocr-client-py",
             "vibeocr-contracts-py",
             "vibeocr-pyside",
+            "vibeocr-runtime-client",
         }
         if {record.get("distribution") for record in records} != expected:
             raise RuntimeError("bound Python wheel set is incomplete")
@@ -160,6 +161,7 @@ def main() -> int:
         required_members = {
             "vibeocr-backend": "vibeocr/supervisor/main.py",
             "vibeocr-contracts-py": "vibeocr/protocol/v2/golden/golden.json",
+            "vibeocr-runtime-client": "vibeocr/protocol/v2/client.py",
         }
         for distribution, required_member in required_members.items():
             record = records_by_distribution[distribution]

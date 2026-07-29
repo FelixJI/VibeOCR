@@ -6,46 +6,22 @@ backend. The UI maps them to user-visible behaviour.
 
 from __future__ import annotations
 
-from vibeocr.protocol.v2 import ErrorCode, ErrorPayload
+from vibeocr.protocol.v2.client import RuntimeClientError
+
+# Transitional alias: product code keeps its historic error import while the
+# implementation and typed fields are owned by the Protocol package.
+InferenceClientError = RuntimeClientError
 
 
-class InferenceClientError(Exception):
-    """Base class for all supervisor client errors."""
-
-    def __init__(self, code: ErrorCode, message: str, *, retryable: bool = False, detail: dict | None = None) -> None:
-        super().__init__(message)
-        self.code = code
-        self.message = message
-        self.retryable = retryable
-        self.detail = detail or {}
-
-    @classmethod
-    def from_payload(cls, payload: ErrorPayload) -> InferenceClientError:
-        mapping = {
-            ErrorCode.UNAUTHORIZED: Unauthorized,
-            ErrorCode.FORBIDDEN_LOOPBACK: Unauthorized,
-            ErrorCode.QUOTA_EXCEEDED: QuotaExceeded,
-            ErrorCode.JOB_NOT_FOUND: JobNotFound,
-            ErrorCode.RESOURCE_NOT_FOUND: JobNotFound,
-        }
-        klass = mapping.get(payload.code, cls)
-        return klass(
-            payload.code,
-            payload.message,
-            retryable=payload.retryable,
-            detail=payload.detail,
-        )
-
-
-class Unauthorized(InferenceClientError):
+class Unauthorized(RuntimeClientError):
     """Session token rejected."""
 
 
-class QuotaExceeded(InferenceClientError):
+class QuotaExceeded(RuntimeClientError):
     """Request exceeded a body/count/staging quota."""
 
 
-class JobNotFound(InferenceClientError):
+class JobNotFound(RuntimeClientError):
     """Referenced job id is unknown or has been purged."""
 
 

@@ -9,15 +9,18 @@ so each branch is hit deterministically without a full app.
 
 from __future__ import annotations
 
+import json
+from copy import deepcopy
 from datetime import timedelta
+from importlib import resources
 from typing import Any
-from unittest.mock import MagicMock
 
 import httpx
 import pytest
 
 from vibeocr.protocol.v2 import (
     CancelMode,
+    ErrorCode,
     JobCommand,
     JobCommandKind,
     JobKind,
@@ -30,6 +33,31 @@ from vibeocr.protocol.v2 import (
 )
 from vibeocr.supervisor.client import SupervisorClient
 from vibeocr.supervisor.errors import InferenceClientError
+
+
+def _golden(name: str) -> dict[str, Any]:
+    raw = (
+        resources.files("vibeocr.protocol.v2.golden")
+        .joinpath("golden.json")
+        .read_text(encoding="utf-8")
+    )
+    return deepcopy(json.loads(raw)[name])
+
+
+def _command_response(
+    kind: str,
+    *,
+    cancel_mode: str | None = None,
+    job_ref: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "schema_version": 2,
+        "instance_id": "x",
+        "command_id": "c1",
+        "kind": kind,
+        "cancel_mode": cancel_mode,
+        "job_ref": job_ref,
+    }
 
 
 def _one_item_request() -> SubmitRequest:
@@ -164,7 +192,10 @@ async def test_put_settings_raises_on_error_response() -> None:
 async def test_command_cancel_returns_cancel_mode() -> None:
     """CANCEL command returns CancelMode (line 165)."""
     c = _client_with_transport(
-        lambda req: httpx.Response(200, json={"cancel_mode": "cooperative"})
+        lambda req: httpx.Response(
+            200,
+            json=_command_response("cancel", cancel_mode="cooperative"),
+        )
     )
     cmd = JobCommand(
         command_id="c1",
@@ -180,15 +211,7 @@ async def test_command_retry_returns_job_ref() -> None:
     c = _client_with_transport(
         lambda req: httpx.Response(
             200,
-            json={
-                "schema_version": 2,
-                "job_ref": {
-                    "schema_version": 2,
-                    "job_id": "job-1",
-                    "state": "running",
-                    "instance_id": "x",
-                },
-            },
+            json=_command_response("retry", job_ref=_golden("job_ref")),
         )
     )
     cmd = JobCommand(
@@ -199,17 +222,20 @@ async def test_command_retry_returns_job_ref() -> None:
     )
     result = await c.command(cmd)
     assert isinstance(result, JobRef)
-    assert result.job_id == "job-1"
+    assert result.job_id == _golden("job_ref")["job_id"]
 
 
 async def test_command_unknown_kind_returns_none() -> None:
-    """An unhandled command kind falls through to return None (line 168)."""
-    c = _client_with_transport(lambda req: httpx.Response(200, json={}))
-    # Use a sentinel kind that is neither CANCEL nor RETRY
-    cmd = MagicMock()
-    cmd.kind = "something-else"
-    cmd.to_payload.return_value = {"kind": "something-else"}
-    result = await c.command(cmd)  # type: ignore[arg-type]
+    """The legal FORGET command falls through to return None."""
+    c = _client_with_transport(
+        lambda req: httpx.Response(200, json=_command_response("forget"))
+    )
+    cmd = JobCommand(
+        command_id="c1",
+        kind=JobCommandKind.FORGET,
+        job_id="job-1",
+    )
+    result = await c.command(cmd)
     assert result is None
 
 
@@ -268,32 +294,19 @@ async def test_generate_qrcode_raises_on_error_response() -> None:
 
 async def test_residency_parses_entries_and_pipelines() -> None:
     """residency happy path parses entries + pipelines (covers _parse_residency)."""
-    body = {
-        "schema_version": 2,
-        "default_ttl_seconds": 300,
-        "entries": [
-            {
-                "kind": "pinned",
-                "pipeline": "OCR",
-                "active_leases": 1,
-                "remaining_ttl_seconds": 30,
-            }
-        ],
-        "pipelines": [{"name": "OCR", "ttl_seconds": 60}],
-        "vram_total_mb": 24000,
-        "vram_used_mb": 1000,
-    }
+    body = _golden("residency_status")
     c = _client_with_transport(lambda req: httpx.Response(200, json=body))
     status = await c.residency()
     assert status.default_ttl_seconds == 300
-    assert len(status.entries) == 1
-    assert len(status.pipelines) == 1
-    assert status.vram_total_mb == 24000
+    assert len(status.entries) == 2
+    assert len(status.pipelines) == 2
+    assert status.vram_total_mb == 24576
 
 
 async def test_release_idle_returns_parsed_residency() -> None:
     """release_idle happy path (line 186 return)."""
-    body = {"schema_version": 2, "default_ttl_seconds": 60, "entries": [], "pipelines": []}
+    body = _golden("residency_status")
+    body["default_ttl_seconds"] = 60
     c = _client_with_transport(lambda req: httpx.Response(200, json=body))
     status = await c.release_idle("OCR")
     assert status.default_ttl_seconds == 60
@@ -301,7 +314,8 @@ async def test_release_idle_returns_parsed_residency() -> None:
 
 async def test_preload_returns_parsed_residency() -> None:
     """preload happy path (line 197 return)."""
-    body = {"schema_version": 2, "default_ttl_seconds": 60, "entries": [], "pipelines": []}
+    body = _golden("residency_status")
+    body["default_ttl_seconds"] = 60
     c = _client_with_transport(lambda req: httpx.Response(200, json=body))
     status = await c.preload(("OCR",))
     assert status.default_ttl_seconds == 60
@@ -309,28 +323,20 @@ async def test_preload_returns_parsed_residency() -> None:
 
 async def test_get_settings_parses_snapshot() -> None:
     """get_settings happy path (covers _parse_settings, line 204 return)."""
-    body = {
-        "schema_version": 2,
-        "residency": {
-            "default_ttl_seconds": 120,
-            "pipelines": [{"schema_version": 2, "name": "OCR"}],
-        },
-        "extra": {"k": "v"},
-    }
+    body = _golden("settings_snapshot")
+    body["residency"]["default_ttl_seconds"] = 120
+    body["extra"] = {"k": "v"}
     c = _client_with_transport(lambda req: httpx.Response(200, json=body))
     snap = await c.get_settings()
     assert snap.default_ttl_seconds == 120
-    assert len(snap.pipelines) == 1
+    assert len(snap.pipelines) == 2
     assert snap.extra == {"k": "v"}
 
 
 async def test_put_settings_returns_parsed_snapshot() -> None:
     """put_settings happy path (line 211 return)."""
-    body = {
-        "schema_version": 2,
-        "residency": {"default_ttl_seconds": 90, "pipelines": []},
-        "extra": {},
-    }
+    body = _golden("settings_snapshot")
+    body["residency"]["default_ttl_seconds"] = 90
     c = _client_with_transport(lambda req: httpx.Response(200, json=body))
     snap_in = SettingsSnapshot(schema_version=2, default_ttl_seconds=90, pipelines=())
     snap_out = await c.put_settings(snap_in)
@@ -340,7 +346,15 @@ async def test_put_settings_returns_parsed_snapshot() -> None:
 async def test_export_ocr_returns_body() -> None:
     """export_ocr happy path (line 243 return)."""
     c = _client_with_transport(
-        lambda req: httpx.Response(200, json={"path": "/tmp/out.txt"})
+        lambda req: httpx.Response(
+            200,
+            json={
+                "schema_version": 2,
+                "instance_id": "x",
+                "output_path": "/tmp/out.txt",
+                "bytes_written": 3,
+            },
+        )
     )
     result = await c.export_ocr(
         raw_text="r",
@@ -349,25 +363,50 @@ async def test_export_ocr_returns_body() -> None:
         output_path="/tmp/out.txt",
         fmt="txt",
     )
-    assert result == {"path": "/tmp/out.txt"}
+    assert result["output_path"] == "/tmp/out.txt"
 
 
 async def test_decode_qrcode_returns_codes_list() -> None:
     """decode_qrcode happy path (line 255 return)."""
     c = _client_with_transport(
-        lambda req: httpx.Response(200, json={"codes": [{"text": "abc"}]})
+        lambda req: httpx.Response(
+            200,
+            json={
+                "schema_version": 2,
+                "instance_id": "x",
+                "codes": [
+                    {
+                        "data": "abc",
+                        "type": "QRCODE",
+                        "format": "UTF-8",
+                        "is_url": False,
+                    }
+                ],
+            },
+        )
     )
     result = await c.decode_qrcode(b"img")
-    assert result == [{"text": "abc"}]
+    assert result == [
+        {"data": "abc", "type": "QRCODE", "format": "UTF-8", "is_url": False}
+    ]
 
 
 async def test_generate_qrcode_returns_image_str() -> None:
     """generate_qrcode happy path (line 271 return)."""
     c = _client_with_transport(
-        lambda req: httpx.Response(200, json={"image": "base64data"})
+        lambda req: httpx.Response(
+            200,
+            json={
+                "schema_version": 2,
+                "instance_id": "x",
+                "image": "YmFzZTY0ZGF0YQ==",
+                "format": "png",
+                "media_type": "image/png",
+            },
+        )
     )
     result = await c.generate_qrcode("data", fmt="png")
-    assert result == "base64data"
+    assert result == "YmFzZTY0ZGF0YQ=="
 
 
 async def test_observe_returns_parsed_update() -> None:
@@ -377,11 +416,10 @@ async def test_observe_returns_parsed_update() -> None:
     test_e2e_fake_executor; here we just confirm the parsing path is reached
     (a minimal malformed body surfaces a ContractError rather than crashing).
     """
-    from vibeocr.protocol.v2.parser import ContractError
-
     c = _client_with_transport(lambda req: httpx.Response(200, json={"job_id": "x"}))
-    with pytest.raises(ContractError):
+    with pytest.raises(InferenceClientError) as raised:
         await c.observe("job-1")
+    assert raised.value.code is ErrorCode.ADAPTER_PROTOCOL_VIOLATION
 
 
 # ---------------------------------------------------------------------------

@@ -28,6 +28,7 @@ import pytest
 repo_root = Path(__file__).parent.parent
 source_paths = [
     repo_root / "packages/vibeocr-contracts-py/src",
+    repo_root / "packages/vibeocr-runtime-client-py/src",
     repo_root / "packages/vibeocr-client-py/src",
     repo_root / "packages/vibeocr-backend/src",
     repo_root / "apps/vibeocr-pyside/src",
@@ -169,11 +170,7 @@ def qasync_loop(qapp):
             # ``Task.cancel()`` only schedules cancellation callbacks.  Drain
             # them before closing the function-scoped loop so wrapper and
             # caller coroutines both reach terminal state.
-            pending = [
-                task
-                for task in asyncio.all_tasks(loop)
-                if not task.done()
-            ]
+            pending = [task for task in asyncio.all_tasks(loop) if not task.done()]
             if pending:
                 loop.run_until_complete(
                     asyncio.gather(*pending, return_exceptions=True)

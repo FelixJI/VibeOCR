@@ -106,10 +106,10 @@ jobs:
           python -m venv .wheel-smoke
           $env:PYTHONPATH = ''
           $workspaceWheels = @(Get-ChildItem -LiteralPath dist/wheels -Filter '*.whl')
-          if ($workspaceWheels.Count -ne 5) { throw 'expected exactly five workspace wheels' }
+          if ($workspaceWheels.Count -ne 6) { throw 'expected exactly six workspace wheels' }
           $wheelPaths = @($workspaceWheels | ForEach-Object { $_.FullName })
           .wheel-smoke\Scripts\python -m pip install @wheelPaths
-          .wheel-smoke\Scripts\python -c "import vibeocr, vibeocr.main, vibeocr.supervisor.main, vibeocr.protocol.v2, vibeocr.dependency_bootstrap; print(vibeocr.__version__)"
+          .wheel-smoke\Scripts\python -c "import vibeocr, vibeocr.main, vibeocr.supervisor.main, vibeocr.protocol.v2, vibeocr.protocol.v2.client, vibeocr.protocol.v2.mock_server, vibeocr.dependency_bootstrap; print(vibeocr.__version__)"
           .wheel-smoke\Scripts\python -c "import sys; from pathlib import Path; from vibeocr import env_manager; root=env_manager.get_project_root(); assert root == Path(sys.prefix).resolve(); assert env_manager.get_embedded_python_executable(root) == Path(sys.executable).resolve()"
           .wheel-smoke\Scripts\vibeocr-install-backend --help
           if (-not (Test-Path .wheel-smoke\Scripts\vibeocr-supervisor.exe)) { throw 'vibeocr-supervisor console entry point is missing' }

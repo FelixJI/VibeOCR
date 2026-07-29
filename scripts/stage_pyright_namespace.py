@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_FRAGMENT_ROOTS = (
     REPO_ROOT / "packages" / "vibeocr-contracts-py" / "src" / "vibeocr",
+    REPO_ROOT / "packages" / "vibeocr-runtime-client-py" / "src" / "vibeocr",
     REPO_ROOT / "packages" / "vibeocr-client-py" / "src" / "vibeocr",
     REPO_ROOT / "packages" / "vibeocr-backend" / "src" / "vibeocr",
 )

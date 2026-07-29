@@ -4,7 +4,7 @@ Plan §10 requires:
 1. Build contracts/client/backend wheels from the same commit.
 2. Verify the settings migration writes a ``.v1.bak`` backup.
 3. Verify rollback: restore the backup config and confirm the old schema is intact.
-4. Verify the workspace wheel-build still produces 5 wheels.
+4. Verify the workspace wheel-build still produces 6 wheels.
 5. Verify the supervisor entry point exists in the backend wheel.
 
 These are fast, deterministic tests that validate the release pipeline's

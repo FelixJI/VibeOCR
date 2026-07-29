@@ -13,6 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE_ROOTS = {
     "vibeocr-contracts-py": ROOT / "packages/vibeocr-contracts-py/src",
+    "vibeocr-runtime-client": ROOT / "packages/vibeocr-runtime-client-py/src",
     "vibeocr-client-py": ROOT / "packages/vibeocr-client-py/src",
     "vibeocr-backend": ROOT / "packages/vibeocr-backend/src",
     "vibeocr-pyside": ROOT / "apps/vibeocr-pyside/src",
@@ -29,7 +30,8 @@ def test_root_is_code_free_compatibility_meta_package() -> None:
     root = _project(ROOT / "pyproject.toml")
     version = root["version"]
     assert root["dependencies"] == [
-        f"vibeocr-contracts-py=={version}",
+        "vibeocr-contracts-py==2.0.0rc1",
+        "vibeocr-runtime-client==2.0.0rc1",
         f"vibeocr-client-py=={version}",
         f"vibeocr-backend=={version}",
         f"vibeocr-pyside=={version}",
@@ -49,6 +51,25 @@ def test_each_wheel_archive_path_has_one_owner() -> None:
                 f"and {distribution}"
             )
             owners[archive_path] = distribution
+
+
+def test_ci_builds_and_smokes_all_six_workspace_wheels() -> None:
+    action = (ROOT / ".github/actions/build-workspace-wheels/action.yml").read_text(
+        encoding="utf-8"
+    )
+    for project in (
+        "packages/vibeocr-contracts-py",
+        "packages/vibeocr-runtime-client-py",
+        "packages/vibeocr-client-py",
+        "packages/vibeocr-backend",
+        "apps/vibeocr-pyside",
+    ):
+        assert f"python -m build --wheel {project}" in action
+    assert "python -m build --wheel ." in action
+    ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    assert "Count -ne 6" in ci
+    assert "vibeocr.protocol.v2.client" in ci
+    assert "vibeocr.protocol.v2.mock_server" in ci
 
 
 def test_dependency_profile_matches_backend_extras() -> None:
@@ -71,6 +92,7 @@ def test_pyside_pdf_module_does_not_require_backend_wheel() -> None:
         str(SOURCE_ROOTS[name])
         for name in (
             "vibeocr-contracts-py",
+            "vibeocr-runtime-client",
             "vibeocr-client-py",
             "vibeocr-pyside",
         )

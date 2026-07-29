@@ -15,6 +15,10 @@ Design rules (see specs/2026-07-24-inference-supervisor-adr.md):
 
 from __future__ import annotations
 
+from pkgutil import extend_path
+
+__path__ = extend_path(__path__, __name__)
+
 from .dtos import (
     TERMINAL_ITEM_STATES,
     TERMINAL_JOB_STATES,

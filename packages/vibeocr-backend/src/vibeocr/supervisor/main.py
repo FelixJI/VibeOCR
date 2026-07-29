@@ -26,6 +26,12 @@ import time
 from pathlib import Path
 from typing import Any
 
+from vibeocr.protocol.v2.generated import (
+    ALL_CAPABILITIES,
+    PROTOCOL_VERSION,
+    SCHEMA_VERSION,
+)
+
 from .bootstrap import (
     BootstrapHandle,
     ReadyEnvelope,
@@ -100,9 +106,9 @@ def run_supervisor(argv: list[str] | None = None) -> int:  # pragma: no cover - 
         pid=os.getpid(),
         port=port,
         instance_id=instance_id,
-        protocol_version=2,
-        schema_version=2,
-        capabilities=["recognition", "pdf_ocr", "mineru_parse", "qrcode", "settings"],
+        protocol_version=PROTOCOL_VERSION,
+        schema_version=SCHEMA_VERSION,
+        capabilities=list(ALL_CAPABILITIES),
     )
     _write_self_test_result()
     emit_ready(envelope)

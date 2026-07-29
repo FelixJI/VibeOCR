@@ -12,45 +12,58 @@
 // an alternate FileName (e.g. a fake script) and read the ready line back.
 using System.Diagnostics;
 using System.Text.Json;
+using VibeOCR.Runtime.Contracts.Generated;
 
 namespace VibeOCR.Platform.Inference;
 
 /// <summary>Ready envelope emitted by the supervisor on its first stdout line.</summary>
-public sealed record SupervisorReadyEnvelope(int Pid, int Port, string InstanceId, int ProtocolVersion, int SchemaVersion)
+public sealed record SupervisorReadyEnvelope(
+    int Pid,
+    int Port,
+    string InstanceId,
+    int ProtocolVersion,
+    int SchemaVersion,
+    int ReadyVersion,
+    IReadOnlyList<string> Capabilities)
 {
-    public const int CurrentProtocolVersion = 2;
-    public const int CurrentSchemaVersion = 2;
-
     public Uri BaseUrl => new($"http://127.0.0.1:{Port}");
 
     public static SupervisorReadyEnvelope Parse(string line)
     {
-        using JsonDocument doc = JsonDocument.Parse(line);
-        JsonElement root = doc.RootElement;
-        if (!root.TryGetProperty("ready", out JsonElement ready)
-            || ready.ValueKind is not JsonValueKind.True)
+        RuntimeReadyEnvelope? wire = JsonSerializer.Deserialize<RuntimeReadyEnvelope>(line);
+        if (wire is null || !wire.Ready)
         {
             throw new InvalidDataException("Supervisor did not emit a ready envelope.");
         }
 
         var envelope = new SupervisorReadyEnvelope(
-            Pid: root.GetProperty("pid").GetInt32(),
-            Port: root.GetProperty("port").GetInt32(),
-            InstanceId: root.GetProperty("instance_id").GetString()!,
-            ProtocolVersion: root.GetProperty("protocol_version").GetInt32(),
-            SchemaVersion: root.GetProperty("schema_version").GetInt32());
+            Pid: wire.Pid,
+            Port: wire.Port,
+            InstanceId: wire.InstanceId,
+            ProtocolVersion: wire.ProtocolVersion,
+            SchemaVersion: wire.SchemaVersion,
+            ReadyVersion: wire.ReadyVersion,
+            Capabilities: wire.Capabilities);
         if (envelope.Pid <= 0
             || envelope.Port is <= 0 or > 65535
             || string.IsNullOrWhiteSpace(envelope.InstanceId))
         {
             throw new InvalidDataException("Supervisor ready envelope contains invalid identity.");
         }
-        if (envelope.ProtocolVersion != CurrentProtocolVersion
-            || envelope.SchemaVersion != CurrentSchemaVersion)
+        if (envelope.ProtocolVersion != RuntimeProtocol.ProtocolVersion
+            || envelope.SchemaVersion != RuntimeProtocol.SchemaVersion
+            || envelope.ReadyVersion != RuntimeProtocol.ReadyEnvelopeVersion)
         {
             throw new InvalidDataException(
                 $"Supervisor protocol/schema mismatch: "
                 + $"{envelope.ProtocolVersion}/{envelope.SchemaVersion}.");
+        }
+        if (envelope.Capabilities is null
+            || envelope.Capabilities.Count != envelope.Capabilities.Distinct().Count()
+            || envelope.Capabilities.Any(
+                capability => !RuntimeProtocol.AllCapabilities.Contains(capability)))
+        {
+            throw new InvalidDataException("Supervisor ready envelope contains invalid capabilities.");
         }
         return envelope;
     }

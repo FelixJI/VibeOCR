@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 import pytest
+from fastapi.exceptions import ResponseValidationError
 
 from vibeocr.supervisor.app import create_app
 from vibeocr.supervisor.bootstrap import new_instance_id
@@ -68,7 +69,13 @@ class _FailingPdfAdapter:
     def delete_pages(self, session_id: str, pages: list[int]) -> Any:
         raise RuntimeError("delete_pages failed")
 
-    def insert_blank(self, session_id: str, after_index: int, width: float = 612.0, height: float = 792.0) -> Any:
+    def insert_blank(
+        self,
+        session_id: str,
+        after_index: int,
+        width: float = 612.0,
+        height: float = 792.0,
+    ) -> Any:
         raise RuntimeError("insert_blank failed")
 
     def insert_from(self, session_id: str, source_path: str, after_index: int) -> Any:
@@ -80,23 +87,48 @@ class _FailingPdfAdapter:
     def reorder(self, session_id: str, new_order: list[int]) -> Any:
         raise RuntimeError("reorder failed")
 
-    def add_text_layer(self, session_id: str, page: int, ocr_result: dict, pdf_settings=None, overwrite=False) -> Any:
+    def add_text_layer(
+        self,
+        session_id: str,
+        page: int,
+        ocr_result: dict,
+        pdf_settings=None,
+        overwrite=False,
+    ) -> Any:
         raise RuntimeError("add_text_layer failed")
 
-    def add_text_layer_batch(self, session_id: str, pages_data: list, pdf_settings=None, overwrite=False, save=False) -> Any:
+    def add_text_layer_batch(
+        self,
+        session_id: str,
+        pages_data: list,
+        pdf_settings=None,
+        overwrite=False,
+        save=False,
+    ) -> Any:
         raise RuntimeError("add_text_layer_batch failed")
 
-    def rewrite_text_layer(self, session_id: str, page: int, text_blocks: list, preproc_angle: int = 0, pdf_settings=None) -> Any:
+    def rewrite_text_layer(
+        self,
+        session_id: str,
+        page: int,
+        text_blocks: list,
+        preproc_angle: int = 0,
+        pdf_settings=None,
+    ) -> Any:
         raise RuntimeError("rewrite_text_layer failed")
 
-    def update_block_text(self, session_id: str, page: int, block_index: int, new_text: str) -> Any:
+    def update_block_text(
+        self, session_id: str, page: int, block_index: int, new_text: str
+    ) -> Any:
         raise RuntimeError("update_block_text failed")
 
     def delete_text_layers_stream(self, session_id: str, pages: list):  # type: ignore[no-untyped-def]
         raise RuntimeError("delete_text_layers failed")
         yield  # pragma: no cover - generator marker
 
-    def save(self, session_id: str, path=None, pdf_settings=None, *, rewrite_text_layers=True) -> Any:
+    def save(
+        self, session_id: str, path=None, pdf_settings=None, *, rewrite_text_layers=True
+    ) -> Any:
         raise RuntimeError("save failed")
 
     def save_transactional(self, session_id: str, target_path: str) -> str:
@@ -148,7 +180,9 @@ def failing_app(failing_module: SupervisorModule, supervisor_token: str):
 # ---------------------------------------------------------------------------
 
 
-async def test_loopback_rejection_returns_forbidden(pdf_app, supervisor_token: str) -> None:
+async def test_loopback_rejection_returns_forbidden(
+    pdf_app, supervisor_token: str
+) -> None:
     """A non-loopback client host must be rejected by the middleware."""
     # The ASGI transport presents 127.0.0.1; patch the middleware path by
     # using a custom transport that injects a non-loopback client.
@@ -290,9 +324,7 @@ async def test_observe_negative_after_sequence_returns_validation_error(
         uploads=[("a.png", None, b"1")],
     )
     async with _http(supervisor_token, pdf_app) as http:
-        resp = await http.get(
-            f"/v2/jobs/{ref.job_id}/observe?after_sequence=-1"
-        )
+        resp = await http.get(f"/v2/jobs/{ref.job_id}/observe?after_sequence=-1")
     assert resp.status_code == 400
     assert resp.json()["code"] == "VALIDATION_ERROR"
 
@@ -302,7 +334,9 @@ async def test_observe_negative_after_sequence_returns_validation_error(
 # ---------------------------------------------------------------------------
 
 
-async def test_command_unknown_returns_not_found(pdf_app, supervisor_token: str) -> None:
+async def test_command_unknown_returns_not_found(
+    pdf_app, supervisor_token: str
+) -> None:
     body = {
         "command_id": "c1",
         "kind": "forget",
@@ -356,21 +390,21 @@ async def test_command_cancel_on_terminal_returns_not_cancellable(
 
 
 # ---------------------------------------------------------------------------
-# Release runtime: malformed JSON tolerated
+# Release runtime: malformed JSON rejected
 # ---------------------------------------------------------------------------
 
 
-async def test_release_runtime_tolerates_invalid_json(
+async def test_release_runtime_rejects_invalid_json(
     pdf_app, supervisor_token: str
 ) -> None:
-    """Invalid JSON body falls through to release_idle(None) (lines 238-239)."""
+    """Invalid JSON cannot bypass the generated request contract."""
     async with _http(supervisor_token, pdf_app) as http:
         resp = await http.post(
             "/v2/runtime/release",
             content=b"not json",
             headers={"Authorization": f"Bearer {supervisor_token}"},
         )
-    assert resp.status_code == 200
+    assert resp.status_code == 400
 
 
 # ---------------------------------------------------------------------------
@@ -378,9 +412,7 @@ async def test_release_runtime_tolerates_invalid_json(
 # ---------------------------------------------------------------------------
 
 
-async def test_preload_rejects_invalid_json(
-    pdf_app, supervisor_token: str
-) -> None:
+async def test_preload_rejects_invalid_json(pdf_app, supervisor_token: str) -> None:
     async with _http(supervisor_token, pdf_app) as http:
         resp = await http.post(
             "/v2/runtime/preload",
@@ -391,9 +423,7 @@ async def test_preload_rejects_invalid_json(
     assert resp.json()["code"] == "VALIDATION_ERROR"
 
 
-async def test_preload_rejects_empty_pipelines(
-    pdf_app, supervisor_token: str
-) -> None:
+async def test_preload_rejects_empty_pipelines(pdf_app, supervisor_token: str) -> None:
     async with _http(supervisor_token, pdf_app) as http:
         resp = await http.post("/v2/runtime/preload", json={"pipelines": []})
     assert resp.status_code == 400
@@ -407,9 +437,20 @@ async def test_preload_rejects_non_string_pipelines(
     assert resp.status_code == 400
 
 
-async def test_preload_rejects_unknown_pipeline(
+async def test_preload_rejects_duplicate_pipelines(
     pdf_app, supervisor_token: str
 ) -> None:
+    """The formal uniqueItems constraint is enforced at runtime."""
+    async with _http(supervisor_token, pdf_app) as http:
+        resp = await http.post(
+            "/v2/runtime/preload",
+            json={"pipelines": ["OCR", "OCR"]},
+        )
+    assert resp.status_code == 400
+    assert resp.json()["code"] == "VALIDATION_ERROR"
+
+
+async def test_preload_rejects_unknown_pipeline(pdf_app, supervisor_token: str) -> None:
     async with _http(supervisor_token, pdf_app) as http:
         resp = await http.post(
             "/v2/runtime/preload", json={"pipelines": ["DoesNotExist"]}
@@ -453,6 +494,26 @@ async def test_put_settings_rejects_negative_ttl(
             json={"residency": {"default_ttl_seconds": -1}},
         )
     assert resp.status_code == 400
+
+
+async def test_put_settings_rejects_string_ttl(
+    pdf_app, supervisor_token: str
+) -> None:
+    """Nested JSON Schema integer fields are validated without coercion."""
+    async with _http(supervisor_token, pdf_app) as http:
+        resp = await http.put(
+            "/v2/settings",
+            json={
+                "schema_version": 2,
+                "residency": {
+                    "default_ttl_seconds": "300",
+                    "pipelines": [],
+                },
+                "extra": {},
+            },
+        )
+    assert resp.status_code == 400
+    assert resp.json()["code"] == "VALIDATION_ERROR"
 
 
 async def test_put_settings_rejects_non_dict_residency(
@@ -516,7 +577,14 @@ async def test_put_settings_accepts_valid_snapshot(
         resp = await http.request(
             "PUT",
             "/v2/settings",
-            json={"residency": {"default_ttl_seconds": 600, "pipelines": []}},
+            json={
+                "schema_version": 2,
+                "residency": {
+                    "default_ttl_seconds": 600,
+                    "pipelines": [],
+                },
+                "extra": {},
+            },
         )
     assert resp.status_code == 200
 
@@ -526,9 +594,7 @@ async def test_put_settings_accepts_valid_snapshot(
 # ---------------------------------------------------------------------------
 
 
-async def test_export_rejects_invalid_json(
-    pdf_app, supervisor_token: str
-) -> None:
+async def test_export_rejects_invalid_json(pdf_app, supervisor_token: str) -> None:
     async with _http(supervisor_token, pdf_app) as http:
         resp = await http.post(
             "/v2/export",
@@ -538,9 +604,7 @@ async def test_export_rejects_invalid_json(
     assert resp.status_code == 400
 
 
-async def test_export_rejects_non_object_body(
-    pdf_app, supervisor_token: str
-) -> None:
+async def test_export_rejects_non_object_body(pdf_app, supervisor_token: str) -> None:
     async with _http(supervisor_token, pdf_app) as http:
         resp = await http.post("/v2/export", json=[1, 2])
     assert resp.status_code == 400
@@ -593,9 +657,7 @@ async def test_export_returns_internal_error_when_export_returns_false(
     """ExportService.export returning False → INTERNAL_ERROR (lines 362-365)."""
     from vibeocr.services import export_service
 
-    monkeypatch.setattr(
-        export_service.ExportService, "export", lambda *a, **k: False
-    )
+    monkeypatch.setattr(export_service.ExportService, "export", lambda *a, **k: False)
     target = tmp_path / "out.md"
     async with _http(supervisor_token, pdf_app) as http:
         resp = await http.post(
@@ -627,13 +689,25 @@ async def test_export_returns_internal_error_when_export_returns_false(
         ("POST", "/v2/pdf/sessions/sid/rotate", {"pages": [0], "angle": 90}),
         ("POST", "/v2/pdf/sessions/sid/delete_pages", {"pages": [0]}),
         ("POST", "/v2/pdf/sessions/sid/insert_blank", {"after_index": 0}),
-        ("POST", "/v2/pdf/sessions/sid/insert_from", {"source_path": "x.pdf"}),
+        (
+            "POST",
+            "/v2/pdf/sessions/sid/insert_from",
+            {"source_path": "x.pdf", "after_index": 0},
+        ),
         ("POST", "/v2/pdf/sessions/sid/move_page", {"from_index": 0, "to_index": 1}),
         ("POST", "/v2/pdf/sessions/sid/reorder", {"new_order": [0]}),
         ("POST", "/v2/pdf/sessions/sid/add_text_layer", {"page": 0, "ocr_result": {}}),
         ("POST", "/v2/pdf/sessions/sid/add_text_layer_batch", {"pages": []}),
-        ("POST", "/v2/pdf/sessions/sid/rewrite_text_layer", {"page": 0, "text_blocks": []}),
-        ("POST", "/v2/pdf/sessions/sid/update_block_text", {"page": 0, "block_index": 0}),
+        (
+            "POST",
+            "/v2/pdf/sessions/sid/rewrite_text_layer",
+            {"page": 0, "text_blocks": []},
+        ),
+        (
+            "POST",
+            "/v2/pdf/sessions/sid/update_block_text",
+            {"page": 0, "block_index": 0, "new_text": "updated"},
+        ),
         ("POST", "/v2/pdf/sessions/sid/delete_text_layers", {"pages": [0]}),
         ("POST", "/v2/pdf/sessions/sid/save", {"path": "out.pdf"}),
         ("POST", "/v2/pdf/sessions/sid/save_transactional", {"path": "/tmp/out.pdf"}),
@@ -656,11 +730,10 @@ async def test_pdf_route_returns_internal_error_when_adapter_fails(
         assert resp.json()["code"] == "INTERNAL_ERROR"
 
 
-async def test_pdf_open_returns_value_envelope_for_non_dict_dto(
+async def test_pdf_open_rejects_non_contract_adapter_result(
     tmp_path: Path, supervisor_token: str
 ) -> None:
-    """A non-DTO/non-dict adapter result exercises the ``else`` branch of
-    ``_pdf_response`` (line 408)."""
+    """Generated response DTOs reject malformed Backend adapter output."""
     from conftest import NullExecutor
 
     opts = SupervisorOptions(instance_id=new_instance_id())
@@ -671,12 +744,9 @@ async def test_pdf_open_returns_value_envelope_for_non_dict_dto(
         pdf_adapter=_NonDictAdapter(),
     )
     app = create_app(module, supervisor_token)
-    async with _http(supervisor_token, app) as http:
-        resp = await http.post("/v2/pdf/sessions/open", json={"path": "x.pdf"})
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["value"] == 42
-    assert body["schema_version"] == 2
+    with pytest.raises(ResponseValidationError):
+        async with _http(supervisor_token, app) as http:
+            await http.post("/v2/pdf/sessions/open", json={"path": "x.pdf"})
 
 
 # ---------------------------------------------------------------------------
@@ -977,28 +1047,23 @@ async def test_release_runtime_forwards_pipeline_argument(
 ) -> None:
     """Valid JSON body with a ``pipeline`` field forwards it (lines 236-237)."""
     async with _http(supervisor_token, pdf_app) as http:
-        resp = await http.post(
-            "/v2/runtime/release", json={"pipeline": "OCR"}
-        )
+        resp = await http.post("/v2/runtime/release", json={"pipeline": "OCR"})
     assert resp.status_code == 200
 
 
-async def test_release_runtime_tolerates_non_object_json(
+async def test_release_runtime_rejects_non_object_json(
     pdf_app, supervisor_token: str
 ) -> None:
-    """Valid JSON that is not an object is ignored (the False branch of
-    ``isinstance(parsed, dict)`` → body stays {} → release_idle(None))."""
+    """The formal request schema requires a JSON object."""
     async with _http(supervisor_token, pdf_app) as http:
         resp = await http.post("/v2/runtime/release", json=[1, 2, 3])
-    assert resp.status_code == 200
+    assert resp.status_code == 400
 
 
 async def test_preload_success_path(pdf_app, supervisor_token: str) -> None:
     """A valid preload request returns 200 (lines 270-279)."""
     async with _http(supervisor_token, pdf_app) as http:
-        resp = await http.post(
-            "/v2/runtime/preload", json={"pipelines": ["OCR"]}
-        )
+        resp = await http.post("/v2/runtime/preload", json={"pipelines": ["OCR"]})
     assert resp.status_code == 200
 
 
@@ -1006,14 +1071,13 @@ async def test_preload_returns_internal_error_on_executor_failure(
     pdf_app, supervisor_token: str, pdf_module: SupervisorModule
 ) -> None:
     """When the executor's preload raises, the route returns INTERNAL_ERROR."""
+
     def boom(_pipelines):  # type: ignore[no-untyped-def]
         raise RuntimeError("preload boom")
 
     pdf_module._executor.preload = boom  # type: ignore[attr-defined]
     async with _http(supervisor_token, pdf_app) as http:
-        resp = await http.post(
-            "/v2/runtime/preload", json={"pipelines": ["OCR"]}
-        )
+        resp = await http.post("/v2/runtime/preload", json={"pipelines": ["OCR"]})
     assert resp.status_code == 500
     assert resp.json()["code"] == "INTERNAL_ERROR"
 
@@ -1117,13 +1181,24 @@ async def test_pdf_insert_from_rejects_missing_source_path(
 async def test_pdf_body_rejects_non_object_json(pdf_app, supervisor_token: str) -> None:
     """A JSON list body raises _PdfBadRequest (line 398)."""
     async with _http(supervisor_token, pdf_app) as http:
-        resp = await http.post(
-            "/v2/pdf/sessions/sid/rotate", content=b"[1, 2, 3]"
-        )
+        resp = await http.post("/v2/pdf/sessions/sid/rotate", content=b"[1, 2, 3]")
     assert resp.status_code == 400
     body = resp.json()
     assert body["code"] == "VALIDATION_ERROR"
     assert "JSON object" in body["detail"]["reason"]
+
+
+async def test_pdf_body_rejects_numeric_strings(
+    pdf_app, supervisor_token: str
+) -> None:
+    """Wire integer fields cannot rely on Pydantic's coercion."""
+    async with _http(supervisor_token, pdf_app) as http:
+        resp = await http.post(
+            "/v2/pdf/sessions/sid/rotate",
+            json={"pages": ["1"], "angle": "90"},
+        )
+    assert resp.status_code == 400
+    assert resp.json()["code"] == "VALIDATION_ERROR"
 
 
 async def test_submit_rejects_when_attachment_occurs_zero_or_two_times(
@@ -1142,8 +1217,10 @@ async def test_submit_rejects_when_attachment_occurs_zero_or_two_times(
         resp = await http.post(
             "/v2/jobs",
             data={"manifest": manifest},
-            files=[("f", ("a.png", b"x", "image/png")),
-                   ("f", ("a.png", b"y", "image/png"))],
+            files=[
+                ("f", ("a.png", b"x", "image/png")),
+                ("f", ("a.png", b"y", "image/png")),
+            ],
         )
     assert resp.status_code == 400
     assert resp.json()["code"] == "VALIDATION_ERROR"

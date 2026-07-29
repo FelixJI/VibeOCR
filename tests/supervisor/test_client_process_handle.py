@@ -19,6 +19,7 @@ from vibeocr.protocol.v2 import (
     JobUpdate,
     StageEvent,
 )
+from vibeocr.protocol.v2.generated.capabilities import OCR_RECOGNITION_V2, PDF_EDIT_V2
 from vibeocr.supervisor.client import SupervisorClient
 from vibeocr.supervisor.contracts import (
     JobSnapshot as CSnapshot,
@@ -47,14 +48,16 @@ def test_ready_envelope_from_line_roundtrip() -> None:
             "instance_id": "sup-abc",
             "protocol_version": 2,
             "schema_version": 2,
-            "capabilities": ["recognition", "pdf_ocr"],
+            "capabilities": [OCR_RECOGNITION_V2, PDF_EDIT_V2],
+            "ready_version": 1,
         }
     )
     env = ReadyEnvelope.from_line(line)
     assert env.ready is True
     assert env.port == 5432
     assert env.protocol_version == 2
-    assert env.capabilities == ("recognition", "pdf_ocr")
+    assert env.capabilities == (OCR_RECOGNITION_V2, PDF_EDIT_V2)
+    assert env.ready_version == 1
     assert env.base_url == "http://127.0.0.1:5432"
 
 
@@ -249,7 +252,8 @@ def test_supervisor_process_launches_module_from_frozen_bundle(
                 "    'instance_id': 'frozen-bundle-test',",
                 "    'protocol_version': 2,",
                 "    'schema_version': 2,",
-                "    'capabilities': ['recognition'],",
+                "    'capabilities': ['ocr.recognition.v2'],",
+                "    'ready_version': 1,",
                 "}), flush=True)",
                 "time.sleep(30)",
             ]

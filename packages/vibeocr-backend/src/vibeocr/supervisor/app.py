@@ -9,12 +9,26 @@ from __future__ import annotations
 
 import asyncio
 import json
+from functools import cache
+from importlib.resources import files
 from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI, Request, Response
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.routing import APIRoute
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from vibeocr.ipc.schemas import ProgressEvent, ProgressPhase
+from vibeocr.protocol.v2.generated import (
+    ALL_CAPABILITIES,
+    OPERATION_IDS,
+    REQUEST_JSON_SCHEMAS,
+    ROUTE_CONTRACTS,
+)
+from vibeocr.protocol.v2.generated import wire_types as wire
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -38,6 +52,29 @@ from .module import ShutdownRequested, SupervisorModule
 
 type JsonResult = dict[str, Any] | JSONResponse
 type StreamResult = StreamingResponse | JSONResponse
+
+
+@cache
+def _wire_adapter(schema: type) -> TypeAdapter:
+    return TypeAdapter(schema)
+
+
+@cache
+def _wire_json_validator(schema_name: str) -> Draft202012Validator:
+    return Draft202012Validator(REQUEST_JSON_SCHEMAS[schema_name])
+
+
+def _strict_wire_payload(payload: Any, schema: type) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ValueError("body must be a JSON object")
+    try:
+        _wire_json_validator(schema.__name__).validate(payload)
+        validated = _wire_adapter(schema).validate_python(payload, strict=True)
+    except (JsonSchemaValidationError, ValidationError) as exc:
+        raise ValueError(str(exc)) from exc
+    if not isinstance(validated, dict):
+        raise ValueError("validated body must be a JSON object")
+    return validated
 
 
 def _error_response(
@@ -84,7 +121,9 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
             return _error_response(loop.error.code, instance_id)  # type: ignore[arg-type]
         if not is_bootstrap_path(path):
             auth = check_bearer_token(
-                request.headers.get("authorization"), session_token, instance_id=instance_id
+                request.headers.get("authorization"),
+                session_token,
+                instance_id=instance_id,
             )
             if not auth.ok:
                 return _error_response(auth.error.code, instance_id)  # type: ignore[arg-type]
@@ -94,7 +133,7 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
     # Health
     # ------------------------------------------------------------------
 
-    @app.get("/v2/health")
+    @app.get("/v2/health", response_model=wire.Health)
     async def health() -> dict[str, Any]:
         return {
             "schema_version": SCHEMA_VERSION,
@@ -102,10 +141,10 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
             "protocol_version": 2,
             "ready": not module.shutdown,
             "draining": module.draining,
-            "capabilities": ["recognition", "pdf_ocr", "mineru_parse", "qrcode", "settings"],
+            "capabilities": list(ALL_CAPABILITIES),
         }
 
-    @app.post("/v2/jobs", response_model=None)
+    @app.post("/v2/jobs", response_model=wire.JobRef)
     async def submit_job(request: Request) -> JsonResult:
         """Submit one strict logical job manifest plus named attachments."""
         content_type = request.headers.get("content-type", "")
@@ -153,14 +192,12 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
             return _error_response(ErrorCode.SUPERVISOR_DRAINING, instance_id)
         return ref.to_payload()
 
-    @app.get("/v2/jobs/{job_id}/observe", response_model=None)
+    @app.get("/v2/jobs/{job_id}/observe", response_model=wire.JobUpdate)
     async def observe_job(job_id: str, after_sequence: int = 0) -> JsonResult:
         try:
             return module.observe(job_id, after_sequence).to_payload()
         except JobNotFoundError:
-            return _error_response(
-                ErrorCode.JOB_NOT_FOUND, instance_id, job_id=job_id
-            )
+            return _error_response(ErrorCode.JOB_NOT_FOUND, instance_id, job_id=job_id)
         except ValueError as exc:
             return _error_response(
                 ErrorCode.VALIDATION_ERROR,
@@ -169,7 +206,7 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
                 job_id=job_id,
             )
 
-    @app.post("/v2/jobs/command", response_model=None)
+    @app.post("/v2/jobs/command", response_model=wire.CommandResult)
     async def command_job(request: Request) -> JsonResult:
         try:
             body = await request.json()
@@ -224,29 +261,32 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
     # Runtime / settings
     # ------------------------------------------------------------------
 
-    @app.get("/v2/runtime/residency")
+    @app.get("/v2/runtime/residency", response_model=wire.ResidencyStatus)
     async def residency() -> dict[str, Any]:
         return module.residency().to_payload()
 
-    @app.post("/v2/runtime/release")
-    async def release_runtime(request: Request) -> dict[str, Any]:
-        body: dict[str, Any] = {}
+    @app.post("/v2/runtime/release", response_model=wire.ResidencyStatus)
+    async def release_runtime(request: Request) -> JsonResult:
         try:
-            parsed = await request.json()
-            if isinstance(parsed, dict):
-                body = parsed
-        except Exception:
-            body = {}
+            body = _strict_wire_payload(
+                await request.json(),
+                wire.RuntimeReleaseRequest,
+            )
+        except (ValueError, TypeError):
+            return _error_response(ErrorCode.VALIDATION_ERROR, instance_id)
         pipeline = body.get("pipeline")
         return module.release_idle(pipeline).to_payload()
 
-    @app.post("/v2/runtime/preload", response_model=None)
+    @app.post("/v2/runtime/preload", response_model=wire.ResidencyStatus)
     async def preload_runtime(request: Request) -> JsonResult:
         try:
-            body = await request.json()
-        except Exception:
+            body = _strict_wire_payload(
+                await request.json(),
+                wire.RuntimePreloadRequest,
+            )
+        except (ValueError, TypeError):
             return _error_response(ErrorCode.VALIDATION_ERROR, instance_id)
-        raw_pipelines = body.get("pipelines") if isinstance(body, dict) else None
+        raw_pipelines = body["pipelines"]
         if (
             not isinstance(raw_pipelines, list)
             or not raw_pipelines
@@ -278,17 +318,18 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
             )
         return status.to_payload()
 
-    @app.get("/v2/settings")
+    @app.get("/v2/settings", response_model=wire.SettingsSnapshot)
     async def get_settings() -> dict[str, Any]:
         return module.settings().to_payload()
 
-    @app.put("/v2/settings", response_model=None)
+    @app.put("/v2/settings", response_model=wire.SettingsSnapshot)
     async def put_settings(request: Request) -> JsonResult:
         try:
-            body = await request.json()
-        except Exception:
-            return _error_response(ErrorCode.VALIDATION_ERROR, instance_id)
-        if not isinstance(body, dict):
+            body = _strict_wire_payload(
+                await request.json(),
+                wire.SettingsSnapshot,
+            )
+        except (ValueError, TypeError):
             return _error_response(ErrorCode.VALIDATION_ERROR, instance_id)
         try:
             residency = body.get("residency", {})
@@ -321,13 +362,14 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
     # Export (plan §4.1 — bounded export capability)
     # ------------------------------------------------------------------
 
-    @app.post("/v2/export", response_model=None)
+    @app.post("/v2/export", response_model=wire.ExportResponse)
     async def export_ocr(request: Request) -> JsonResult:
         try:
-            body = await request.json()
-        except Exception:
-            return _error_response(ErrorCode.VALIDATION_ERROR, instance_id)
-        if not isinstance(body, dict):
+            body = _strict_wire_payload(
+                await request.json(),
+                wire.ExportRequest,
+            )
+        except (ValueError, TypeError):
             return _error_response(ErrorCode.VALIDATION_ERROR, instance_id)
         from pathlib import Path
 
@@ -347,7 +389,11 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
                 overwrite=bool(body.get("overwrite", False)),
             )
         except Exception:
-            return _error_response(ErrorCode.VALIDATION_ERROR, instance_id, detail={"reason": "invalid export request"})
+            return _error_response(
+                ErrorCode.VALIDATION_ERROR,
+                instance_id,
+                detail={"reason": "invalid export request"},
+            )
         try:
             from vibeocr.models.ocr_result import OCRResult
             from vibeocr.services.export_service import ExportService
@@ -361,11 +407,17 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
             success = ExportService.export(ocr_result, req.output_path, req.format)
             if not success:
                 return _error_response(
-                    ErrorCode.INTERNAL_ERROR, instance_id, detail={"reason": "export failed"}
+                    ErrorCode.INTERNAL_ERROR,
+                    instance_id,
+                    detail={"reason": "export failed"},
                 )
-            bytes_written = req.output_path.stat().st_size if req.output_path.exists() else 0
+            bytes_written = (
+                req.output_path.stat().st_size if req.output_path.exists() else 0
+            )
         except Exception as exc:
-            return _error_response(ErrorCode.INTERNAL_ERROR, instance_id, detail={"error": str(exc)})
+            return _error_response(
+                ErrorCode.INTERNAL_ERROR, instance_id, detail={"error": str(exc)}
+            )
         return {
             "schema_version": SCHEMA_VERSION,
             "instance_id": instance_id,
@@ -389,14 +441,15 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
             raise _PdfUnavailable()
         return adapter
 
-    async def _pdf_body(request: Request) -> dict[str, Any]:
+    async def _pdf_body(request: Request, schema: type) -> dict[str, Any]:
         try:
             body = await request.json()
         except Exception as e:
             raise _PdfBadRequest(str(e)) from e
-        if not isinstance(body, dict):
-            raise _PdfBadRequest("body must be a JSON object")
-        return body
+        try:
+            return _strict_wire_payload(body, schema)
+        except ValueError as exc:
+            raise _PdfBadRequest(str(exc)) from exc
 
     def _pdf_response(payload: Any) -> dict[str, Any]:
         """Serialise a pydantic DTO (or pass through a dict) with envelope."""
@@ -423,10 +476,10 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
             ErrorCode.INTERNAL_ERROR, instance_id, detail={"error": str(exc)}
         )
 
-    @app.post("/v2/pdf/sessions/open", response_model=None)
+    @app.post("/v2/pdf/sessions/open", response_model=wire.PdfOpenResponse)
     async def pdf_open(request: Request) -> JsonResult:
         try:
-            body = await _pdf_body(request)
+            body = await _pdf_body(request, wire.OpenRequest)
             path = body.get("path", "")
             if not path:
                 raise _PdfBadRequest("missing path")
@@ -436,7 +489,10 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
         except Exception as exc:
             return _pdf_error(exc)
 
-    @app.post("/v2/pdf/sessions/{session_id}/close", response_model=None)
+    @app.post(
+        "/v2/pdf/sessions/{session_id}/close",
+        response_model=wire.PdfClosedResponse,
+    )
     async def pdf_close(session_id: str) -> JsonResult:
         try:
             _pdf_adapter().close_session(session_id)
@@ -444,7 +500,10 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
         except Exception as exc:
             return _pdf_error(exc)
 
-    @app.post("/v2/pdf/sessions/{session_id}/model", response_model=None)
+    @app.post(
+        "/v2/pdf/sessions/{session_id}/model",
+        response_model=wire.PdfDocumentResponse,
+    )
     async def pdf_model(session_id: str) -> JsonResult:
         try:
             return _pdf_response(_pdf_adapter().get_model(session_id))
@@ -471,11 +530,9 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
         return StreamingResponse(gen(), media_type="application/x-ndjson")
 
     @app.post("/v2/pdf/sessions/{session_id}/render_thumbnail")
-    async def pdf_render_thumbnail(
-        session_id: str, request: Request
-    ) -> Response:
+    async def pdf_render_thumbnail(session_id: str, request: Request) -> Response:
         try:
-            body = await _pdf_body(request)
+            body = await _pdf_body(request, wire.RenderThumbnailRequest)
             page = int(body.get("page", 0))
             size = int(body.get("size", 160))
             data = _pdf_adapter().render_thumbnail(session_id, page, size=size)
@@ -484,11 +541,9 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
             return _pdf_error(exc)
 
     @app.post("/v2/pdf/sessions/{session_id}/render_preview")
-    async def pdf_render_preview(
-        session_id: str, request: Request
-    ) -> Response:
+    async def pdf_render_preview(session_id: str, request: Request) -> Response:
         try:
-            body = await _pdf_body(request)
+            body = await _pdf_body(request, wire.RenderPreviewRequest)
             page = int(body.get("page", 0))
             dpi = int(body.get("dpi", 150))
             data = _pdf_adapter().render_preview(session_id, page, dpi=dpi)
@@ -497,9 +552,7 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
             return _pdf_error(exc)
 
     @app.get("/v2/pdf/sessions/{session_id}/render")
-    async def pdf_render(
-        session_id: str, request: Request
-    ) -> Response:
+    async def pdf_render(session_id: str, request: Request) -> Response:
         """Render a page thumbnail via GET (quick-preview contract).
 
         The .NET ``InferenceHttpClient.RenderPdfPageAsync`` issues a GET to
@@ -518,43 +571,48 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
 
     @app.post(
         "/v2/pdf/sessions/{session_id}/detect_text_layers",
-        response_model=None,
+        response_model=wire.PdfDetectResponse,
     )
-    async def pdf_detect_text_layers(
-        session_id: str, request: Request
-    ) -> JsonResult:
+    async def pdf_detect_text_layers(session_id: str, request: Request) -> JsonResult:
         try:
-            body = await _pdf_body(request)
+            body = await _pdf_body(request, wire.DetectTextLayersRequest)
             page = int(body.get("page", 0))
-            return _pdf_response(
-                _pdf_adapter().detect_text_layers(session_id, page)
-            )
+            return _pdf_response(_pdf_adapter().detect_text_layers(session_id, page))
         except Exception as exc:
             return _pdf_error(exc)
 
-    @app.post("/v2/pdf/sessions/{session_id}/rotate", response_model=None)
+    @app.post(
+        "/v2/pdf/sessions/{session_id}/rotate",
+        response_model=wire.PdfMutationResponse,
+    )
     async def pdf_rotate(session_id: str, request: Request) -> JsonResult:
         try:
-            body = await _pdf_body(request)
+            body = await _pdf_body(request, wire.RotateRequest)
             pages = body.get("pages", [])
             angle = int(body.get("angle", 90))
             return _pdf_response(_pdf_adapter().rotate(session_id, pages, angle))
         except Exception as exc:
             return _pdf_error(exc)
 
-    @app.post("/v2/pdf/sessions/{session_id}/delete_pages", response_model=None)
+    @app.post(
+        "/v2/pdf/sessions/{session_id}/delete_pages",
+        response_model=wire.PdfMutationResponse,
+    )
     async def pdf_delete_pages(session_id: str, request: Request) -> JsonResult:
         try:
-            body = await _pdf_body(request)
+            body = await _pdf_body(request, wire.DeletePagesRequest)
             pages = body.get("pages", [])
             return _pdf_response(_pdf_adapter().delete_pages(session_id, pages))
         except Exception as exc:
             return _pdf_error(exc)
 
-    @app.post("/v2/pdf/sessions/{session_id}/insert_blank", response_model=None)
+    @app.post(
+        "/v2/pdf/sessions/{session_id}/insert_blank",
+        response_model=wire.PdfMutationResponse,
+    )
     async def pdf_insert_blank(session_id: str, request: Request) -> JsonResult:
         try:
-            body = await _pdf_body(request)
+            body = await _pdf_body(request, wire.InsertBlankRequest)
             after_index = int(body.get("after_index", -1))
             width = float(body.get("width", 612.0))
             height = float(body.get("height", 792.0))
@@ -564,10 +622,13 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
         except Exception as exc:
             return _pdf_error(exc)
 
-    @app.post("/v2/pdf/sessions/{session_id}/insert_from", response_model=None)
+    @app.post(
+        "/v2/pdf/sessions/{session_id}/insert_from",
+        response_model=wire.PdfMutationResponse,
+    )
     async def pdf_insert_from(session_id: str, request: Request) -> JsonResult:
         try:
-            body = await _pdf_body(request)
+            body = await _pdf_body(request, wire.InsertFromRequest)
             source_path = body.get("source_path", "")
             after_index = int(body.get("after_index", -1))
             if not source_path:
@@ -578,10 +639,13 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
         except Exception as exc:
             return _pdf_error(exc)
 
-    @app.post("/v2/pdf/sessions/{session_id}/move_page", response_model=None)
+    @app.post(
+        "/v2/pdf/sessions/{session_id}/move_page",
+        response_model=wire.PdfMutationResponse,
+    )
     async def pdf_move_page(session_id: str, request: Request) -> JsonResult:
         try:
-            body = await _pdf_body(request)
+            body = await _pdf_body(request, wire.MovePageRequest)
             from_index = int(body.get("from_index", -1))
             to_index = int(body.get("to_index", -1))
             return _pdf_response(
@@ -590,10 +654,13 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
         except Exception as exc:
             return _pdf_error(exc)
 
-    @app.post("/v2/pdf/sessions/{session_id}/reorder", response_model=None)
+    @app.post(
+        "/v2/pdf/sessions/{session_id}/reorder",
+        response_model=wire.PdfMutationResponse,
+    )
     async def pdf_reorder(session_id: str, request: Request) -> JsonResult:
         try:
-            body = await _pdf_body(request)
+            body = await _pdf_body(request, wire.ReorderRequest)
             new_order = body.get("new_order", [])
             return _pdf_response(_pdf_adapter().reorder(session_id, new_order))
         except Exception as exc:
@@ -601,11 +668,11 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
 
     @app.post(
         "/v2/pdf/sessions/{session_id}/add_text_layer",
-        response_model=None,
+        response_model=wire.PdfMutationResponse,
     )
     async def pdf_add_text_layer(session_id: str, request: Request) -> JsonResult:
         try:
-            body = await _pdf_body(request)
+            body = await _pdf_body(request, wire.AddTextLayerRequest)
             page = int(body.get("page", 0))
             ocr_result = body.get("ocr_result", {})
             pdf_settings = body.get("pdf_settings")
@@ -620,13 +687,11 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
 
     @app.post(
         "/v2/pdf/sessions/{session_id}/add_text_layer_batch",
-        response_model=None,
+        response_model=wire.PdfMutationResponse,
     )
-    async def pdf_add_text_layer_batch(
-        session_id: str, request: Request
-    ) -> JsonResult:
+    async def pdf_add_text_layer_batch(session_id: str, request: Request) -> JsonResult:
         try:
-            body = await _pdf_body(request)
+            body = await _pdf_body(request, wire.BatchAddTextLayerRequest)
             pages_data = body.get("pages", [])
             pdf_settings = body.get("pdf_settings")
             overwrite = bool(body.get("overwrite", False))
@@ -641,13 +706,11 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
 
     @app.post(
         "/v2/pdf/sessions/{session_id}/rewrite_text_layer",
-        response_model=None,
+        response_model=wire.PdfMutationResponse,
     )
-    async def pdf_rewrite_text_layer(
-        session_id: str, request: Request
-    ) -> JsonResult:
+    async def pdf_rewrite_text_layer(session_id: str, request: Request) -> JsonResult:
         try:
-            body = await _pdf_body(request)
+            body = await _pdf_body(request, wire.RewriteTextLayerRequest)
             page = int(body.get("page", 0))
             text_blocks = body.get("text_blocks", [])
             preproc_angle = int(body.get("preproc_angle", 0))
@@ -662,13 +725,11 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
 
     @app.post(
         "/v2/pdf/sessions/{session_id}/update_block_text",
-        response_model=None,
+        response_model=wire.PdfMutationResponse,
     )
-    async def pdf_update_block_text(
-        session_id: str, request: Request
-    ) -> JsonResult:
+    async def pdf_update_block_text(session_id: str, request: Request) -> JsonResult:
         try:
-            body = await _pdf_body(request)
+            body = await _pdf_body(request, wire.UpdateBlockTextRequest)
             page = int(body.get("page", 0))
             block_index = int(body.get("block_index", 0))
             new_text = body.get("new_text", "")
@@ -684,12 +745,10 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
         "/v2/pdf/sessions/{session_id}/delete_text_layers",
         response_model=None,
     )
-    async def pdf_delete_text_layers(
-        session_id: str, request: Request
-    ) -> StreamResult:
+    async def pdf_delete_text_layers(session_id: str, request: Request) -> StreamResult:
         """Stream per-page text-layer deletion (NDJSON)."""
         try:
-            body = await _pdf_body(request)
+            body = await _pdf_body(request, wire.PageListRequest)
             pages = body.get("pages", [])
             adapter = _pdf_adapter()
         except Exception as exc:
@@ -705,10 +764,13 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
 
         return StreamingResponse(gen(), media_type="application/x-ndjson")
 
-    @app.post("/v2/pdf/sessions/{session_id}/save", response_model=None)
+    @app.post(
+        "/v2/pdf/sessions/{session_id}/save",
+        response_model=wire.PdfSaveResponse,
+    )
     async def pdf_save(session_id: str, request: Request) -> JsonResult:
         try:
-            body = await _pdf_body(request)
+            body = await _pdf_body(request, wire.SaveRequest)
             path = body.get("path")
             pdf_settings = body.get("pdf_settings")
             rewrite_text_layers = bool(body.get("rewrite_text_layers", True))
@@ -725,11 +787,9 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
 
     @app.post(
         "/v2/pdf/sessions/{session_id}/save_transactional",
-        response_model=None,
+        response_model=wire.PdfPathResponse,
     )
-    async def pdf_save_transactional(
-        session_id: str, request: Request
-    ) -> JsonResult:
+    async def pdf_save_transactional(session_id: str, request: Request) -> JsonResult:
         """Atomic save: write to a temp file in the target's parent dir, fsync,
         then ``Path.replace`` onto the target path. Returns ``{path}``.
 
@@ -738,7 +798,7 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
         never overwrites the original with a half-written file.
         """
         try:
-            body = await _pdf_body(request)
+            body = await _pdf_body(request, wire.PdfPathRequest)
             path = body.get("path")
             if not path:
                 return _error_response(
@@ -751,7 +811,10 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
         except Exception as exc:
             return _pdf_error(exc)
 
-    @app.post("/v2/pdf/sessions/{session_id}/cancel", response_model=None)
+    @app.post(
+        "/v2/pdf/sessions/{session_id}/cancel",
+        response_model=wire.PdfCancelledResponse,
+    )
     async def pdf_cancel(session_id: str) -> JsonResult:
         try:
             _pdf_adapter().cancel(session_id)
@@ -759,7 +822,10 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
         except Exception as exc:
             return _pdf_error(exc)
 
-    @app.post("/v2/pdf/sessions/{session_id}/reset_cancel", response_model=None)
+    @app.post(
+        "/v2/pdf/sessions/{session_id}/reset_cancel",
+        response_model=wire.PdfResetResponse,
+    )
     async def pdf_reset_cancel(session_id: str) -> JsonResult:
         try:
             _pdf_adapter().reset_cancel(session_id)
@@ -771,14 +837,17 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
     # QR decode / generate (plan §4.1 — bounded QR capability)
     # ------------------------------------------------------------------
 
-    @app.post("/v2/qrcode/decode", response_model=None)
+    @app.post("/v2/qrcode/decode", response_model=wire.QrDecodeResponse)
     async def qrcode_decode(request: Request) -> JsonResult:
         try:
-            body = await request.json()
-        except Exception:
-            return _error_response(ErrorCode.VALIDATION_ERROR, instance_id)
-        if not isinstance(body, dict) or "image" not in body:
-            return _error_response(ErrorCode.VALIDATION_ERROR, instance_id, detail={"field": "image"})
+            body = _strict_wire_payload(
+                await request.json(),
+                wire.QrDecodeRequest,
+            )
+        except (ValueError, TypeError):
+            return _error_response(
+                ErrorCode.VALIDATION_ERROR, instance_id, detail={"field": "image"}
+            )
         import base64
         import io
 
@@ -788,7 +857,11 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
             raw = base64.b64decode(body["image"])
             img = PILImage.open(io.BytesIO(raw))
         except Exception:
-            return _error_response(ErrorCode.VALIDATION_ERROR, instance_id, detail={"reason": "invalid image"})
+            return _error_response(
+                ErrorCode.VALIDATION_ERROR,
+                instance_id,
+                detail={"reason": "invalid image"},
+            )
         try:
             from vibeocr.services.qrcode_decode_service import QrcodeDecodeService
 
@@ -808,21 +881,26 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
                 for it in items
             ]
         except Exception as exc:
-            return _error_response(ErrorCode.INTERNAL_ERROR, instance_id, detail={"error": str(exc)})
+            return _error_response(
+                ErrorCode.INTERNAL_ERROR, instance_id, detail={"error": str(exc)}
+            )
         return {
             "schema_version": SCHEMA_VERSION,
             "instance_id": instance_id,
             "codes": codes,
         }
 
-    @app.post("/v2/qrcode/generate", response_model=None)
+    @app.post("/v2/qrcode/generate", response_model=wire.QrGenerateResponse)
     async def qrcode_generate(request: Request) -> JsonResult:
         try:
-            body = await request.json()
-        except Exception:
-            return _error_response(ErrorCode.VALIDATION_ERROR, instance_id)
-        if not isinstance(body, dict) or "data" not in body:
-            return _error_response(ErrorCode.VALIDATION_ERROR, instance_id, detail={"field": "data"})
+            body = _strict_wire_payload(
+                await request.json(),
+                wire.QrGenerateRequest,
+            )
+        except (ValueError, TypeError):
+            return _error_response(
+                ErrorCode.VALIDATION_ERROR, instance_id, detail={"field": "data"}
+            )
         text = body["data"]
         fmt = body.get("format", "qr")
         options = body.get("options", {})
@@ -844,7 +922,9 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
                 media_type = "image/png"
             image_b64 = base64.b64encode(payload).decode("ascii")
         except Exception as exc:
-            return _error_response(ErrorCode.INTERNAL_ERROR, instance_id, detail={"error": str(exc)})
+            return _error_response(
+                ErrorCode.INTERNAL_ERROR, instance_id, detail={"error": str(exc)}
+            )
         return {
             "schema_version": SCHEMA_VERSION,
             "instance_id": instance_id,
@@ -853,6 +933,43 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
             "media_type": media_type,
         }
 
+    formal_openapi = json.loads(
+        files("vibeocr.protocol.v2")
+        .joinpath("openapi.yaml")
+        .read_text(encoding="utf-8")
+    )
+
+    for route in app.routes:
+        if not isinstance(route, APIRoute) or not route.path.startswith("/v2/"):
+            continue
+        methods = route.methods or set()
+        matches = [
+            (method, OPERATION_IDS[(method, route.path)])
+            for method in methods
+            if (method, route.path) in OPERATION_IDS
+        ]
+        if len(matches) != 1:
+            raise RuntimeError(
+                f"formal Protocol operationId missing or ambiguous: "
+                f"{sorted(methods)} {route.path}"
+            )
+        method, operation_id = matches[0]
+        route.operation_id = operation_id
+        route.openapi_extra = ROUTE_CONTRACTS[(method, route.path)]
+
+    app.state.generated_openapi = get_openapi(
+        title=formal_openapi["info"]["title"],
+        version=formal_openapi["info"]["version"],
+        openapi_version=formal_openapi["openapi"],
+        description=formal_openapi["info"].get("description"),
+        routes=app.routes,
+    )
+
+    def _formal_openapi() -> dict[str, Any]:
+        return formal_openapi
+
+    app.openapi_schema = formal_openapi
+    app.openapi = _formal_openapi  # type: ignore[method-assign]
     return app
 
 

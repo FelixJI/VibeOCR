@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <PackageId>VibeOCR.Runtime.Client</PackageId>
+    <Version>2.0.0-rc.1</Version>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>VibeOCR.Runtime.Client</RootNamespace>
+    <AssemblyName>VibeOCR.Runtime.Client</AssemblyName>
+    <Authors>VibeOCR contributors</Authors>
+    <Description>Thin loopback HTTP transport for the VibeOCR Runtime Protocol.</Description>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/FelixJI/vibeocr-protocol</RepositoryUrl>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../VibeOCR.Contracts/VibeOCR.Contracts.csproj" />
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+</Project>

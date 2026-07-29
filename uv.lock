@@ -15,6 +15,7 @@ members = [
     "vibeocr-client-py",
     "vibeocr-contracts-py",
     "vibeocr-pyside",
+    "vibeocr-runtime-client",
 ]
 overrides = [
     { name = "opencv-python", marker = "sys_platform == 'nonexistent'" },
@@ -2387,13 +2388,14 @@ wheels = [
 
 [[package]]
 name = "vibeocr"
-version = "0.6.2"
+version = "0.6.3"
 source = { editable = "." }
 dependencies = [
     { name = "vibeocr-backend" },
     { name = "vibeocr-client-py" },
     { name = "vibeocr-contracts-py" },
     { name = "vibeocr-pyside" },
+    { name = "vibeocr-runtime-client" },
 ]
 
 [package.dev-dependencies]
@@ -2439,6 +2441,7 @@ requires-dist = [
     { name = "vibeocr-client-py", editable = "packages/vibeocr-client-py" },
     { name = "vibeocr-contracts-py", editable = "packages/vibeocr-contracts-py" },
     { name = "vibeocr-pyside", editable = "apps/vibeocr-pyside" },
+    { name = "vibeocr-runtime-client", editable = "packages/vibeocr-runtime-client-py" },
 ]
 
 [package.metadata.requires-dev]
@@ -2479,12 +2482,13 @@ test-pyside = [
 
 [[package]]
 name = "vibeocr-backend"
-version = "0.6.2"
+version = "0.6.3"
 source = { editable = "packages/vibeocr-backend" }
 dependencies = [
     { name = "fastapi" },
     { name = "fonttools" },
     { name = "httpx" },
+    { name = "jsonschema" },
     { name = "markdown" },
     { name = "numpy" },
     { name = "opencv-contrib-python" },
@@ -2520,6 +2524,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.139.0" },
     { name = "fonttools", specifier = ">=4.63.0" },
     { name = "httpx", specifier = ">=0.28.1" },
+    { name = "jsonschema", specifier = ">=4.25.0" },
     { name = "markdown", specifier = ">=3.10.2" },
     { name = "mineru", extras = ["core"], marker = "extra == 'cpu'", specifier = ">=3.4.3" },
     { name = "mineru", extras = ["core"], marker = "extra == 'gpu-cu126'", specifier = ">=3.4.3" },
@@ -2547,7 +2552,7 @@ provides-extras = ["cpu", "gpu-cu126"]
 
 [[package]]
 name = "vibeocr-client-py"
-version = "0.6.2"
+version = "0.6.3"
 source = { editable = "packages/vibeocr-client-py" }
 dependencies = [
     { name = "fonttools" },
@@ -2557,6 +2562,7 @@ dependencies = [
     { name = "pillow" },
     { name = "pydantic" },
     { name = "vibeocr-contracts-py" },
+    { name = "vibeocr-runtime-client" },
 ]
 
 [package.metadata]
@@ -2568,16 +2574,17 @@ requires-dist = [
     { name = "pillow", specifier = ">=12.3.0" },
     { name = "pydantic", specifier = ">=2.13.4" },
     { name = "vibeocr-contracts-py", editable = "packages/vibeocr-contracts-py" },
+    { name = "vibeocr-runtime-client", editable = "packages/vibeocr-runtime-client-py" },
 ]
 
 [[package]]
 name = "vibeocr-contracts-py"
-version = "0.6.2"
+version = "2.0.0rc1"
 source = { editable = "packages/vibeocr-contracts-py" }
 
 [[package]]
 name = "vibeocr-pyside"
-version = "0.6.2"
+version = "0.6.3"
 source = { editable = "apps/vibeocr-pyside" }
 dependencies = [
     { name = "numpy" },
@@ -2595,6 +2602,23 @@ requires-dist = [
     { name = "pyside6", specifier = ">=6.11.1" },
     { name = "qasync", specifier = ">=0.28.0" },
     { name = "vibeocr-client-py", editable = "packages/vibeocr-client-py" },
+    { name = "vibeocr-contracts-py", editable = "packages/vibeocr-contracts-py" },
+]
+
+[[package]]
+name = "vibeocr-runtime-client"
+version = "2.0.0rc1"
+source = { editable = "packages/vibeocr-runtime-client-py" }
+dependencies = [
+    { name = "httpx" },
+    { name = "jsonschema" },
+    { name = "vibeocr-contracts-py" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "httpx", specifier = ">=0.28.1" },
+    { name = "jsonschema", specifier = ">=4.25.0" },
     { name = "vibeocr-contracts-py", editable = "packages/vibeocr-contracts-py" },
 ]
 

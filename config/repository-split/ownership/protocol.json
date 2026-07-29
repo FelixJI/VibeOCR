@@ -12,9 +12,11 @@
   ],
   "current_source_patterns": [
     "packages/vibeocr-contracts-py/**",
+    "packages/vibeocr-runtime-client-py/**",
     "packages/vibeocr-client-py/src/vibeocr/client/**",
     "packages/vibeocr-client-py/src/vibeocr/supervisor/**",
-    "src/dotnet/VibeOCR.Contracts/**"
+    "src/dotnet/VibeOCR.Contracts/**",
+    "src/dotnet/VibeOCR.Runtime.Client/**"
   ],
   "forbidden_dependencies": [
     "vibeocr.backend",

@@ -52,6 +52,10 @@ def _write_workspace_wheels(
             "vibeocr/__init__.py",
             "vibeocr/protocol/v2/golden/golden.json",
         ],
+        "vibeocr-runtime-client": [
+            "vibeocr/protocol/v2/client.py",
+            "vibeocr/protocol/v2/mock_server.py",
+        ],
         "vibeocr-client-py": [
             "vibeocr/env_manager.py",
             "vibeocr/dependency_profiles.json",
@@ -63,15 +67,18 @@ def _write_workspace_wheels(
         ],
     }
     code_files[schema_owner].append("vibeocr/contracts/schemas/table-v1.schema.json")
-    root_requirements = tuple(code_files)
+    root_requirements = tuple(f"{distribution}==1.0" for distribution in code_files)
     for distribution in (
         "vibeocr",
         "vibeocr-contracts-py",
+        "vibeocr-runtime-client",
         "vibeocr-client-py",
         "vibeocr-backend",
         "vibeocr-pyside",
     ):
         requirements = root_requirements if distribution == "vibeocr" else ()
+        if distribution == "vibeocr-runtime-client":
+            requirements = ("vibeocr-contracts-py==1.0",)
         if distribution == "vibeocr-backend":
             requirements = (
                 "paddlepaddle>=3; extra == 'cpu'",

@@ -186,15 +186,38 @@ async def test_client_lifecycle_health_and_utility_calls() -> None:
             assert path == "/v2/health"
             return httpx.Response(
                 200,
-                json={"ready": True},
+                json={
+                    "schema_version": 2,
+                    "instance_id": "test",
+                    "protocol_version": 2,
+                    "ready": True,
+                    "draining": False,
+                    "capabilities": [],
+                },
                 request=httpx.Request("GET", f"http://127.0.0.1:9000{path}"),
             )
 
         async def post(self, path, **_kwargs):
             payload = (
-                {"path": "out.md"}
+                {
+                    "schema_version": 2,
+                    "instance_id": "test",
+                    "output_path": "out.md",
+                    "bytes_written": 2,
+                }
                 if path == "/v2/export"
-                else {"codes": [{"text": "decoded"}]}
+                else {
+                    "schema_version": 2,
+                    "instance_id": "test",
+                    "codes": [
+                        {
+                            "data": "decoded",
+                            "type": "QRCODE",
+                            "format": "UTF-8",
+                            "is_url": False,
+                        }
+                    ],
+                }
             )
             return httpx.Response(
                 200,
@@ -203,15 +226,23 @@ async def test_client_lifecycle_health_and_utility_calls() -> None:
             )
 
     client._client = StubHttpClient()  # type: ignore[assignment]
-    assert await client.health() == {"ready": True}
-    assert await client.export_ocr(
+    assert (await client.health())["ready"] is True
+    exported = await client.export_ocr(
         raw_text="raw",
         markdown_text="md",
         html_text="<p>html</p>",
         output_path="out.md",
         fmt="markdown",
-    ) == {"path": "out.md"}
-    assert await client.decode_qrcode(b"png") == [{"text": "decoded"}]
+    )
+    assert exported["output_path"] == "out.md"
+    assert await client.decode_qrcode(b"png") == [
+        {
+            "data": "decoded",
+            "type": "QRCODE",
+            "format": "UTF-8",
+            "is_url": False,
+        }
+    ]
 
 
 # ---------------------------------------------------------------------------

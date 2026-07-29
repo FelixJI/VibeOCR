@@ -70,8 +70,9 @@ if ($LASTEXITCODE -ne 0) { throw "bootstrapper build failed with exit $LASTEXITC
 & $PythonExecutable (Join-Path $repo 'scripts\build_release_metadata.py') --version $Version --output $outputFull
 if ($LASTEXITCODE -ne 0) { throw "release metadata/updater build failed with exit $LASTEXITCODE" }
 
-# Stage the exact contracts + client + backend wheel set. WinUI never copies
-# workspace source directly; all three wheels retain their physical ownership.
+# Stage the exact contracts + Runtime Client + product client + backend wheel
+# set. WinUI never copies workspace source directly; all four wheels retain
+# their physical ownership.
 if (-not $WheelDirectory -and $BackendWheel) {
     $WheelDirectory = Split-Path -Parent (Resolve-Path $BackendWheel).Path
 }
@@ -80,6 +81,7 @@ if (-not $WheelDirectory) {
     New-Item -ItemType Directory -Path $WheelDirectory -Force | Out-Null
     foreach ($project in @(
         'packages\vibeocr-contracts-py',
+        'packages\vibeocr-runtime-client-py',
         'packages\vibeocr-client-py',
         'packages\vibeocr-backend'
     )) {
@@ -89,12 +91,13 @@ if (-not $WheelDirectory) {
 }
 $wheelDirFull = (Resolve-Path $WheelDirectory).Path
 $runtimeWheels = @(
-    Get-ChildItem -LiteralPath $wheelDirFull -Filter "vibeocr_contracts_py-$Version-*.whl" | Select-Object -First 1
+    Get-ChildItem -LiteralPath $wheelDirFull -Filter "vibeocr_contracts_py-*.whl" | Select-Object -First 1
+    Get-ChildItem -LiteralPath $wheelDirFull -Filter "vibeocr_runtime_client-*.whl" | Select-Object -First 1
     Get-ChildItem -LiteralPath $wheelDirFull -Filter "vibeocr_client_py-$Version-*.whl" | Select-Object -First 1
     Get-ChildItem -LiteralPath $wheelDirFull -Filter "vibeocr_backend-$Version-*.whl" | Select-Object -First 1
 )
 if (@($runtimeWheels | Where-Object { $_ -eq $null }).Count -gt 0) {
-    throw 'contracts/client/backend wheel set is incomplete'
+    throw 'contracts/runtime-client/product-client/backend wheel set is incomplete'
 }
 $supervisorRoot = Join-Path $outputFull 'supervisor'
 # Ensure a clean extraction target: the whole $outputFull is wiped at the top,
@@ -119,6 +122,8 @@ foreach ($wheel in $runtimeWheels) {
     $wheelRecords += [ordered]@{ file = $wheel.Name; sha256 = $hashSb.ToString() }
 }
 $backendRecord = $wheelRecords | Where-Object { $_.file -like 'vibeocr_backend-*' } | Select-Object -First 1
+$protocolWheel = $runtimeWheels | Where-Object { $_.Name -like 'vibeocr_contracts_py-*' } | Select-Object -First 1
+$protocolVersion = $protocolWheel.BaseName -replace '^vibeocr_contracts_py-([^-]+)-.*$', '$1'
 $sourceCommit = (git -C $repo rev-parse HEAD).Trim()
 $productManifest = [ordered]@{
     frontend = 'winui'
@@ -127,6 +132,7 @@ $productManifest = [ordered]@{
     backend_sha256 = $backendRecord.sha256
     python_wheels = $wheelRecords
     protocol_major = 2
+    protocol_version = $protocolVersion
     source_commit = $sourceCommit
 }
 $productManifest | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $outputFull 'product-manifest.json') -Encoding utf8

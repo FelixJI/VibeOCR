@@ -19,11 +19,15 @@ import threading
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from vibeocr.protocol.v2.generated import (
+    ALL_CAPABILITIES,
+    PROTOCOL_VERSION,
+    READY_ENVELOPE_VERSION,
+    SCHEMA_VERSION,
+)
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
-
-READY_ENVELOPE_VERSION = 1
-
 
 def generate_session_token() -> str:
     """Generate a 256-bit URL-safe session token."""
@@ -60,6 +64,23 @@ class ReadyEnvelope:
     schema_version: int
     capabilities: list[str]
     ready_version: int = READY_ENVELOPE_VERSION
+
+    def __post_init__(self) -> None:
+        if not self.ready or self.pid <= 0 or not 1 <= self.port <= 65535:
+            raise ValueError("invalid ready envelope identity")
+        if not self.instance_id:
+            raise ValueError("instance_id is required")
+        if (
+            self.protocol_version != PROTOCOL_VERSION
+            or self.schema_version != SCHEMA_VERSION
+            or self.ready_version != READY_ENVELOPE_VERSION
+        ):
+            raise ValueError("incompatible ready envelope version")
+        if len(self.capabilities) != len(set(self.capabilities)):
+            raise ValueError("ready capabilities must be unique")
+        unknown = set(self.capabilities) - set(ALL_CAPABILITIES)
+        if unknown:
+            raise ValueError(f"unknown ready capabilities: {sorted(unknown)}")
 
     def to_json(self) -> str:
         return json.dumps(

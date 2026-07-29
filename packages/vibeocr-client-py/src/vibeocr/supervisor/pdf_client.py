@@ -4,7 +4,8 @@ The supervisor owns the PDF child process (plan §6 / ADR §"Transport"); the
 GUI never instantiates ``PdfBackendClient`` directly. This module exposes the
 client surface the PySide PDF session manager / IPC workers use instead.
 
-* :class:`PdfSupervisorClient` — async, built on ``httpx.AsyncClient``, mirrors
+* :class:`PdfSupervisorClient` — async domain adapter over the publishable
+  Protocol SDK transport, mirrors
   the full ``PdfBackendClient`` business API (open/close/load_stream/render/
   mutate/text-layer/save/cancel). Method names and DTOs (``vibeocr.ipc.schemas``)
   are identical to the legacy client so the PySide transport swap is a drop-in.
@@ -36,7 +37,6 @@ from vibeocr.ipc.schemas import (
     DeletePagesRequest,
     DetectTextLayersRequest,
     DetectTextLayersResponse,
-    HealthResponse,
     InsertBlankRequest,
     InsertFromRequest,
     MovePageRequest,
@@ -56,6 +56,13 @@ from vibeocr.ipc.schemas import (
     UpdateBlockTextRequest,
 )
 from vibeocr.protocol.v2 import ErrorCode
+from vibeocr.protocol.v2.client import (
+    AsyncRuntimeTransport,
+    RuntimeClientError,
+    bind_operation_path,
+)
+from vibeocr.protocol.v2.generated import RuntimeHealthEnvelope
+from vibeocr.protocol.v2.generated.operations import operation_path
 from vibeocr.utils.http_log import (
     guess_request_size,
     guess_response_size,
@@ -83,7 +90,9 @@ class PdfBackendError(InferenceClientError):
     path; supervisor-internal code catches its own.
     """
 
-    def __init__(self, message_or_code: Any, message: str | None = None, **kwargs: Any) -> None:
+    def __init__(
+        self, message_or_code: Any, message: str | None = None, **kwargs: Any
+    ) -> None:
         if message is None:
             # Legacy single-string form: PdfBackendError("boom").
             super().__init__(ErrorCode.INTERNAL_ERROR, str(message_or_code), **kwargs)
@@ -104,8 +113,8 @@ logger = logging.getLogger(__name__)
 class PdfSupervisorClient:
     """Async HTTP v2 client for PDF session ops. Use as an async context manager.
 
-    The lifecycle mirrors :class:`SupervisorClient`: pin loopback, attach the
-    session Bearer token, lazily create one ``httpx.AsyncClient``. Method names
+    The lifecycle mirrors :class:`SupervisorClient`: the Protocol SDK pins
+    loopback, attaches the session Bearer token and owns ``httpx``. Method names
     and return DTOs are identical to the legacy ``PdfBackendClient`` so PySide
     workers can swap transports with no signature change.
     """
@@ -113,40 +122,48 @@ class PdfSupervisorClient:
     def __init__(
         self, *, base_url: str, session_token: str, instance_id: str | None = None
     ) -> None:
-        if not base_url.startswith("http://127.0.0.1"):
-            raise PdfBackendError(
-                ErrorCode.FORBIDDEN_LOOPBACK,
-                "pdf supervisor client refuses non-loopback base url",
+        try:
+            self._transport = AsyncRuntimeTransport(
+                base_url=base_url,
+                session_token=session_token,
+                timeout=_HTTP_TIMEOUT,
+                response_hook=self._log_http_response,
             )
-        self._base_url = base_url.rstrip("/")
-        self._token = session_token
+        except RuntimeClientError as exc:
+            raise PdfBackendError(
+                exc.code,
+                exc.message,
+                retryable=exc.retryable,
+                detail=exc.detail,
+            ) from exc
         self.instance_id = instance_id
-        self._client: httpx.AsyncClient | None = None
+
+    @property
+    def _client(self) -> httpx.AsyncClient | None:
+        """Compatibility seam for existing in-process ASGI tests."""
+        return self._transport.client
+
+    @_client.setter
+    def _client(self, value: httpx.AsyncClient | None) -> None:
+        self._transport.client = value
 
     @property
     def base_url(self) -> str:
-        return self._base_url
+        return self._transport.base_url
 
     async def __aenter__(self) -> PdfSupervisorClient:
-        self._client = httpx.AsyncClient(
-            base_url=self._base_url,
-            headers={"Authorization": f"Bearer {self._token}"},
-            timeout=_HTTP_TIMEOUT,
-            event_hooks={"response": [self._log_http_response]},
-        )
+        await self._transport.open()
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:  # type: ignore[no-untyped-def]
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
+        await self._transport.close()
 
-    def _require_client(self) -> httpx.AsyncClient:
+    def _require_client(self) -> AsyncRuntimeTransport:
         if self._client is None:
             raise RuntimeError(
                 "PdfSupervisorClient must be used as an async context manager"
             )
-        return self._client
+        return self._transport
 
     async def _log_http_response(self, resp: httpx.Response) -> None:
         request = resp.request
@@ -167,9 +184,7 @@ class PdfSupervisorClient:
         except httpx.StreamError:
             response_content = None
         request_bytes = guess_request_size(request_content)
-        response_bytes = guess_response_size(
-            dict(resp.headers), response_content
-        )
+        response_bytes = guess_response_size(dict(resp.headers), response_content)
 
         log_http_response(
             logger=logger,
@@ -211,16 +226,24 @@ class PdfSupervisorClient:
         first ``open_session``. Calling this is harmless.
         """
 
-    async def health(self) -> HealthResponse:
+    async def health(self) -> dict[str, Any]:
         client = self._require_client()
-        resp = await client.get("/v2/pdf/health")
+        resp = await client.get(operation_path("getRuntimeHealth"))
         self._raise_on_error(resp)
-        return HealthResponse.model_validate(resp.json())
+        try:
+            body = RuntimeHealthEnvelope.from_payload(resp.json())
+        except (TypeError, ValueError) as exc:
+            raise PdfBackendError(
+                ErrorCode.ADAPTER_PROTOCOL_VIOLATION,
+                "runtime health response violates Protocol v2",
+                retryable=False,
+            ) from exc
+        return body.to_payload()
 
     async def open_session(self, path: str) -> OpenResponse:
         client = self._require_client()
         resp = await client.post(
-            "/v2/pdf/sessions/open",
+            operation_path("openPdfSession"),
             json=OpenRequest(path=path).model_dump(),
         )
         self._raise_on_error(resp)
@@ -228,12 +251,14 @@ class PdfSupervisorClient:
 
     async def close_session(self, sid: str) -> None:
         client = self._require_client()
-        resp = await client.post(f"/v2/pdf/sessions/{sid}/close")
+        resp = await client.post(bind_operation_path("closePdfSession", session_id=sid))
         self._raise_on_error(resp)
 
     async def get_model(self, sid: str) -> PdfDocumentMirror:
         client = self._require_client()
-        resp = await client.post(f"/v2/pdf/sessions/{sid}/model")
+        resp = await client.post(
+            bind_operation_path("getPdfSessionModel", session_id=sid)
+        )
         self._raise_on_error(resp)
         return PdfDocumentMirror.model_validate(resp.json())
 
@@ -242,7 +267,9 @@ class PdfSupervisorClient:
         client = self._require_client()
         try:
             async with client.stream(
-                "POST", f"/v2/pdf/sessions/{sid}/load", timeout=_HTTP_LONG_TIMEOUT
+                "POST",
+                bind_operation_path("loadPdfSession", session_id=sid),
+                timeout=_HTTP_LONG_TIMEOUT,
             ) as resp:
                 self._raise_on_error(resp)
                 async for line in resp.aiter_lines():
@@ -259,7 +286,7 @@ class PdfSupervisorClient:
     async def render_thumbnail(self, sid: str, page: int, size: int = 160) -> bytes:
         client = self._require_client()
         resp = await client.post(
-            f"/v2/pdf/sessions/{sid}/render_thumbnail",
+            bind_operation_path("renderPdfThumbnail", session_id=sid),
             json=RenderThumbnailRequest(page=page, size=size).model_dump(),
             timeout=_HTTP_TIMEOUT,
         )
@@ -269,19 +296,17 @@ class PdfSupervisorClient:
     async def render_preview(self, sid: str, page: int, dpi: int = 150) -> bytes:
         client = self._require_client()
         resp = await client.post(
-            f"/v2/pdf/sessions/{sid}/render_preview",
+            bind_operation_path("renderPdfPreview", session_id=sid),
             json=RenderPreviewRequest(page=page, dpi=dpi).model_dump(),
             timeout=_HTTP_LONG_TIMEOUT,
         )
         self._raise_on_error(resp)
         return resp.content
 
-    async def detect_text_layers(
-        self, sid: str, page: int
-    ) -> DetectTextLayersResponse:
+    async def detect_text_layers(self, sid: str, page: int) -> DetectTextLayersResponse:
         client = self._require_client()
         resp = await client.post(
-            f"/v2/pdf/sessions/{sid}/detect_text_layers",
+            bind_operation_path("detectPdfTextLayers", session_id=sid),
             json=DetectTextLayersRequest(page=page).model_dump(),
         )
         self._raise_on_error(resp)
@@ -292,13 +317,13 @@ class PdfSupervisorClient:
     async def rotate(self, sid: str, pages: list[int], angle: int) -> MutateResponse:
         return await self._mutate(
             sid,
-            "rotate",
+            "rotatePdfPages",
             RotateRequest(pages=pages, angle=angle).model_dump(),
         )
 
     async def delete_pages(self, sid: str, pages: list[int]) -> MutateResponse:
         return await self._mutate(
-            sid, "delete_pages", DeletePagesRequest(pages=pages).model_dump()
+            sid, "deletePdfPages", DeletePagesRequest(pages=pages).model_dump()
         )
 
     async def insert_blank(
@@ -310,7 +335,7 @@ class PdfSupervisorClient:
     ) -> MutateResponse:
         return await self._mutate(
             sid,
-            "insert_blank",
+            "insertBlankPdfPage",
             InsertBlankRequest(
                 after_index=after_index, width=width, height=height
             ).model_dump(),
@@ -321,7 +346,7 @@ class PdfSupervisorClient:
     ) -> MutateResponse:
         return await self._mutate(
             sid,
-            "insert_from",
+            "insertPdfPagesFromFile",
             InsertFromRequest(
                 source_path=source_path, after_index=after_index
             ).model_dump(),
@@ -332,18 +357,26 @@ class PdfSupervisorClient:
     ) -> MutateResponse:
         return await self._mutate(
             sid,
-            "move_page",
+            "movePdfPage",
             MovePageRequest(from_index=from_index, to_index=to_index).model_dump(),
         )
 
     async def reorder(self, sid: str, new_order: list[int]) -> MutateResponse:
         return await self._mutate(
-            sid, "reorder", ReorderRequest(new_order=new_order).model_dump()
+            sid, "reorderPdfPages", ReorderRequest(new_order=new_order).model_dump()
         )
 
-    async def _mutate(self, sid: str, op: str, body: dict[str, Any]) -> MutateResponse:
+    async def _mutate(
+        self,
+        sid: str,
+        operation_id: str,
+        body: dict[str, Any],
+    ) -> MutateResponse:
         client = self._require_client()
-        resp = await client.post(f"/v2/pdf/sessions/{sid}/{op}", json=body)
+        resp = await client.post(
+            bind_operation_path(operation_id, session_id=sid),
+            json=body,
+        )
         self._raise_on_error(resp)
         return MutateResponse.model_validate(resp.json())
 
@@ -359,7 +392,7 @@ class PdfSupervisorClient:
     ) -> MutateResponse:
         return await self._mutate(
             sid,
-            "add_text_layer",
+            "addPdfTextLayer",
             AddTextLayerRequest(
                 page=page,
                 ocr_result=ocr_result,
@@ -390,7 +423,7 @@ class PdfSupervisorClient:
             save=save,
         ).model_dump()
         resp = await client.post(
-            f"/v2/pdf/sessions/{sid}/add_text_layer_batch",
+            bind_operation_path("addPdfTextLayerBatch", session_id=sid),
             json=body,
             timeout=_HTTP_LONG_TIMEOUT,
         )
@@ -407,7 +440,7 @@ class PdfSupervisorClient:
     ) -> MutateResponse:
         return await self._mutate(
             sid,
-            "rewrite_text_layer",
+            "rewritePdfTextLayer",
             RewriteTextLayerRequest(
                 page=page,
                 text_blocks=text_blocks,
@@ -421,7 +454,7 @@ class PdfSupervisorClient:
     ) -> MutateResponse:
         return await self._mutate(
             sid,
-            "update_block_text",
+            "updatePdfBlockText",
             UpdateBlockTextRequest(
                 page=page, block_index=block_index, new_text=new_text
             ).model_dump(),
@@ -435,7 +468,7 @@ class PdfSupervisorClient:
         try:
             async with client.stream(
                 "POST",
-                f"/v2/pdf/sessions/{sid}/delete_text_layers",
+                bind_operation_path("deletePdfTextLayers", session_id=sid),
                 json=PageListRequest(pages=pages).model_dump(),
                 timeout=_HTTP_LONG_TIMEOUT,
             ) as resp:
@@ -466,7 +499,9 @@ class PdfSupervisorClient:
             rewrite_text_layers=rewrite_text_layers,
         ).model_dump()
         resp = await client.post(
-            f"/v2/pdf/sessions/{sid}/save", json=body, timeout=_HTTP_LONG_TIMEOUT
+            bind_operation_path("savePdfSession", session_id=sid),
+            json=body,
+            timeout=_HTTP_LONG_TIMEOUT,
         )
         self._raise_on_error(resp)
         return SaveResponse.model_validate(resp.json())
@@ -475,12 +510,16 @@ class PdfSupervisorClient:
 
     async def cancel(self, sid: str) -> None:
         client = self._require_client()
-        resp = await client.post(f"/v2/pdf/sessions/{sid}/cancel")
+        resp = await client.post(
+            bind_operation_path("cancelPdfSession", session_id=sid)
+        )
         self._raise_on_error(resp)
 
     async def reset_cancel(self, sid: str) -> None:
         client = self._require_client()
-        resp = await client.post(f"/v2/pdf/sessions/{sid}/reset_cancel")
+        resp = await client.post(
+            bind_operation_path("resetPdfSessionCancellation", session_id=sid)
+        )
         self._raise_on_error(resp)
 
 
@@ -551,9 +590,10 @@ class _BackgroundLoop:
         gen = gen_holder["gen"]
         while True:
             value, done = self.run(
-                _pull(gen), timeout=timeout_per_item or _HTTP_LONG_TIMEOUT.read
+                _pull(gen),
+                timeout=timeout_per_item or _HTTP_LONG_TIMEOUT.read
                 if isinstance(_HTTP_LONG_TIMEOUT.read, (int, float))
-                else None
+                else None,
             )
             if done:
                 return
@@ -635,7 +675,7 @@ class SyncPdfSupervisorClient:
     def start(self) -> None:
         self._ensure_entered()
 
-    def health(self) -> HealthResponse:
+    def health(self) -> dict[str, Any]:
         return _get_bg_loop().run(self._ensure_entered().health())
 
     def open_session(self, path: str) -> OpenResponse:
@@ -663,19 +703,13 @@ class SyncPdfSupervisorClient:
         )
 
     def detect_text_layers(self, sid: str, page: int) -> DetectTextLayersResponse:
-        return _get_bg_loop().run(
-            self._ensure_entered().detect_text_layers(sid, page)
-        )
+        return _get_bg_loop().run(self._ensure_entered().detect_text_layers(sid, page))
 
     def rotate(self, sid: str, pages: list[int], angle: int) -> MutateResponse:
-        return _get_bg_loop().run(
-            self._ensure_entered().rotate(sid, pages, angle)
-        )
+        return _get_bg_loop().run(self._ensure_entered().rotate(sid, pages, angle))
 
     def delete_pages(self, sid: str, pages: list[int]) -> MutateResponse:
-        return _get_bg_loop().run(
-            self._ensure_entered().delete_pages(sid, pages)
-        )
+        return _get_bg_loop().run(self._ensure_entered().delete_pages(sid, pages))
 
     def insert_blank(
         self,
@@ -695,9 +729,7 @@ class SyncPdfSupervisorClient:
             self._ensure_entered().insert_from(sid, source_path, after_index)
         )
 
-    def move_page(
-        self, sid: str, from_index: int, to_index: int
-    ) -> MutateResponse:
+    def move_page(self, sid: str, from_index: int, to_index: int) -> MutateResponse:
         return _get_bg_loop().run(
             self._ensure_entered().move_page(sid, from_index, to_index)
         )

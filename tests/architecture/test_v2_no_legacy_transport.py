@@ -33,10 +33,29 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 # ---------------------------------------------------------------------------
 
 _PY_V2_TREES: tuple[Path, ...] = (
-    _REPO_ROOT / "packages" / "vibeocr-contracts-py" / "src" / "vibeocr" / "protocol" / "v2",
+    _REPO_ROOT
+    / "packages"
+    / "vibeocr-contracts-py"
+    / "src"
+    / "vibeocr"
+    / "protocol"
+    / "v2",
+    _REPO_ROOT
+    / "packages"
+    / "vibeocr-runtime-client-py"
+    / "src"
+    / "vibeocr"
+    / "protocol"
+    / "v2",
     _REPO_ROOT / "packages" / "vibeocr-backend" / "src" / "vibeocr" / "supervisor",
     _REPO_ROOT / "packages" / "vibeocr-client-py" / "src" / "vibeocr" / "supervisor",
-    _REPO_ROOT / "apps" / "vibeocr-pyside" / "src" / "vibeocr" / "pyside" / "supervisor_adapter.py",
+    _REPO_ROOT
+    / "apps"
+    / "vibeocr-pyside"
+    / "src"
+    / "vibeocr"
+    / "pyside"
+    / "supervisor_adapter.py",
 )
 
 _DOTNET_V2_TREES: tuple[Path, ...] = (
@@ -316,7 +335,9 @@ def test_repo_wide_has_no_deleted_legacy_module_imports() -> None:
                 elif isinstance(node, ast.Import):
                     for alias in node.names:
                         for deleted in _DELETED_PY_MODULES:
-                            if alias.name == deleted or alias.name.startswith(deleted + "."):
+                            if alias.name == deleted or alias.name.startswith(
+                                deleted + "."
+                            ):
                                 offenders.append(
                                     f"{py_file.relative_to(_REPO_ROOT)}:{node.lineno} "
                                     f"imports {alias.name!r}"
@@ -347,4 +368,3 @@ def test_repo_wide_has_no_vibeocr_ocr_transport_escape_hatch() -> None:
         "VIBEOCR_OCR_TRANSPORT still appears in source — the unified supervisor "
         "has no transport switch:\n  " + "\n  ".join(offenders)
     )
-

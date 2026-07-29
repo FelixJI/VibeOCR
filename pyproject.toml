@@ -5,7 +5,8 @@ description = "A screenshot OCR application"
 authors = [{name = "Felix Ji"}]
 requires-python = ">=3.13,<3.14"
 dependencies = [
-    "vibeocr-contracts-py==0.6.3",
+    "vibeocr-contracts-py==2.0.0rc1",
+    "vibeocr-runtime-client==2.0.0rc1",
     "vibeocr-client-py==0.6.3",
     "vibeocr-backend==0.6.3",
     "vibeocr-pyside==0.6.3",
@@ -177,6 +178,7 @@ markers = [
 ]
 pythonpath = [
     "packages/vibeocr-contracts-py/src",
+    "packages/vibeocr-runtime-client-py/src",
     "packages/vibeocr-client-py/src",
     "packages/vibeocr-backend/src",
     "apps/vibeocr-pyside/src",
@@ -235,6 +237,7 @@ members = ["packages/*", "apps/*"]
 
 [tool.uv.sources]
 vibeocr-contracts-py = { workspace = true }
+vibeocr-runtime-client = { workspace = true }
 vibeocr-client-py = { workspace = true }
 vibeocr-backend = { workspace = true }
 vibeocr-pyside = { workspace = true }

@@ -1,0 +1,81 @@
+{
+  "bootstrap_ready": {
+    "ready": true,
+    "pid": 4321,
+    "port": 54321,
+    "instance_id": "sup-golden",
+    "protocol_version": 2,
+    "schema_version": 2,
+    "ready_version": 1,
+    "capabilities": [
+      "ocr.recognition.v2",
+      "pdf.edit.v2"
+    ]
+  },
+  "health": {
+    "schema_version": 2,
+    "instance_id": "sup-golden",
+    "protocol_version": 2,
+    "ready": true,
+    "draining": false,
+    "capabilities": [
+      "ocr.recognition.v2",
+      "pdf.edit.v2"
+    ]
+  },
+  "multipart_manifest": {
+    "schema_version": 2,
+    "request_id": "request-golden",
+    "kind": "recognition",
+    "priority": "interactive",
+    "pipeline": {
+      "pipeline_id": "OCR",
+      "options_version": 1,
+      "options": {}
+    },
+    "items": [
+      {
+        "client_item_key": "item-0",
+        "ordinal": 0,
+        "display_name": "page.png",
+        "source": {
+          "type": "upload.v1",
+          "attachment": "attachment-0"
+        }
+      }
+    ],
+    "parameters": {}
+  },
+  "ndjson_progress_lines": [
+    {
+      "phase": "load",
+      "current": 1,
+      "total": 2,
+      "message": "loaded page 1",
+      "page_index": 0,
+      "page_payload": null
+    },
+    {
+      "phase": "load",
+      "current": 2,
+      "total": 2,
+      "message": "loaded page 2",
+      "page_index": 1,
+      "page_payload": null
+    }
+  ],
+  "png": {
+    "media_type": "image/png",
+    "content_base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+  },
+  "unauthorized_error": {
+    "schema_version": 2,
+    "instance_id": "sup-golden",
+    "code": "UNAUTHORIZED",
+    "message": "Missing or invalid session token.",
+    "category": "auth",
+    "retryable": false,
+    "detail": {},
+    "job_id": null
+  }
+}

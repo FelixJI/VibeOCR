@@ -1,46 +1,41 @@
 // HttpClient-based QR client for the v2 supervisor's /v2/qrcode/* endpoints.
-using System.Net.Http.Headers;
 using System.Text.Json;
 using VibeOCR.Contracts.HttpV2;
+using VibeOCR.Runtime.Client;
+using VibeOCR.Runtime.Contracts.Generated;
 
 namespace VibeOCR.Platform.Inference;
 
 /// <summary>Concrete IQrCodeClient over HttpClient (loopback, Bearer token).</summary>
 public sealed class QrCodeHttpClient : IQrCodeClient
 {
-    private readonly HttpClient _http;
+    private readonly RuntimeHttpClient _runtime;
     private readonly JsonSerializerOptions _options;
 
     public QrCodeHttpClient(Uri baseUrl, string sessionToken, HttpMessageHandler? handler = null)
     {
-        if (!IsLoopback(baseUrl))
-        {
-            throw new ArgumentException("QrCodeHttpClient refuses non-loopback base URL.", nameof(baseUrl));
-        }
-
         _options = HttpV2JsonContext.Default.Options;
-        _http = handler is null ? new HttpClient() : new HttpClient(handler);
-        _http.BaseAddress = baseUrl;
-        _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", sessionToken);
+        _runtime = new RuntimeHttpClient(baseUrl, sessionToken, handler);
     }
 
     public async Task<IReadOnlyList<QrCodeDecodedItem>> DecodeAsync(
         string base64Image, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(base64Image);
-        using StringContent content = new(
-            JsonSerializer.Serialize(new { image = base64Image }, _options),
-            System.Text.Encoding.UTF8,
-            "application/json");
-        using HttpResponseMessage response = await _http.PostAsync("/v2/qrcode/decode", content, cancellationToken)
+        using StringContent content = _runtime.CreateJsonContent(
+            new { image = base64Image },
+            _options);
+        using HttpResponseMessage response = await _runtime.PostAsync(
+            RuntimeOperationPaths.DecodeQrCode, content, cancellationToken)
             .ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
             await ThrowTypedAsync(response, cancellationToken).ConfigureAwait(false);
         }
 
-        string body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-        using JsonDocument doc = JsonDocument.Parse(body);
+        using JsonDocument doc = await _runtime
+            .ReadJsonDocumentAsync(response, cancellationToken)
+            .ConfigureAwait(false);
         var items = new List<QrCodeDecodedItem>();
         foreach (JsonElement code in doc.RootElement.GetProperty("codes").EnumerateArray())
         {
@@ -57,19 +52,20 @@ public sealed class QrCodeHttpClient : IQrCodeClient
         string data, string format, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(data);
-        using StringContent content = new(
-            JsonSerializer.Serialize(new { data, format }, _options),
-            System.Text.Encoding.UTF8,
-            "application/json");
-        using HttpResponseMessage response = await _http.PostAsync("/v2/qrcode/generate", content, cancellationToken)
+        using StringContent content = _runtime.CreateJsonContent(
+            new { data, format },
+            _options);
+        using HttpResponseMessage response = await _runtime.PostAsync(
+            RuntimeOperationPaths.GenerateQrCode, content, cancellationToken)
             .ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
             await ThrowTypedAsync(response, cancellationToken).ConfigureAwait(false);
         }
 
-        string body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-        using JsonDocument doc = JsonDocument.Parse(body);
+        using JsonDocument doc = await _runtime
+            .ReadJsonDocumentAsync(response, cancellationToken)
+            .ConfigureAwait(false);
         return new QrCodeGeneratedImage(
             doc.RootElement.GetProperty("image").GetString() ?? string.Empty,
             doc.RootElement.TryGetProperty("media_type", out JsonElement mt) ? (mt.GetString() ?? "image/png") : "image/png");
@@ -77,36 +73,20 @@ public sealed class QrCodeHttpClient : IQrCodeClient
 
     public ValueTask DisposeAsync()
     {
-        _http.Dispose();
-
-        return ValueTask.CompletedTask;
+        return _runtime.DisposeAsync();
     }
 
-    private static async Task ThrowTypedAsync(HttpResponseMessage response, CancellationToken cancellationToken)
+    private async Task ThrowTypedAsync(HttpResponseMessage response, CancellationToken cancellationToken)
     {
         try
         {
-            string body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-            HttpV2ErrorPayload? payload = JsonSerializer.Deserialize<HttpV2ErrorPayload>(body, HttpV2JsonContext.Default.Options);
-            if (payload is not null)
-            {
-                throw new InferenceClientException(payload.Code, payload.Message, payload.Retryable, payload.Detail);
-            }
+            await _runtime.EnsureSuccessAsync(response, cancellationToken)
+                .ConfigureAwait(false);
         }
-        catch (InferenceClientException)
+        catch (RuntimeClientException exc)
         {
-            throw;
+            throw new InferenceClientException(
+                exc.Code, exc.Message, exc.Retryable, exc.Detail);
         }
-        catch
-        {
-            // Fall through.
-        }
-
-        throw new InferenceClientException(
-            HttpV2ErrorCode.InternalError,
-            $"Unexpected HTTP {(int)response.StatusCode} from supervisor QR endpoint.",
-            retryable: true);
     }
-
-    private static bool IsLoopback(Uri uri) => uri.Host is "127.0.0.1" or "localhost" or "::1";
 }

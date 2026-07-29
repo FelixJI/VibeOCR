@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from vibeocr.protocol.v2 import ErrorCode, JobKind, JobPriority, JobState
+from vibeocr.protocol.v2.generated.capabilities import OCR_RECOGNITION_V2
 from vibeocr.supervisor.auth import (
     check_bearer_token,
     check_loopback,
@@ -140,7 +141,7 @@ def test_emit_ready_writes_single_json_line(tmp_path: Path) -> None:
         instance_id="sup-abc",
         protocol_version=2,
         schema_version=2,
-        capabilities=["recognition"],
+        capabilities=[OCR_RECOGNITION_V2],
     )
     emit_ready(env, stream=buf)
     lines = buf.getvalue().splitlines()

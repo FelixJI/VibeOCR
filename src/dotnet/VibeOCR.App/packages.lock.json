@@ -122,14 +122,20 @@
         "resolved": "9.0.0",
         "contentHash": "hyJB4UlpAi19Xr9AXzu2NuagKC4lPfHObNMEAA0HmqFz2rX7wKgzeYzO/jM/eBHDhnUGFFEjk5cOoJaxqg5J4A=="
       },
-      "vibeocr.contracts": {
-        "type": "Project"
-      },
       "vibeocr.platform": {
         "type": "Project",
         "dependencies": {
-          "VibeOCR.Contracts": "[1.0.0, )"
+          "VibeOCR.Runtime.Client": "[2.0.0-rc.1, )"
         }
+      },
+      "vibeocr.runtime.client": {
+        "type": "Project",
+        "dependencies": {
+          "VibeOCR.Runtime.Contracts": "[2.0.0-rc.1, )"
+        }
+      },
+      "VibeOCR.Runtime.Contracts": {
+        "type": "Project"
       },
       "Microsoft.Web.WebView2": {
         "type": "CentralTransitive",

@@ -13,7 +13,7 @@ public sealed class InferenceSupervisorProcessTests
     public void ReadyEnvelopeParsesPortAndInstanceId()
     {
         var env = SupervisorReadyEnvelope.Parse(
-            """{"ready":true,"pid":4321,"port":5432,"instance_id":"sup-abc","protocol_version":2,"schema_version":2,"capabilities":["recognition"]}""");
+            """{"ready":true,"pid":4321,"port":5432,"instance_id":"sup-abc","protocol_version":2,"schema_version":2,"ready_version":1,"capabilities":["ocr.recognition.v2"]}""");
         Assert.Equal(5432, env.Port);
         Assert.Equal("sup-abc", env.InstanceId);
         Assert.Equal(2, env.ProtocolVersion);
@@ -27,16 +27,20 @@ public sealed class InferenceSupervisorProcessTests
         // (we only assert the token is NEVER in the line — the parse does not
         // look for it). What we actually guard: the token lives only in env.
         var env = SupervisorReadyEnvelope.Parse(
-            """{"ready":true,"pid":1,"port":2,"instance_id":"sup","protocol_version":2,"schema_version":2,"capabilities":[]}""");
+            """{"ready":true,"pid":1,"port":2,"instance_id":"sup","protocol_version":2,"schema_version":2,"ready_version":1,"capabilities":[]}""");
         Assert.DoesNotContain("token", "pid/port/instance_id");
         Assert.Equal(2, env.SchemaVersion);
     }
 
     [Theory]
-    [InlineData("""{"ready":false,"pid":1,"port":2,"instance_id":"sup","protocol_version":2,"schema_version":2}""")]
-    [InlineData("""{"ready":true,"pid":1,"port":2,"instance_id":"sup","protocol_version":1,"schema_version":2}""")]
-    [InlineData("""{"ready":true,"pid":1,"port":2,"instance_id":"sup","protocol_version":2,"schema_version":1}""")]
-    [InlineData("""{"ready":true,"pid":0,"port":2,"instance_id":"sup","protocol_version":2,"schema_version":2}""")]
+    [InlineData("""{"ready":false,"pid":1,"port":2,"instance_id":"sup","protocol_version":2,"schema_version":2,"ready_version":1,"capabilities":[]}""")]
+    [InlineData("""{"ready":true,"pid":1,"port":2,"instance_id":"sup","protocol_version":1,"schema_version":2,"ready_version":1,"capabilities":[]}""")]
+    [InlineData("""{"ready":true,"pid":1,"port":2,"instance_id":"sup","protocol_version":2,"schema_version":1,"ready_version":1,"capabilities":[]}""")]
+    [InlineData("""{"ready":true,"pid":1,"port":2,"instance_id":"sup","protocol_version":2,"schema_version":2,"ready_version":2,"capabilities":[]}""")]
+    [InlineData("""{"ready":true,"pid":0,"port":2,"instance_id":"sup","protocol_version":2,"schema_version":2,"ready_version":1,"capabilities":[]}""")]
+    [InlineData("""{"ready":true,"pid":1,"port":2,"instance_id":"sup","protocol_version":2,"schema_version":2,"ready_version":1,"capabilities":["legacy"]}""")]
+    [InlineData("""{"ready":true,"pid":1,"port":2,"instance_id":"sup","protocol_version":2,"schema_version":2,"ready_version":1,"capabilities":null}""")]
+    [InlineData("""{"ready":true,"pid":1,"port":2,"instance_id":"sup","protocol_version":2,"schema_version":2,"ready_version":1}""")]
     public void ReadyEnvelopeRejectsInvalidOrIncompatibleRuntime(string payload)
     {
         Assert.Throws<InvalidDataException>(
@@ -196,7 +200,7 @@ public sealed class InferenceSupervisorProcessTests
             "v1.0",
             "powershell.exe");
         const string envelope =
-            """{"ready":true,"pid":4321,"port":5432,"instance_id":"sup-test","protocol_version":2,"schema_version":2}""";
+            """{"ready":true,"pid":4321,"port":5432,"instance_id":"sup-test","protocol_version":2,"schema_version":2,"ready_version":1,"capabilities":["ocr.recognition.v2"]}""";
         return new InferenceSupervisorProcess(
             new InferenceSupervisorOptions(
                 powershell,

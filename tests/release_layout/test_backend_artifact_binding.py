@@ -15,12 +15,14 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 VERSION = "1.2.3"
+PROTOCOL_VERSION = "2.0.0rc1"
 WHEEL_DISTRIBUTIONS = {
     "vibeocr": "vibeocr",
     "vibeocr-backend": "vibeocr_backend",
     "vibeocr-client-py": "vibeocr_client_py",
     "vibeocr-contracts-py": "vibeocr_contracts_py",
     "vibeocr-pyside": "vibeocr_pyside",
+    "vibeocr-runtime-client": "vibeocr_runtime_client",
 }
 
 
@@ -29,18 +31,15 @@ def _write_wheel(
     distribution: str,
     wheel_stem: str,
     *,
+    version: str = VERSION,
     extra_members: tuple[str, ...] = (),
 ) -> Path:
-    wheel = wheel_dir / f"{wheel_stem}-{VERSION}-py3-none-any.whl"
-    metadata_dir = f"{wheel_stem}-{VERSION}.dist-info"
+    wheel = wheel_dir / f"{wheel_stem}-{version}-py3-none-any.whl"
+    metadata_dir = f"{wheel_stem}-{version}.dist-info"
     with zipfile.ZipFile(wheel, "w") as archive:
         archive.writestr(
             f"{metadata_dir}/METADATA",
-            (
-                "Metadata-Version: 2.4\n"
-                f"Name: {distribution}\n"
-                f"Version: {VERSION}\n\n"
-            ),
+            (f"Metadata-Version: 2.4\nName: {distribution}\nVersion: {version}\n\n"),
         )
         for member in extra_members:
             archive.writestr(member, "fixture")
@@ -56,10 +55,17 @@ def _write_wheel_set(wheel_dir: Path) -> dict[str, Path]:
             members = ("vibeocr/supervisor/main.py",)
         elif distribution == "vibeocr-contracts-py":
             members = ("vibeocr/protocol/v2/golden/golden.json",)
+        elif distribution == "vibeocr-runtime-client":
+            members = ("vibeocr/protocol/v2/client.py",)
         wheels[distribution] = _write_wheel(
             wheel_dir,
             distribution,
             wheel_stem,
+            version=(
+                PROTOCOL_VERSION
+                if distribution in bind_backend_artifact.PROTOCOL_WHEELS
+                else VERSION
+            ),
             extra_members=members,
         )
     return wheels
@@ -104,8 +110,9 @@ def test_binding_writes_protocol_v2_manifest(
             archive.read("VibeOCR/product-manifest.json").decode("utf-8")
         )
     assert manifest["protocol_major"] == 2
+    assert manifest["protocol_version"] == PROTOCOL_VERSION
     assert manifest["frontend"] == "pyside"
-    assert len(manifest["python_wheels"]) == 5
+    assert len(manifest["python_wheels"]) == 6
 
 
 def test_binding_rejects_legacy_runtime_member(tmp_path: Path) -> None:

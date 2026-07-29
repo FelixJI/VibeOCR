@@ -16,6 +16,7 @@ from typing import Any
 
 _REQUIRED_RUNTIME_WHEELS = {
     "vibeocr-contracts-py",
+    "vibeocr-runtime-client",
     "vibeocr-client-py",
     "vibeocr-backend",
 }

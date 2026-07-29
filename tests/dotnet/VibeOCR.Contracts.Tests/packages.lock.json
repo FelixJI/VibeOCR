@@ -163,7 +163,7 @@
           "xunit.v3.runner.common": "[3.2.2]"
         }
       },
-      "vibeocr.contracts": {
+      "VibeOCR.Runtime.Contracts": {
         "type": "Project"
       }
     }

@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "capabilities": [
+    "ocr.recognition.v2",
+    "pdf.edit.v2",
+    "qrcode.v2",
+    "export.document.v1",
+    "runtime.settings.v2"
+  ],
+  "definitions": {
+    "ocr.recognition.v2": {
+      "description": "Submit, observe, cancel, retry, and forget Runtime API v2 OCR jobs."
+    },
+    "pdf.edit.v2": {
+      "description": "Open, render, inspect, mutate, stream, and save PDF sessions."
+    },
+    "qrcode.v2": {
+      "description": "Decode QR/barcode images and generate QR or SVG image envelopes."
+    },
+    "export.document.v1": {
+      "description": "Export OCR content to document formats supported by the Backend."
+    },
+    "runtime.settings.v2": {
+      "description": "Inspect residency, preload/release pipelines, and exchange Runtime settings."
+    }
+  }
+}

@@ -18,6 +18,11 @@
       "target": "src/vibeocr/runtime_contracts/**"
     },
     {
+      "current": "packages/vibeocr-runtime-client-py/src/vibeocr/protocol/v2/**",
+      "owner": "FelixJI/vibeocr-protocol",
+      "target": "src/vibeocr/runtime_client/**"
+    },
+    {
       "current": "packages/vibeocr-contracts-py/src/vibeocr/utils/**",
       "owner": "FelixJI/vibeocr-protocol",
       "target": "src/vibeocr/runtime_client/observability/**"
@@ -76,6 +81,11 @@
       "current": "src/dotnet/VibeOCR.Contracts/**",
       "owner": "FelixJI/vibeocr-protocol",
       "target": "src/VibeOCR.Runtime.Contracts/**"
+    },
+    {
+      "current": "src/dotnet/VibeOCR.Runtime.Client/**",
+      "owner": "FelixJI/vibeocr-protocol",
+      "target": "src/VibeOCR.Runtime.Client/**"
     },
     {
       "current": "src/dotnet/VibeOCR.{App,Platform,Bootstrapper}/**",

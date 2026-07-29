@@ -1,4 +1,4 @@
-"""Bind the exact five-wheel Python release set into a frontend ZIP."""
+"""Bind the exact six-wheel Python release set into a frontend ZIP."""
 
 from __future__ import annotations
 
@@ -18,10 +18,22 @@ EXPECTED_WHEELS = {
     "vibeocr-client-py",
     "vibeocr-contracts-py",
     "vibeocr-pyside",
+    "vibeocr-runtime-client",
+}
+APPLICATION_WHEELS = {
+    "vibeocr",
+    "vibeocr-backend",
+    "vibeocr-client-py",
+    "vibeocr-pyside",
+}
+PROTOCOL_WHEELS = {
+    "vibeocr-contracts-py",
+    "vibeocr-runtime-client",
 }
 REQUIRED_WHEEL_MEMBERS = {
     "vibeocr-backend": "vibeocr/supervisor/main.py",
     "vibeocr-contracts-py": "vibeocr/protocol/v2/golden/golden.json",
+    "vibeocr-runtime-client": "vibeocr/protocol/v2/client.py",
 }
 FORBIDDEN_WHEEL_PREFIXES = (
     "vibeocr/worker_host/",
@@ -44,13 +56,9 @@ def _verify_runtime_layout(wheels: dict[str, Path]) -> None:
         with zipfile.ZipFile(wheels[distribution]) as archive:
             members = set(archive.namelist())
         if required_member not in members:
-            raise RuntimeError(
-                f"{distribution} wheel is missing {required_member}"
-            )
+            raise RuntimeError(f"{distribution} wheel is missing {required_member}")
         legacy = sorted(
-            member
-            for member in members
-            if member.startswith(FORBIDDEN_WHEEL_PREFIXES)
+            member for member in members if member.startswith(FORBIDDEN_WHEEL_PREFIXES)
         )
         if legacy:
             raise RuntimeError(
@@ -82,6 +90,7 @@ def main() -> int:
         raise NotADirectoryError(f"wheel directory not found: {wheel_dir}")
 
     wheels: dict[str, Path] = {}
+    versions: dict[str, str] = {}
     for path in sorted(wheel_dir.glob("*.whl")):
         distribution, version = _distribution_metadata(path)
         if distribution not in EXPECTED_WHEELS:
@@ -91,20 +100,28 @@ def main() -> int:
                 f"duplicate wheel for {distribution}: "
                 f"{wheels[distribution].name}, {path.name}"
             )
-        if version != args.version:
+        if distribution in APPLICATION_WHEELS and version != args.version:
             raise RuntimeError(
                 f"wheel version mismatch for {distribution}: "
                 f"expected {args.version}, found {version} in {path.name}"
             )
         wheels[distribution] = path
+        versions[distribution] = version
     missing = EXPECTED_WHEELS - set(wheels)
     if missing:
         raise RuntimeError(f"release wheel set incomplete: {sorted(missing)}")
+    protocol_versions = {versions[name] for name in PROTOCOL_WHEELS}
+    if len(protocol_versions) != 1:
+        raise RuntimeError(
+            f"Protocol wheel versions differ: {sorted(protocol_versions)}"
+        )
+    protocol_version = protocol_versions.pop()
     _verify_runtime_layout(wheels)
     wheel_records = [
         {
             "distribution": name,
             "file": wheels[name].name,
+            "version": versions[name],
             "sha256": hashlib.sha256(wheels[name].read_bytes()).hexdigest(),
         }
         for name in sorted(EXPECTED_WHEELS)
@@ -135,6 +152,7 @@ def main() -> int:
             "backend_sha256": backend_record["sha256"],
             "python_wheels": wheel_records,
             "protocol_major": 2,
+            "protocol_version": protocol_version,
             "source_commit": commit,
         }
         (root / "product-manifest.json").write_text(
@@ -145,11 +163,11 @@ def main() -> int:
         with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
             for path in sorted(root.rglob("*")):
                 if path.is_file():
-                    archive.write(path, f"{root.name}/{path.relative_to(root).as_posix()}")
+                    archive.write(
+                        path, f"{root.name}/{path.relative_to(root).as_posix()}"
+                    )
     digest = hashlib.sha256(output.read_bytes()).hexdigest()
-    Path(f"{output}.sha256").write_text(
-        f"{digest}  {output.name}\n", encoding="utf-8"
-    )
+    Path(f"{output}.sha256").write_text(f"{digest}  {output.name}\n", encoding="utf-8")
     return 0
 
 
