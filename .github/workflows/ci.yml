@@ -28,7 +28,7 @@ jobs:
         run: ./scripts/run_table_contract_gate.ps1 -PythonPath python -ReportDir reports/table-contract
       - name: Upload table contract diagnostics
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: table-contract-diagnostics
           path: |
@@ -56,7 +56,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Upload table regression diagnostics
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: table-regression-diagnostics
           path: reports/table-regression
