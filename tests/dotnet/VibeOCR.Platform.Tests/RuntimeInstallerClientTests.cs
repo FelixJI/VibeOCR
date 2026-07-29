@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Text;
 using VibeOCR.Platform.Bootstrap;
 using Xunit;
 
@@ -153,24 +155,24 @@ public sealed class RuntimeInstallerClientTests
                 root,
                 "vibeocr-runtime-installer.exe");
             string manifest = Path.Combine(root, "runtime-manifest.json");
+            string componentLock = Path.Combine(root, "component-lock.json");
             await File.WriteAllBytesAsync(
                 executable,
                 [1, 2, 3],
                 TestContext.Current.CancellationToken);
-            await File.WriteAllTextAsync(
-                manifest,
+            byte[] manifestBytes = Encoding.UTF8.GetBytes(
                 "{\"installer\":{\"executable_sha256\":\"" +
-                    new string('0', 64) +
-                    "\"}}",
+                new string('0', 64) +
+                "\"}}");
+            await File.WriteAllBytesAsync(
+                manifest,
+                manifestBytes,
                 TestContext.Current.CancellationToken);
-            var startInfo = new ProcessStartInfo(executable)
-            {
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-            };
-            startInfo.ArgumentList.Add("--runtime-manifest");
-            startInfo.ArgumentList.Add(manifest);
+            await WriteComponentLockAsync(componentLock, manifestBytes);
+            ProcessStartInfo startInfo = BoundStartInfo(
+                executable,
+                componentLock,
+                manifest);
 
             var runner = new RuntimeInstallerCommandRunner();
             RuntimeInstallerException error =
@@ -180,6 +182,108 @@ public sealed class RuntimeInstallerClientTests
                         TestContext.Current.CancellationToken));
 
             Assert.Contains("SHA-256 mismatch", error.Message);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task CommandRunnerRejectsTamperedRuntimeManifestBeforeReadingInstallerHash()
+    {
+        string root = Path.Combine(
+            Path.GetTempPath(),
+            $"vibeocr-manifest-test-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        try
+        {
+            string executable = Path.Combine(
+                root,
+                "vibeocr-runtime-installer.exe");
+            string manifest = Path.Combine(root, "runtime-manifest.json");
+            string componentLock = Path.Combine(root, "component-lock.json");
+            byte[] executableBytes = [1, 2, 3];
+            await File.WriteAllBytesAsync(
+                executable,
+                executableBytes,
+                TestContext.Current.CancellationToken);
+            byte[] committedManifestBytes = Encoding.UTF8.GetBytes(
+                "{\"installer\":{\"executable_sha256\":\"" +
+                Sha256(executableBytes) +
+                "\"}}");
+            await WriteComponentLockAsync(
+                componentLock,
+                committedManifestBytes);
+            byte[] tamperedManifestBytes =
+            [
+                .. committedManifestBytes,
+                (byte)' ',
+            ];
+            await File.WriteAllBytesAsync(
+                manifest,
+                tamperedManifestBytes,
+                TestContext.Current.CancellationToken);
+            ProcessStartInfo startInfo = BoundStartInfo(
+                executable,
+                componentLock,
+                manifest);
+
+            var runner = new RuntimeInstallerCommandRunner();
+            RuntimeInstallerException error =
+                await Assert.ThrowsAsync<RuntimeInstallerException>(
+                    () => runner.RunAsync(
+                        startInfo,
+                        TestContext.Current.CancellationToken));
+
+            Assert.Contains("Runtime manifest SHA-256 mismatch", error.Message);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task CommandRunnerRejectsRenamedInstallerInsteadOfSkippingVerification()
+    {
+        string root = Path.Combine(
+            Path.GetTempPath(),
+            $"vibeocr-renamed-installer-test-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        try
+        {
+            string executable = Path.Combine(root, "renamed-installer.exe");
+            string manifest = Path.Combine(root, "runtime-manifest.json");
+            string componentLock = Path.Combine(root, "component-lock.json");
+            await File.WriteAllBytesAsync(
+                executable,
+                [1, 2, 3],
+                TestContext.Current.CancellationToken);
+            byte[] manifestBytes = Encoding.UTF8.GetBytes(
+                "{\"installer\":{\"executable_sha256\":\"" +
+                new string('0', 64) +
+                "\"}}");
+            await File.WriteAllBytesAsync(
+                manifest,
+                manifestBytes,
+                TestContext.Current.CancellationToken);
+            await WriteComponentLockAsync(componentLock, manifestBytes);
+            ProcessStartInfo startInfo = BoundStartInfo(
+                executable,
+                componentLock,
+                manifest);
+
+            var runner = new RuntimeInstallerCommandRunner();
+            RuntimeInstallerException error =
+                await Assert.ThrowsAsync<RuntimeInstallerException>(
+                    () => runner.RunAsync(
+                        startInfo,
+                        TestContext.Current.CancellationToken));
+
+            Assert.Contains(
+                "Runtime Installer executable SHA-256 mismatch",
+                error.Message);
         }
         finally
         {
@@ -242,6 +346,39 @@ public sealed class RuntimeInstallerClientTests
         Assert.True(index >= 0);
         Assert.Equal(expected, arguments[index + 1]);
     }
+
+    private static ProcessStartInfo BoundStartInfo(
+        string executable,
+        string componentLock,
+        string manifest)
+    {
+        var startInfo = new ProcessStartInfo(executable)
+        {
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        startInfo.ArgumentList.Add("--component-lock");
+        startInfo.ArgumentList.Add(componentLock);
+        startInfo.ArgumentList.Add("--runtime-manifest");
+        startInfo.ArgumentList.Add(manifest);
+        return startInfo;
+    }
+
+    private static async Task WriteComponentLockAsync(
+        string componentLock,
+        byte[] manifestBytes)
+    {
+        await File.WriteAllTextAsync(
+            componentLock,
+            "{\"backend\":{\"runtime_manifest_sha256\":\"" +
+            Sha256(manifestBytes) +
+            "\"}}",
+            TestContext.Current.CancellationToken);
+    }
+
+    private static string Sha256(byte[] value) =>
+        Convert.ToHexStringLower(SHA256.HashData(value));
 
     private sealed class StubRunner(RuntimeInstallerProcessResult result)
         : IRuntimeInstallerCommandRunner

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import sys
 import tempfile
@@ -12,14 +13,13 @@ from unittest.mock import MagicMock
 from fastapi.routing import APIRoute
 
 ROOT = Path(__file__).resolve().parents[1]
-V2 = ROOT / "packages/vibeocr-contracts-py/src/vibeocr/runtime_contracts"
 
-for source in (
-    ROOT / "packages/vibeocr-contracts-py/src",
-    ROOT / "packages/vibeocr-runtime-client-py/src",
-    ROOT / "packages/vibeocr-backend/src",
-):
-    sys.path.insert(0, str(source))
+backend_source = ROOT / "packages/vibeocr-backend/src"
+if backend_source.is_dir():
+    sys.path.insert(0, str(backend_source))
+
+runtime_contracts = importlib.import_module("vibeocr.runtime_contracts")
+V2 = Path(runtime_contracts.__file__).resolve().parent
 
 from vibeocr.backend.supervisor.app import create_app  # noqa: E402
 from vibeocr.backend.supervisor.module import (  # noqa: E402

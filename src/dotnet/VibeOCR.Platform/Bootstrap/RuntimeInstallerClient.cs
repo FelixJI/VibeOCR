@@ -304,34 +304,44 @@ public sealed class RuntimeInstallerCommandRunner : IRuntimeInstallerCommandRunn
 
     private static void VerifyBoundExecutable(ProcessStartInfo startInfo)
     {
-        if (!Path.GetFileName(startInfo.FileName).Equals(
-            "vibeocr-runtime-installer.exe",
-            StringComparison.OrdinalIgnoreCase))
-        {
-            return;
-        }
-        string? manifestPath = null;
-        for (int index = 0; index + 1 < startInfo.ArgumentList.Count; index++)
-        {
-            if (startInfo.ArgumentList[index] == "--runtime-manifest")
-            {
-                manifestPath = startInfo.ArgumentList[index + 1];
-                break;
-            }
-        }
         try
         {
-            using JsonDocument document = JsonDocument.Parse(
-                File.ReadAllText(manifestPath ??
-                    throw new InvalidDataException("Runtime manifest argument is missing.")));
-            string expected = document.RootElement
+            string componentLockPath = RequireOption(
+                startInfo,
+                "--component-lock");
+            string runtimeManifestPath = RequireOption(
+                startInfo,
+                "--runtime-manifest");
+
+            byte[] componentLockBytes = File.ReadAllBytes(componentLockPath);
+            byte[] runtimeManifestBytes = File.ReadAllBytes(runtimeManifestPath);
+            using JsonDocument componentLock = JsonDocument.Parse(componentLockBytes);
+            byte[] expectedManifestSha256 = ParseSha256(
+                componentLock.RootElement
+                    .GetProperty("backend")
+                    .GetProperty("runtime_manifest_sha256"),
+                "backend.runtime_manifest_sha256");
+            byte[] actualManifestSha256 = SHA256.HashData(runtimeManifestBytes);
+            if (!CryptographicOperations.FixedTimeEquals(
+                actualManifestSha256,
+                expectedManifestSha256))
+            {
+                throw new RuntimeInstallerException(
+                    "Runtime manifest SHA-256 mismatch.");
+            }
+
+            using JsonDocument runtimeManifest = JsonDocument.Parse(
+                runtimeManifestBytes);
+            byte[] expectedExecutableSha256 = ParseSha256(
+                runtimeManifest.RootElement
                 .GetProperty("installer")
-                .GetProperty("executable_sha256")
-                .GetString() ??
-                throw new InvalidDataException("Installer SHA-256 is missing.");
+                .GetProperty("executable_sha256"),
+                "installer.executable_sha256");
             using FileStream stream = File.OpenRead(startInfo.FileName);
-            string actual = Convert.ToHexStringLower(SHA256.HashData(stream));
-            if (!actual.Equals(expected, StringComparison.Ordinal))
+            byte[] actualExecutableSha256 = SHA256.HashData(stream);
+            if (!CryptographicOperations.FixedTimeEquals(
+                actualExecutableSha256,
+                expectedExecutableSha256))
             {
                 throw new RuntimeInstallerException(
                     "Runtime Installer executable SHA-256 mismatch.");
@@ -346,10 +356,61 @@ public sealed class RuntimeInstallerCommandRunner : IRuntimeInstallerCommandRunn
             UnauthorizedAccessException or
             JsonException or
             InvalidDataException or
-            KeyNotFoundException)
+            KeyNotFoundException or
+            InvalidOperationException or
+            ArgumentException)
         {
             throw new RuntimeInstallerException(
-                $"Could not verify Runtime Installer executable: {error.Message}");
+                $"Could not verify Runtime Installer trust chain: {error.Message}");
         }
+    }
+
+    private static string RequireOption(
+        ProcessStartInfo startInfo,
+        string option)
+    {
+        string? value = null;
+        for (int index = 0; index < startInfo.ArgumentList.Count; index++)
+        {
+            if (!startInfo.ArgumentList[index].Equals(
+                option,
+                StringComparison.Ordinal))
+            {
+                continue;
+            }
+            if (value is not null)
+            {
+                throw new InvalidDataException(
+                    $"{option} argument is duplicated.");
+            }
+            if (index + 1 >= startInfo.ArgumentList.Count)
+            {
+                throw new InvalidDataException(
+                    $"{option} argument has no value.");
+            }
+            value = startInfo.ArgumentList[index + 1];
+        }
+        return value ??
+            throw new InvalidDataException($"{option} argument is missing.");
+    }
+
+    private static byte[] ParseSha256(JsonElement value, string field)
+    {
+        string? digest = value.GetString();
+        if (digest is null || digest.Length != 64)
+        {
+            throw new InvalidDataException(
+                $"{field} must be a lowercase SHA-256 digest.");
+        }
+        foreach (char character in digest)
+        {
+            if (character is not (>= '0' and <= '9') and
+                not (>= 'a' and <= 'f'))
+            {
+                throw new InvalidDataException(
+                    $"{field} must be a lowercase SHA-256 digest.");
+            }
+        }
+        return Convert.FromHexString(digest);
     }
 }

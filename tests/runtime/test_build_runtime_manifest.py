@@ -95,6 +95,13 @@ def test_build_is_byte_deterministic_and_self_verifying(tmp_path: Path) -> None:
     ).read_bytes()
     manifest = load_runtime_manifest(first)
     assert manifest.protocol_wheel.startswith("vibeocr_runtime_contracts-2.0.0-")
+    assert set(manifest.capabilities) == {
+        "export.document.v1",
+        "ocr.recognition.v2",
+        "pdf.edit.v2",
+        "qrcode.v2",
+        "runtime.settings.v2",
+    }
 
     checksums = {}
     for line in (first.parent / "SHA256SUMS").read_text().splitlines():

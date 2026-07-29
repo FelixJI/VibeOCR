@@ -14,6 +14,21 @@ _SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
 _FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
 
 
+def _expected_artifact_names(protocol_version: str) -> frozenset[str]:
+    return frozenset(
+        {
+            f"vibeocr-runtime-openapi-{protocol_version}.yaml",
+            f"vibeocr-runtime-schemas-{protocol_version}.zip",
+            f"vibeocr_runtime_contracts-{protocol_version}-py3-none-any.whl",
+            f"vibeocr_runtime_client-{protocol_version}-py3-none-any.whl",
+            f"VibeOCR.Runtime.Contracts.{protocol_version}.nupkg",
+            f"VibeOCR.Runtime.Client.{protocol_version}.nupkg",
+            f"vibeocr-runtime-golden-{protocol_version}.zip",
+            "SBOM.spdx.json",
+        }
+    )
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -65,6 +80,20 @@ def build_protocol_release_manifest(
         raise ValueError("Protocol artifact filenames must be unique")
     if "release-manifest.json" in names or "SHA256SUMS" in names:
         raise ValueError("generated metadata cannot be supplied as an artifact")
+    expected_names = _expected_artifact_names(protocol_version)
+    actual_names = set(names)
+    if actual_names != expected_names:
+        details: list[str] = []
+        missing = sorted(expected_names - actual_names)
+        unexpected = sorted(actual_names - expected_names)
+        if missing:
+            details.append(f"missing: {', '.join(missing)}")
+        if unexpected:
+            details.append(f"unexpected: {', '.join(unexpected)}")
+        raise ValueError(
+            "Protocol artifact set does not match the required release assets; "
+            + "; ".join(details)
+        )
 
     output_dir.mkdir(parents=True, exist_ok=True)
     copied: list[Path] = []

@@ -34,6 +34,13 @@ from vibeocr.backend.runtime_manifest import (  # noqa: E402
 
 _STABLE_SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
 _FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
+DEFAULT_CAPABILITIES = (
+    "export.document.v1",
+    "ocr.recognition.v2",
+    "pdf.edit.v2",
+    "qrcode.v2",
+    "runtime.settings.v2",
+)
 
 
 def _git_sha() -> str:
@@ -87,7 +94,7 @@ def build_runtime_manifest(
     source_commit: str,
     build_workflow: str,
     output_dir: Path,
-    capabilities: tuple[str, ...] = ("ocr.recognition.v2",),
+    capabilities: tuple[str, ...] = DEFAULT_CAPABILITIES,
 ) -> Path:
     if not _STABLE_SEMVER.fullmatch(backend_version):
         raise ValueError("backend_version must be stable SemVer")
@@ -240,7 +247,7 @@ def main(argv: list[str] | None = None) -> int:
         source_commit=source_commit,
         build_workflow=args.build_workflow,
         output_dir=args.output_dir,
-        capabilities=tuple(args.capabilities or ("ocr.recognition.v2",)),
+        capabilities=tuple(args.capabilities or DEFAULT_CAPABILITIES),
     )
     print(path)
     return 0
