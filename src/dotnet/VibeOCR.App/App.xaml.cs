@@ -267,7 +267,14 @@ public sealed partial class App : Application
             hotkey);
         _updateViewModel = new UpdateViewModel(
             new GitHubUpdateSource(
-                typeof(App).Assembly.GetName().Version?.ToString(3) ?? "0.0.0",
+                typeof(App).Assembly
+                    .GetCustomAttributes(
+                        typeof(System.Reflection.AssemblyInformationalVersionAttribute),
+                        inherit: false)
+                    .OfType<System.Reflection.AssemblyInformationalVersionAttribute>()
+                    .FirstOrDefault()?.InformationalVersion.Split('+', 2)[0]
+                    ?? typeof(App).Assembly.GetName().Version?.ToString(3)
+                    ?? "0.0.0",
                 layout.InstallRoot,
                 Path.Combine(layout.DataRoot, "cache", "update")),
             () => _window!.Close());

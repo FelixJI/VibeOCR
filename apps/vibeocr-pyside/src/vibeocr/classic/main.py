@@ -66,11 +66,6 @@ from vibeocr.classic.runtime_installation import (  # noqa: E402
     RuntimeInstallerClientError,
 )
 
-# 确保src目录在路径中
-src_path = Path(__file__).parent.parent
-if str(src_path) not in sys.path:
-    sys.path.insert(0, str(src_path))
-
 # ============================================================
 # 启动里程碑记录：T0（进程入口）和 T1（运行时就绪）
 # ============================================================

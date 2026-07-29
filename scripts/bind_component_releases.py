@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import zipfile
 from pathlib import Path
 
 
@@ -106,6 +107,76 @@ def bind_product_releases(
     backend_wheel = backend_root / backend_wheel_name
     if runtime_manifest.get("backend_sha256") != _sha256(backend_wheel):
         raise ValueError("Backend wheel hash mismatch")
+    protocol_copy_name = runtime_manifest.get("protocol_manifest")
+    protocol_wheel_name = runtime_manifest.get("protocol_wheel")
+    if not isinstance(protocol_copy_name, str) or not isinstance(
+        protocol_wheel_name,
+        str,
+    ):
+        raise ValueError("Backend Protocol binding is incomplete")
+    protocol_copy = backend_root / protocol_copy_name
+    protocol_wheel = backend_root / protocol_wheel_name
+    if protocol_copy.read_bytes() != protocol_manifest_path.read_bytes():
+        raise ValueError("Backend Protocol manifest copy differs from Protocol release")
+    source_protocol_wheel = protocol_release_dir.resolve(strict=True) / protocol_wheel_name
+    if protocol_wheel.read_bytes() != source_protocol_wheel.read_bytes():
+        raise ValueError("Backend Protocol wheel differs from Protocol release")
+    if runtime_manifest.get("protocol_manifest_sha256") != _sha256(protocol_copy):
+        raise ValueError("Backend Protocol manifest hash mismatch")
+    if runtime_manifest.get("protocol_sha256") != _sha256(protocol_wheel):
+        raise ValueError("Backend Protocol wheel hash mismatch")
+    python = runtime_manifest.get("python")
+    installer = runtime_manifest.get("installer")
+    profiles = runtime_manifest.get("profiles")
+    if not isinstance(python, dict) or not isinstance(installer, dict):
+        raise ValueError("Backend runtime closure is incomplete")
+    for label, record, name_key in (
+        ("Python archive", python, "archive"),
+        ("installer archive", installer, "archive"),
+    ):
+        name = record.get(name_key)
+        if not isinstance(name, str):
+            raise ValueError(f"{label} name is missing")
+        path = backend_root / name
+        if record.get("sha256") != _sha256(path):
+            raise ValueError(f"{label} hash mismatch")
+    if not isinstance(profiles, dict) or profile not in profiles:
+        raise ValueError(f"Backend profile is missing: {profile}")
+    for profile_name, record in profiles.items():
+        if not isinstance(profile_name, str) or not isinstance(record, dict):
+            raise ValueError("invalid Backend profile record")
+        lock_name = record.get("lock")
+        if not isinstance(lock_name, str):
+            raise ValueError(f"Backend profile lock is missing: {profile_name}")
+        if record.get("sha256") != _sha256(backend_root / lock_name):
+            raise ValueError(f"Backend profile hash mismatch: {profile_name}")
+    installer_archive = backend_root / str(installer["archive"])
+    executable_path = installer.get("executable_path")
+    executable_sha256 = installer.get("executable_sha256")
+    if not isinstance(executable_path, str) or not isinstance(
+        executable_sha256,
+        str,
+    ):
+        raise ValueError("installer executable binding is incomplete")
+    with zipfile.ZipFile(installer_archive) as archive:
+        executable = archive.read(executable_path)
+    if hashlib.sha256(executable).hexdigest() != executable_sha256:
+        raise ValueError("installer executable hash mismatch")
+    checksums = backend_root / "SHA256SUMS"
+    checksum_records = {}
+    for line in checksums.read_text(encoding="utf-8").splitlines():
+        digest, name = line.split("  ", 1)
+        checksum_records[name] = digest
+    expected_checksum_files = {
+        path.name
+        for path in backend_root.iterdir()
+        if path.is_file() and path.name != checksums.name
+    }
+    if set(checksum_records) != expected_checksum_files:
+        raise ValueError("Backend SHA256SUMS file set mismatch")
+    for name, digest in checksum_records.items():
+        if _sha256(backend_root / name) != digest:
+            raise ValueError(f"Backend SHA256SUMS mismatch: {name}")
     capabilities = runtime_manifest.get("capabilities")
     if not isinstance(capabilities, list) or not all(
         isinstance(item, str) for item in capabilities
@@ -114,9 +185,6 @@ def bind_product_releases(
     missing = sorted(set(required_capabilities) - set(capabilities))
     if missing:
         raise ValueError(f"Backend is missing required capabilities: {missing}")
-    profiles = runtime_manifest.get("profiles")
-    if not isinstance(profiles, dict) or profile not in profiles:
-        raise ValueError(f"Backend profile is missing: {profile}")
     return _write_json(
         output,
         {

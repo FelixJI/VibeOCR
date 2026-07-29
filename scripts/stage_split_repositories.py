@@ -74,7 +74,6 @@ SPECS = {
             "scripts/build_runtime_manifest.py",
             "scripts/runtime_installer_entry.py",
             "scripts/bind_component_releases.py",
-            "scripts/verify_table_artifact.py",
             "scripts/build_spdx_sbom.py",
             "scripts/build_release_checksums.py",
             "tests/fixtures",
@@ -110,6 +109,12 @@ SPECS = {
             "scripts/build_spdx_sbom.py",
             "scripts/build_release_checksums.py",
             "scripts/bind_component_releases.py",
+            "scripts/package_product_release.py",
+            "scripts/classic_release_entry.py",
+            "tests/runtime/test_bind_component_releases.py",
+            "tests/runtime/test_package_product_release.py",
+            "tests/runtime/test_build_spdx_sbom.py",
+            "tests/runtime/test_build_release_checksums.py",
         ),
     ),
     "next": RepositorySpec(
@@ -125,6 +130,13 @@ SPECS = {
             "scripts/build_winui_release.ps1",
             "scripts/verify_winui_artifact.ps1",
             "scripts/benchmark_winui_startup.ps1",
+            "scripts/package_product_release.py",
+            "tests/runtime/test_bind_component_releases.py",
+            "tests/runtime/test_package_product_release.py",
+            "tests/runtime/test_build_spdx_sbom.py",
+            "tests/runtime/test_build_release_checksums.py",
+            "tests/web",
+            "CHANGELOG.md",
             "global.json",
             "NuGet.Config",
             "Directory.Build.props",
@@ -229,17 +241,20 @@ def _write_common(
             sort_keys=True,
         ),
     )
-    if spec.python_paths:
+    if name != "next":
         pythonpath = ", ".join(f'"{item}"' for item in spec.python_paths)
+        pythonpath_line = f"pythonpath = [{pythonpath}]\n" if spec.python_paths else ""
         _write_text(
             destination / "pyproject.toml",
             "[tool.pytest.ini_options]\n"
-            f"pythonpath = [{pythonpath}]\n"
+            f"{pythonpath_line}"
             'testpaths = ["tests"]\n'
             'addopts = "-m \'not slow\'"\n\n'
             "[tool.ruff]\n"
             'target-version = "py313"\n'
-            'line-length = 88\n',
+            'line-length = 88\n\n'
+            "[tool.ruff.lint]\n"
+            'select = ["E4", "E7", "E9", "F"]\n',
         )
     _write_text(
         destination / ".github/workflows/ci.yml",
@@ -274,6 +289,69 @@ def _write_common(
                 sort_keys=True,
             ),
         )
+
+
+def _transform_next(destination: Path) -> None:
+    app = destination / "src/dotnet/VibeOCR.App/VibeOCR.App.csproj"
+    app_text = app.read_text(encoding="utf-8").replace(
+        '<ProjectReference Include="../VibeOCR.Contracts/VibeOCR.Contracts.csproj" />',
+        '<PackageReference Include="VibeOCR.Runtime.Contracts" />',
+    )
+    _write_text(app, app_text)
+    platform = destination / "src/dotnet/VibeOCR.Platform/VibeOCR.Platform.csproj"
+    platform_text = platform.read_text(encoding="utf-8").replace(
+        '<ProjectReference Include="../VibeOCR.Runtime.Client/'
+        'VibeOCR.Runtime.Client.csproj" />',
+        '<PackageReference Include="VibeOCR.Runtime.Contracts" />\n'
+        '    <PackageReference Include="VibeOCR.Runtime.Client" />',
+    )
+    _write_text(platform, platform_text)
+    versions = destination / "Directory.Packages.props"
+    versions_text = versions.read_text(encoding="utf-8").replace(
+        "  </ItemGroup>",
+        '    <PackageVersion Include="VibeOCR.Runtime.Contracts" '
+        'Version="[2.0.0]" />\n'
+        '    <PackageVersion Include="VibeOCR.Runtime.Client" '
+        'Version="[2.0.0]" />\n'
+        "  </ItemGroup>",
+        1,
+    )
+    _write_text(versions, versions_text)
+    _write_text(
+        destination / "NuGet.Config",
+        """<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+  <packageSources>
+    <clear />
+    <add key="vibeocr-protocol-release" value=".release-input/protocol" />
+    <add key="nuget.org" value="https://api.nuget.org/v3/index.json"
+         protocolVersion="3" />
+  </packageSources>
+  <packageSourceMapping>
+    <packageSource key="vibeocr-protocol-release">
+      <package pattern="VibeOCR.Runtime.*" />
+    </packageSource>
+    <packageSource key="nuget.org">
+      <package pattern="*" />
+    </packageSource>
+  </packageSourceMapping>
+</configuration>
+""",
+    )
+
+
+def _transform_backend(destination: Path) -> None:
+    forbidden_test_tokens = (
+        "vibeocr.classic",
+        "vibeocr.runtime_client",
+        "packages/vibeocr-contracts-py",
+        "apps/vibeocr-pyside",
+    )
+    tests_root = destination / "tests"
+    for test in tests_root.rglob("*.py"):
+        content = test.read_text(encoding="utf-8")
+        if any(token in content for token in forbidden_test_tokens):
+            test.unlink()
 
 
 def _ci_workflow(name: str) -> str:
@@ -341,10 +419,39 @@ def _ci_workflow(name: str) -> str:
         )
     else:
         commands = (
-            "dotnet test tests/dotnet/VibeOCR.Platform.Tests/"
-            "VibeOCR.Platform.Tests.csproj -c Release\n"
+            "gh release download v2.0.0 --repo FelixJI/vibeocr-protocol "
+            "--dir .release-input/protocol\n"
+            "          gh release download v0.7.0 "
+            "--repo FelixJI/vibeocr-backend "
+            "--dir .release-input/backend\n"
+            "          python scripts/bind_component_releases.py "
+            "product-lock "
+            "--protocol-release-dir .release-input/protocol "
+            "--backend-release-dir .release-input/backend "
+            "--protocol-repository FelixJI/vibeocr-protocol "
+            "--protocol-version 2.0.0 "
+            "--backend-repository FelixJI/vibeocr-backend "
+            "--backend-version 0.7.0 --profile win-x64-cpu "
+            "--required-capability ocr.recognition.v2 "
+            "--required-capability pdf.edit.v2 "
+            "--required-capability qrcode.v2 "
+            "--required-capability export.document.v1 "
+            "--required-capability runtime.settings.v2 "
+            "--output .release-input/component-lock.json\n"
+            "          if ((Get-FileHash .release-input/component-lock.json "
+            "-Algorithm SHA256).Hash -ne "
+            "(Get-FileHash component-lock.json -Algorithm SHA256).Hash) "
+            "{ throw 'component lock mismatch' }\n"
+            "          dotnet restore "
+            "tests/dotnet/VibeOCR.Platform.Tests/"
+            "VibeOCR.Platform.Tests.csproj --locked-mode\n"
+            "          dotnet restore "
+            "tests/dotnet/VibeOCR.App.Tests/"
+            "VibeOCR.App.Tests.csproj --locked-mode\n"
+            "          dotnet test tests/dotnet/VibeOCR.Platform.Tests/"
+            "VibeOCR.Platform.Tests.csproj -c Release --no-restore\n"
             "          dotnet test tests/dotnet/VibeOCR.App.Tests/"
-            "VibeOCR.App.Tests.csproj -c Release"
+            "VibeOCR.App.Tests.csproj -c Release --no-restore"
         )
     return (
         "name: CI\n\n"
@@ -420,7 +527,8 @@ def _release_workflow(name: str, version: str) -> str:
         "        env:\n"
         "          GH_TOKEN: ${{ github.token }}\n"
         "        run: gh release create ${{ github.ref_name }} artifacts/* "
-        "--verify-tag --generate-notes\n"
+        "--verify-tag --generate-notes"
+        f"{' --prerelease' if name == 'next' else ''}\n"
     )
 
 
@@ -554,6 +662,153 @@ if ($LASTEXITCODE -ne 0) { throw 'SBOM build failed' }
 python (Join-Path $root 'scripts/build_release_checksums.py') $artifacts
 if ($LASTEXITCODE -ne 0) { throw 'checksum build failed' }
 """
+    if name == "classic":
+        return """[CmdletBinding()]
+param()
+$ErrorActionPreference = 'Stop'
+$root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$artifacts = Join-Path $root 'artifacts'
+$build = Join-Path $root '.release-build'
+$inputs = Join-Path $root '.release-input'
+foreach ($path in @($artifacts, $build, $inputs)) {
+    if (Test-Path -LiteralPath $path) {
+        Remove-Item -LiteralPath $path -Recurse -Force
+    }
+    New-Item -ItemType Directory -Path $path -Force | Out-Null
+}
+$protocol = Join-Path $inputs 'protocol'
+$backend = Join-Path $inputs 'backend'
+New-Item -ItemType Directory -Path $protocol, $backend -Force | Out-Null
+gh release download v2.0.0 --repo FelixJI/vibeocr-protocol --dir $protocol
+if ($LASTEXITCODE -ne 0) { throw 'Protocol release download failed' }
+gh release download v0.7.0 --repo FelixJI/vibeocr-backend --dir $backend
+if ($LASTEXITCODE -ne 0) { throw 'Backend release download failed' }
+foreach ($item in @(
+    @{ path = $protocol; repo = 'FelixJI/vibeocr-protocol' },
+    @{ path = $backend; repo = 'FelixJI/vibeocr-backend' }
+)) {
+    Get-ChildItem -LiteralPath $item.path -File |
+      Where-Object Name -ne 'SHA256SUMS' |
+      ForEach-Object {
+        gh attestation verify $_.FullName --repo $item.repo
+        if ($LASTEXITCODE -ne 0) { throw "attestation failed: $($_.Name)" }
+      }
+}
+$lock = Join-Path $root 'component-lock.json'
+if (-not (Test-Path -LiteralPath $lock -PathType Leaf)) {
+    throw 'component-lock.json is required'
+}
+python -m pip install build==1.5.0 hatchling==1.27.0 pyinstaller==6.21.0
+python -m pip install `
+  (Get-ChildItem $protocol -Filter 'vibeocr_runtime_contracts-2.0.0-*.whl' | Select-Object -Single).FullName `
+  (Get-ChildItem $protocol -Filter 'vibeocr_runtime_client-2.0.0-*.whl' | Select-Object -Single).FullName `
+  (Get-ChildItem $backend -Filter 'vibeocr_backend-0.7.0-*.whl' | Select-Object -Single).FullName
+if ($LASTEXITCODE -ne 0) { throw 'verified upstream wheel install failed' }
+python -m build --wheel --no-isolation (Join-Path $root 'apps/vibeocr-pyside') --outdir $build
+if ($LASTEXITCODE -ne 0) { throw 'Classic wheel build failed' }
+python -m pip install --force-reinstall --no-deps `
+  (Get-ChildItem $build -Filter 'vibeocr_classic-0.7.0-*.whl' | Select-Object -Single).FullName
+if ($LASTEXITCODE -ne 0) { throw 'Classic wheel install failed' }
+$dist = Join-Path $build 'dist'
+python -m PyInstaller --noconfirm --clean --onedir --windowed `
+  --name VibeOCR --distpath $dist --workpath (Join-Path $build 'pyinstaller') `
+  --specpath (Join-Path $build 'spec') `
+  --collect-all PySide6 --collect-submodules vibeocr.classic `
+  --collect-submodules vibeocr.runtime_client `
+  --collect-submodules vibeocr.runtime_contracts `
+  --collect-submodules vibeocr.backend `
+  --add-data "$root/resources;resources" `
+  (Join-Path $root 'scripts/classic_release_entry.py')
+if ($LASTEXITCODE -ne 0) { throw 'Classic PyInstaller build failed' }
+$product = Join-Path $dist 'VibeOCR'
+Copy-Item -LiteralPath (Join-Path $root 'LICENSE') -Destination $product
+Copy-Item -LiteralPath (Join-Path $root 'CHANGELOG.md') -Destination $product
+$zip = Join-Path $artifacts 'VibeOCR-Classic-v0.7.0-win64.zip'
+python (Join-Path $root 'scripts/package_product_release.py') `
+  --product-root $product --frontend classic --frontend-version 0.7.0 `
+  --source-commit (git -C $root rev-parse HEAD).Trim() `
+  --component-lock $lock --protocol-release-dir $protocol `
+  --backend-release-dir $backend --output $zip
+if ($LASTEXITCODE -ne 0) { throw 'Classic product binding failed' }
+Copy-Item -LiteralPath $lock -Destination $artifacts
+python (Join-Path $root 'scripts/build_release_checksums.py') $artifacts `
+  --sidecar-for $zip
+if ($LASTEXITCODE -ne 0) { throw 'sidecar checksum build failed' }
+Remove-Item -LiteralPath (Join-Path $artifacts 'SHA256SUMS') -Force
+python (Join-Path $root 'scripts/build_spdx_sbom.py') --artifacts-dir $artifacts `
+  --repository-name FelixJI/vibeocr-classic --version 0.7.0
+if ($LASTEXITCODE -ne 0) { throw 'SBOM build failed' }
+python (Join-Path $root 'scripts/build_release_checksums.py') $artifacts
+if ($LASTEXITCODE -ne 0) { throw 'checksum build failed' }
+"""
+    if name == "next":
+        return """[CmdletBinding()]
+param()
+$ErrorActionPreference = 'Stop'
+$root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$artifacts = Join-Path $root 'artifacts'
+$build = Join-Path $root '.release-build'
+$inputs = Join-Path $root '.release-input'
+foreach ($path in @($artifacts, $build, $inputs)) {
+    if (Test-Path -LiteralPath $path) {
+        Remove-Item -LiteralPath $path -Recurse -Force
+    }
+    New-Item -ItemType Directory -Path $path -Force | Out-Null
+}
+$protocol = Join-Path $inputs 'protocol'
+$backend = Join-Path $inputs 'backend'
+New-Item -ItemType Directory -Path $protocol, $backend -Force | Out-Null
+gh release download v2.0.0 --repo FelixJI/vibeocr-protocol --dir $protocol
+if ($LASTEXITCODE -ne 0) { throw 'Protocol release download failed' }
+gh release download v0.7.0 --repo FelixJI/vibeocr-backend --dir $backend
+if ($LASTEXITCODE -ne 0) { throw 'Backend release download failed' }
+foreach ($item in @(
+    @{ path = $protocol; repo = 'FelixJI/vibeocr-protocol' },
+    @{ path = $backend; repo = 'FelixJI/vibeocr-backend' }
+)) {
+    Get-ChildItem -LiteralPath $item.path -File |
+      Where-Object Name -ne 'SHA256SUMS' |
+      ForEach-Object {
+        gh attestation verify $_.FullName --repo $item.repo
+        if ($LASTEXITCODE -ne 0) { throw "attestation failed: $($_.Name)" }
+      }
+}
+$lock = Join-Path $root 'component-lock.json'
+if (-not (Test-Path -LiteralPath $lock -PathType Leaf)) {
+    throw 'component-lock.json is required'
+}
+dotnet restore (Join-Path $root 'src/dotnet/VibeOCR.App/VibeOCR.App.csproj') --locked-mode
+if ($LASTEXITCODE -ne 0) { throw 'Next restore failed' }
+dotnet restore (Join-Path $root 'src/dotnet/VibeOCR.Bootstrapper/VibeOCR.Bootstrapper.csproj') --locked-mode
+if ($LASTEXITCODE -ne 0) { throw 'Next bootstrapper restore failed' }
+$product = Join-Path $build 'VibeOCR.Next'
+dotnet publish (Join-Path $root 'src/dotnet/VibeOCR.App/VibeOCR.App.csproj') `
+  -c Release -r win-x64 --self-contained false --no-restore -o $product
+if ($LASTEXITCODE -ne 0) { throw 'Next publish failed' }
+dotnet publish (Join-Path $root 'src/dotnet/VibeOCR.Bootstrapper/VibeOCR.Bootstrapper.csproj') `
+  -c Release --self-contained false --no-restore -o $product
+if ($LASTEXITCODE -ne 0) { throw 'Next bootstrapper publish failed' }
+Copy-Item -LiteralPath (Join-Path $root 'LICENSE') -Destination $product
+Copy-Item -LiteralPath (Join-Path $root 'CHANGELOG.md') -Destination $product
+$zip = Join-Path $artifacts 'VibeOCR-Next-v0.1.0-preview.1-win64.zip'
+python (Join-Path $root 'scripts/package_product_release.py') `
+  --product-root $product --frontend next `
+  --frontend-version 0.1.0-preview.1 `
+  --source-commit (git -C $root rev-parse HEAD).Trim() `
+  --component-lock $lock --protocol-release-dir $protocol `
+  --backend-release-dir $backend --output $zip
+if ($LASTEXITCODE -ne 0) { throw 'Next product binding failed' }
+Copy-Item -LiteralPath $lock -Destination $artifacts
+python (Join-Path $root 'scripts/build_release_checksums.py') $artifacts `
+  --sidecar-for $zip
+if ($LASTEXITCODE -ne 0) { throw 'sidecar checksum build failed' }
+Remove-Item -LiteralPath (Join-Path $artifacts 'SHA256SUMS') -Force
+python (Join-Path $root 'scripts/build_spdx_sbom.py') --artifacts-dir $artifacts `
+  --repository-name FelixJI/vibeocr-next --version 0.1.0-preview.1
+if ($LASTEXITCODE -ne 0) { throw 'SBOM build failed' }
+python (Join-Path $root 'scripts/build_release_checksums.py') $artifacts
+if ($LASTEXITCODE -ne 0) { throw 'checksum build failed' }
+"""
     return """[CmdletBinding()]
 param()
 $ErrorActionPreference = 'Stop'
@@ -591,6 +846,10 @@ def stage_repository(
     destination.mkdir(parents=True, exist_ok=True)
     for relative in spec.paths:
         _copy(relative, destination)
+    if name == "backend":
+        _transform_backend(destination)
+    elif name == "next":
+        _transform_next(destination)
     _write_common(
         destination,
         name=name,

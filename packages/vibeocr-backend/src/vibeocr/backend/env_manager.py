@@ -3191,16 +3191,7 @@ def get_project_root() -> Path:
 
 
 def get_workspace_source_paths() -> tuple[Path, ...]:
-    """返回开发工作区的四个 source root；安装态返回空元组。"""
-    root = get_project_root()
-    candidates = (
-        root / "packages" / "vibeocr-contracts-py" / "src",
-        root / "packages" / "vibeocr-runtime-client-py" / "src",
-        root / "packages" / "vibeocr-backend" / "src",
-        root / "apps" / "vibeocr-pyside" / "src",
-    )
-    if all((path / "vibeocr").is_dir() for path in candidates):
-        return candidates
+    """Compatibility shim: production never exposes workspace source roots."""
     return ()
 
 

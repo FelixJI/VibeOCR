@@ -36,10 +36,24 @@ def build_release_checksums(artifacts_dir: Path) -> Path:
     return output
 
 
+def write_sidecar_checksum(path: Path) -> Path:
+    path = path.resolve(strict=True)
+    output = path.with_name(path.name + ".sha256")
+    output.write_text(
+        f"{sha256_file(path)}  {path.name}\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    return output
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("artifacts_dir", type=Path)
+    parser.add_argument("--sidecar-for", type=Path)
     args = parser.parse_args(argv)
+    if args.sidecar_for is not None:
+        print(write_sidecar_checksum(args.sidecar_for))
     print(build_release_checksums(args.artifacts_dir))
     return 0
 

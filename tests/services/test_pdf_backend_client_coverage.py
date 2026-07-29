@@ -63,36 +63,19 @@ class TestResolvePythonExe:
 
 
 class TestGetBackendEnv:
-    def test_non_frozen_adds_source_paths(self, monkeypatch):
+    def test_removes_source_and_editable_environment(self, monkeypatch):
         client = PdfBackendClient()
-        from pathlib import Path
-
-        import vibeocr.backend.env_manager as env
-
-        monkeypatch.setattr(env, "get_workspace_source_paths", lambda: [Path("/src/a"), Path("/src/b")])
-        monkeypatch.delenv("PYTHONPATH", raising=False)
-        env_result = client._get_backend_env()
-        # 路径分隔符平台相关（Windows 用 \），用 os.path.normpath 归一比较
-        import os
-
-        parts = env_result["PYTHONPATH"].split(os.pathsep)
-        normalized = {os.path.normpath(p) for p in parts}
-        assert os.path.normpath("/src/a") in normalized
-        assert os.path.normpath("/src/b") in normalized
-
-    def test_non_frozen_skips_existing_paths(self, monkeypatch):
-        client = PdfBackendClient()
-        from pathlib import Path
-
-        import vibeocr.backend.env_manager as env
-
-        monkeypatch.setattr(env, "get_workspace_source_paths", lambda: [Path("/src/a")])
         monkeypatch.setenv("PYTHONPATH", "/src/a")
+        monkeypatch.setenv("PYTHONHOME", "/python/home")
+        monkeypatch.setenv("VIRTUAL_ENV", "/venv")
+        monkeypatch.setenv("VIBEOCR_REPOSITORY_ROOT", "/workspace")
         env_result = client._get_backend_env()
-        # 已存在的不再重复添加
-        assert env_result["PYTHONPATH"].count("/src/a") == 1
+        assert "PYTHONPATH" not in env_result
+        assert "PYTHONHOME" not in env_result
+        assert "VIRTUAL_ENV" not in env_result
+        assert "VIBEOCR_REPOSITORY_ROOT" not in env_result
 
-    def test_frozen_mode(self, monkeypatch):
+    def test_frozen_mode_does_not_inject_meipass(self, monkeypatch):
         import sys
 
         client = PdfBackendClient()
@@ -100,7 +83,7 @@ class TestGetBackendEnv:
         monkeypatch.setattr(sys, "_MEIPASS", "/fake/meipass", raising=False)
         monkeypatch.delenv("PYTHONPATH", raising=False)
         env_result = client._get_backend_env()
-        assert "/fake/meipass" in env_result["PYTHONPATH"]
+        assert "PYTHONPATH" not in env_result
         # 恢复
         monkeypatch.delattr(sys, "frozen", raising=False)
         monkeypatch.delattr(sys, "_MEIPASS", raising=False)

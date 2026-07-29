@@ -112,33 +112,18 @@ class PdfBackendClient:
     def _get_backend_env(self) -> dict[str, str]:
         """构造 PDF 后端子进程环境变量。
 
-        嵌入式/便携式 Python 是独立解释器，vibeocr 源码既不在它的 site-packages
-        也不在 sys.path 中（打包态源码平铺于 ``sys._MEIPASS``，便携态则位于
-        ``src/``）。与 OCR Worker 一致，必须通过 PYTHONPATH 显式指向 vibeocr
-        包父目录，否则子进程 ``import vibeocr`` 立即失败退出码 1。
-
-        对齐 ``OCRWorkerProcess._get_worker_env`` 的逻辑。
+        Runtime Installer 已把精确 Backend wheel 安装进内容寻址 Runtime。
+        子进程必须从该解释器的 site-packages 导入，不能继承开发工作区路径、
+        editable 环境或冻结前端的临时解包目录。
         """
         env = os.environ.copy()
-
-        if getattr(sys, "frozen", False):
-            meipass = getattr(sys, "_MEIPASS", None)
-            if meipass:
-                existing = env.get("PYTHONPATH", "")
-                env["PYTHONPATH"] = (
-                    f"{meipass};{existing}" if existing else str(meipass)
-                )
-        else:
-            from vibeocr.backend.env_manager import get_workspace_source_paths
-
-            source_dirs = [str(path) for path in get_workspace_source_paths()]
-            sep = os.pathsep
-            existing = env.get("PYTHONPATH", "")
-            existing_parts = existing.split(sep) if existing else []
-            missing = [path for path in source_dirs if path not in existing_parts]
-            if missing:
-                env["PYTHONPATH"] = sep.join([*missing, *existing_parts])
-
+        for name in (
+            "PYTHONPATH",
+            "PYTHONHOME",
+            "VIRTUAL_ENV",
+            "VIBEOCR_REPOSITORY_ROOT",
+        ):
+            env.pop(name, None)
         return env
 
     def _find_free_port(self) -> int:
@@ -200,7 +185,7 @@ class PdfBackendClient:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,  # 合并到 stdout 统一读
                 text=False,
-                env=self._get_backend_env(),  # 注入 PYTHONPATH,否则便携 Python 找不到 vibeocr
+                env=self._get_backend_env(),
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
             # 绑定 Job Object:主进程崩溃时内核连带终止后端

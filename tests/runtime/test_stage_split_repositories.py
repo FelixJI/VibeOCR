@@ -68,3 +68,26 @@ def test_backend_staging_has_locked_runtime_builder(tmp_path: Path) -> None:
         root / "release/python-runtime.lock.json"
     ).read_text(encoding="utf-8")
     assert "5b4093f92d9bffcb0d92aea050f3d77d" in lock
+
+
+def test_next_staging_uses_released_protocol_packages(tmp_path: Path) -> None:
+    root = stage_repository(
+        "next",
+        tmp_path / "vibeocr-next",
+        cutover_commit="c" * 40,
+    )
+    app = (
+        root / "src/dotnet/VibeOCR.App/VibeOCR.App.csproj"
+    ).read_text(encoding="utf-8")
+    platform = (
+        root / "src/dotnet/VibeOCR.Platform/VibeOCR.Platform.csproj"
+    ).read_text(encoding="utf-8")
+    versions = (root / "Directory.Packages.props").read_text(encoding="utf-8")
+    assert "../VibeOCR.Contracts/" not in app
+    assert "../VibeOCR.Runtime.Client/" not in platform
+    assert '<PackageReference Include="VibeOCR.Runtime.Contracts" />' in app
+    assert '<PackageReference Include="VibeOCR.Runtime.Client" />' in platform
+    assert 'Version="[2.0.0]"' in versions
+    assert "Repository-specific release builder has not been generated" not in (
+        root / "scripts/build-release.ps1"
+    ).read_text(encoding="utf-8")

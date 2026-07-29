@@ -26,25 +26,12 @@ internal static class Program
             Console.Error.WriteLine("Unsupported profile: " + profile);
             return InvalidArguments;
         }
-        string scopedRoot = profile == "production"
-            ? installRoot
-            : Path.Combine(installRoot, "data", "profiles", profile);
-        // Mirror VibeOCR.Platform.Bootstrap.PortableLayout.ResolvePythonExecutable:
-        // under winui-dev, prefer the repository .venv python (set alongside the
-        // worker source root via VIBEOCR_REPOSITORY_ROOT) over the packaged
-        // python/ layout, so the same editable environment drives both checks.
-        string pythonRoot = Path.Combine(scopedRoot, "python");
-        string pythonExe = ResolveDevPython(profile, pythonRoot);
-        bool packagedLayout = pythonExe == Path.Combine(pythonRoot, "python.exe");
-        bool pythonPresent = File.Exists(pythonExe) &&
-            (!packagedLayout || File.Exists(Path.Combine(pythonRoot, "python313.dll")));
-
         string[] missing = new string?[]
         {
             HasDotNetDesktop10() ? null : ".NET Desktop Runtime 10 x64",
             HasWindowsAppRuntime22() ? null : "Windows App Runtime 2.2 x64",
             HasWebView2() ? null : "Microsoft Edge WebView2 Evergreen Runtime",
-            pythonPresent ? null : "VibeOCR Python 3.13 runtime",
+            HasBoundRuntimeAssets(installRoot) ? null : "VibeOCR bound Runtime assets",
         }.Where(item => item != null).Select(item => item!).ToArray();
         if (missing.Length > 0)
         {
@@ -93,26 +80,13 @@ internal static class Program
         return null;
     }
 
-    // Keep in sync with PortableLayout.ResolvePythonExecutable (Platform project,
-    // net10.0 — not referenceable from this net472 bootstrapper). Under winui-dev
-    // a repository .venv python takes precedence over the packaged python/ layout.
-    private static string ResolveDevPython(string profile, string packagedPythonRoot)
-    {
-        if (profile == "winui-dev")
-        {
-            string? repository = Environment.GetEnvironmentVariable("VIBEOCR_REPOSITORY_ROOT");
-            if (!string.IsNullOrWhiteSpace(repository))
-            {
-                string venvPython = Path.Combine(repository, ".venv", "Scripts", "python.exe");
-                if (File.Exists(venvPython))
-                {
-                    return venvPython;
-                }
-            }
-        }
-
-        return Path.Combine(packagedPythonRoot, "python.exe");
-    }
+    private static bool HasBoundRuntimeAssets(string installRoot) =>
+        File.Exists(Path.Combine(installRoot, "component-lock.json")) &&
+        File.Exists(Path.Combine(installRoot, "backend", "runtime-manifest.json")) &&
+        File.Exists(Path.Combine(
+            installRoot,
+            "runtime-installer",
+            "vibeocr-runtime-installer.exe"));
 
     private static bool HasDotNetDesktop10()
     {

@@ -1305,13 +1305,11 @@ class TestInstallBackendDependencies:
 
 
 class TestGetWorkspaceSourcePaths:
-    def test_dev_mode_returns_four_roots(self):
-        """开发态返回四个 source root（line 3196-3207）。"""
+    def test_dev_mode_never_returns_workspace_roots(self):
+        """独立仓开发态也不得向生产子进程注入源码根。"""
         from vibeocr.backend.env_manager import get_workspace_source_paths
 
-        result = get_workspace_source_paths()
-        # 开发态应有四个 roots
-        assert len(result) == 4
+        assert get_workspace_source_paths() == ()
 
     def test_non_workspace_returns_empty(self, tmp_path, monkeypatch):
         """非工作区 → 空元组（line 3207）。"""

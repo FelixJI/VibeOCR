@@ -50,7 +50,7 @@ public sealed class GitHubUpdateSourceTests
     }
 
     [Fact]
-    public void SelectAssetFallsBackToAnyMatchWhenNoNextPresent()
+    public void SelectAssetRejectsNonNextFallback()
     {
         // 回退分支：历史 release 或单 Classic 产物（无 -Next- 命名）。
         // 取第一个匹配项，保证 asset 仍能被选中（而非返回 null 导致 available=false）。
@@ -63,8 +63,8 @@ public sealed class GitHubUpdateSourceTests
         var pkg = GitHubUpdateSource.SelectAsset(assets, "-win64.zip");
         var sha = GitHubUpdateSource.SelectAsset(assets, "-win64.zip.sha256");
 
-        Assert.Equal("VibeOCR-v0.4.28-win64.zip", pkg!.Name);
-        Assert.Equal("VibeOCR-v0.4.28-win64.zip.sha256", sha!.Name);
+        Assert.Null(pkg);
+        Assert.Null(sha);
     }
 
     [Fact]
@@ -84,6 +84,14 @@ public sealed class GitHubUpdateSourceTests
 
         Assert.Null(pkg);
         Assert.Null(sha);
+    }
+
+    [Fact]
+    public void UpdateEndpointUsesOnlyTheNextRepository()
+    {
+        Assert.Equal(
+            "https://api.github.com/repos/FelixJI/vibeocr-next/releases?per_page=20",
+            GitHubUpdateSource.ReleasesEndpoint);
     }
 
     private static GitHubUpdateSource.ReleaseAsset MakeAsset(string name) =>

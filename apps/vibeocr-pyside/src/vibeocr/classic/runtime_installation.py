@@ -81,8 +81,11 @@ class RuntimeInstallerClient:
             runtime_manifest
             or self.product_root / "backend" / "runtime-manifest.json"
         ).resolve()
+        explicit_layout = layout_manifest or os.environ.get(
+            "VIBEOCR_PORTABLE_LAYOUT"
+        )
         self.layout_manifest = (
-            Path(layout_manifest).resolve() if layout_manifest is not None else None
+            Path(explicit_layout).resolve() if explicit_layout is not None else None
         )
         self.product_id = product_id
         self.profile = profile
@@ -193,10 +196,25 @@ class RuntimeInstallerClient:
         return envelope
 
     def _verify_installer_executable(self) -> None:
-        executable = Path(self.command[0])
-        if executable.name.lower() != "vibeocr-runtime-installer.exe":
+        if len(self.command) > 1 and self.command[1:2] == ("-m",):
             return
+        executable = Path(self.command[0])
         try:
+            component_lock = json.loads(
+                self.component_lock.read_text(encoding="utf-8")
+            )
+            expected_manifest = component_lock["backend"][
+                "runtime_manifest_sha256"
+            ]
+            manifest_bytes = self.runtime_manifest.read_bytes()
+            actual_manifest = hashlib.sha256(manifest_bytes).hexdigest()
+            if (
+                not isinstance(expected_manifest, str)
+                or len(expected_manifest) != 64
+                or expected_manifest.lower() != expected_manifest
+                or actual_manifest != expected_manifest
+            ):
+                raise ValueError("runtime manifest hash mismatch")
             manifest = json.loads(self.runtime_manifest.read_text(encoding="utf-8"))
             expected = manifest["installer"]["executable_sha256"]
             actual = hashlib.sha256(executable.read_bytes()).hexdigest()

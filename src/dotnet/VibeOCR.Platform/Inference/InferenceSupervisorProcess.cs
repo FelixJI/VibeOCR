@@ -65,6 +65,15 @@ public sealed record SupervisorReadyEnvelope(
         {
             throw new InvalidDataException("Supervisor ready envelope contains invalid capabilities.");
         }
+        string[] missingCapabilities = RuntimeProtocol.AllCapabilities
+            .Except(envelope.Capabilities, StringComparer.Ordinal)
+            .ToArray();
+        if (missingCapabilities.Length > 0)
+        {
+            throw new InvalidDataException(
+                "Supervisor does not provide required Next capabilities: "
+                + string.Join(", ", missingCapabilities));
+        }
         return envelope;
     }
 }

@@ -15,9 +15,9 @@ internal sealed class GitHubUpdateSource(
     // owner 必须与 Python 侧 env_config.GITHUB_OWNER（"FelixJI"）一致（SSOT）。
     // 早期误写成全小写 "felji" → GitHub API 返回 404 → 检查更新 100% 失败，
     // 被 UpdateViewModel 的 catch 吞成「检查更新失败，请检查网络」。
-    private const string LatestRelease =
-        "https://api.github.com/repos/FelixJI/VibeOCR/releases/latest";
-    private readonly Version _currentVersion = ParseVersion(currentVersion);
+    internal const string ReleasesEndpoint =
+        "https://api.github.com/repos/FelixJI/vibeocr-next/releases?per_page=20";
+    private readonly ProductVersion _currentVersion = ParseVersion(currentVersion);
     private readonly string _installRoot = Path.GetFullPath(installRoot);
     private readonly string _updateRoot = updateRoot;
     private readonly HttpClient _http = httpClient ?? CreateClient();
@@ -28,10 +28,16 @@ internal sealed class GitHubUpdateSource(
     public async Task<(string Version, bool Available)> FetchLatestAsync(
         CancellationToken cancellationToken)
     {
-        Release release = await _http.GetFromJsonAsync<Release>(LatestRelease, cancellationToken)
+        Release[] releases = await _http.GetFromJsonAsync<Release[]>(
+            ReleasesEndpoint,
+            cancellationToken)
             ?? throw new InvalidDataException("GitHub release response was empty.");
+        Release release = releases.FirstOrDefault(candidate =>
+            !candidate.Draft &&
+            TryParseVersion(candidate.TagName.TrimStart('v', 'V'), out _))
+            ?? throw new InvalidDataException("No valid Next release was found.");
         string versionText = release.TagName.TrimStart('v', 'V');
-        Version latest = ParseVersion(versionText);
+        ProductVersion latest = ParseVersion(versionText);
         _package = SelectAsset(release.Assets, "-win64.zip");
         _checksum = SelectAsset(release.Assets, "-win64.zip.sha256");
         bool available = latest > _currentVersion && _package is not null && _checksum is not null;
@@ -108,7 +114,7 @@ internal sealed class GitHubUpdateSource(
     /// 从 release assets 中选出本进程要下载的 asset。选择规则与 Classic 侧
     /// update_service._find_asset 对齐，但前端是 Next：
     /// 1. 优先：名字含 "-Next-" 且后缀匹配（本进程是 WinUI Next 运行态）。
-    /// 2. 回退：任意后缀匹配的 asset（兼容未来命名变化 / 单产物 release）。
+    /// 2. 不接受通用 zip 回退，避免把 Classic 或其他资产交给 Next updater。
     /// </summary>
     /// <remarks>
     /// 早期用 SingleOrDefault 按后缀匹配，在双产物 release（Classic+Next 同时发布）
@@ -117,16 +123,14 @@ internal sealed class GitHubUpdateSource(
     /// </remarks>
     internal static ReleaseAsset? SelectAsset(IEnumerable<ReleaseAsset> assets, string suffix)
     {
-        ReleaseAsset? fallback = null;
         foreach (ReleaseAsset asset in assets)
         {
             if (!asset.Name.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
                 continue;
             if (asset.Name.Contains("-Next-", StringComparison.OrdinalIgnoreCase))
                 return asset;
-            fallback ??= asset;
         }
-        return fallback;
+        return null;
     }
 
     private string ExtractStagedUpdater(string packagePath)
@@ -172,18 +176,74 @@ internal sealed class GitHubUpdateSource(
         return client;
     }
 
-    private static Version ParseVersion(string value)
+    private static ProductVersion ParseVersion(string value)
     {
-        if (!Version.TryParse(value, out Version? version))
+        if (!TryParseVersion(value, out ProductVersion? version))
         {
             throw new InvalidDataException($"Invalid release version: {value}");
         }
-        return version;
+        return version!;
+    }
+
+    private static bool TryParseVersion(
+        string value,
+        out ProductVersion? version)
+    {
+        string normalized = value.Split('+', 2)[0];
+        string[] parts = normalized.Split('-', 2);
+        if (!Version.TryParse(parts[0], out Version? core))
+        {
+            version = null;
+            return false;
+        }
+        version = new ProductVersion(core, parts.Length == 2 ? parts[1] : null);
+        return true;
     }
 
     private sealed record Release(
         [property: JsonPropertyName("tag_name")] string TagName,
+        [property: JsonPropertyName("draft")] bool Draft,
         [property: JsonPropertyName("assets")] ReleaseAsset[] Assets);
+
+    private sealed record ProductVersion(Version Core, string? Prerelease)
+        : IComparable<ProductVersion>
+    {
+        public int CompareTo(ProductVersion? other)
+        {
+            if (other is null)
+                return 1;
+            int core = Core.CompareTo(other.Core);
+            if (core != 0)
+                return core;
+            if (Prerelease is null)
+                return other.Prerelease is null ? 0 : 1;
+            if (other.Prerelease is null)
+                return -1;
+            string[] left = Prerelease.Split('.');
+            string[] right = other.Prerelease.Split('.');
+            for (int index = 0; index < Math.Max(left.Length, right.Length); index++)
+            {
+                if (index >= left.Length)
+                    return -1;
+                if (index >= right.Length)
+                    return 1;
+                bool leftNumber = int.TryParse(left[index], out int leftValue);
+                bool rightNumber = int.TryParse(right[index], out int rightValue);
+                int comparison = leftNumber && rightNumber
+                    ? leftValue.CompareTo(rightValue)
+                    : string.Compare(left[index], right[index], StringComparison.Ordinal);
+                if (comparison != 0)
+                    return comparison;
+            }
+            return 0;
+        }
+
+        public static bool operator >(ProductVersion left, ProductVersion right) =>
+            left.CompareTo(right) > 0;
+
+        public static bool operator <(ProductVersion left, ProductVersion right) =>
+            left.CompareTo(right) < 0;
+    }
 
     // 提为 internal 供测试直接构造（SelectAsset 的入参类型）。Release 仍是 private
     // （只在 FetchLatestAsync 反序列化内部使用）。
