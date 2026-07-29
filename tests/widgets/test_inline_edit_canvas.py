@@ -348,6 +348,29 @@ class TestUpdateTempItem:
         # 不抛异常、不修改 temp_item
         canvas._update_temp_item(QPointF(99, 99))
 
+    def test_arrow_temp_updates_from_origin(self, qapp):
+        """回归：QPointF(0,0) 在 PySide6 为 falsy；修复后从原点起绘也应能更新预览。"""
+        canvas = InlineEditCanvas()
+        canvas.set_tool(EditTool.ARROW)
+        canvas._draw_start = QPointF(0, 0)
+        canvas._create_temp_item(QPointF(0, 0))
+        canvas._update_temp_item(QPointF(70, 50))
+        # 从原点(0,0)起绘，end 应被更新到 (70,50)——修复前会因 falsy 早返回而不更新。
+        assert canvas._temp_item._end.x() == 70
+        assert canvas._temp_item._end.y() == 50
+
+    def test_rect_temp_updates_from_origin(self, qapp):
+        """回归：从原点起绘的矩形预览也应正常更新。"""
+        canvas = InlineEditCanvas()
+        canvas.set_tool(EditTool.RECT)
+        canvas._draw_start = QPointF(0, 0)
+        canvas._create_temp_item(QPointF(0, 0))
+        canvas._update_temp_item(QPointF(60, 40))
+        r = canvas._temp_item.rect()
+        assert r.width() == 60
+        assert r.height() == 40
+
+
 
 class TestFinishDrawingAt:
     """``_finish_drawing_at``：min-size 检查 + 5 标注创建分支。"""
@@ -385,6 +408,24 @@ class TestFinishDrawingAt:
 
         rect_anns = [i for i in canvas._scene.items() if isinstance(i, RA)]
         assert len(rect_anns) == 1
+
+    def test_rect_from_origin_creates_annotation(self, qapp):
+        """回归：从场景原点(0,0)起绘也应创建标注——QPointF(0,0) 为 falsy，
+        修复前 `_finish_drawing_at` 的 `if not self._draw_start` 会误判为未绘制。"""
+        from vibeocr.widgets.editor.annotation_items import RectAnnotation as RA
+
+        canvas = InlineEditCanvas()
+        canvas.set_tool(EditTool.RECT)
+        canvas._drawing = True
+        canvas._draw_start = QPointF(0, 0)
+        canvas._create_temp_item(QPointF(0, 0))
+        before = canvas._undo_stack.count()
+        canvas._finish_drawing_at(QPointF(40, 30))
+        # 从原点起绘应同样创建标注 + 命令（修复前会被 falsy 守卫吞掉）。
+        assert canvas._undo_stack.count() == before + 1
+        rect_anns = [i for i in canvas._scene.items() if isinstance(i, RA)]
+        assert len(rect_anns) == 1
+
 
     def test_ellipse_creates_annotation(self, qapp):
         from vibeocr.widgets.editor.annotation_items import EllipseAnnotation

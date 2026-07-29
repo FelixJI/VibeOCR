@@ -328,7 +328,9 @@ class InlineEditCanvas(QGraphicsView):
     def mouseMoveEvent(self, event) -> None:
         scene_pos = self.mapToScene(event.pos())
 
-        if self._drawing and self._draw_start and self._temp_item:
+        if self._drawing and self._draw_start is not None and self._temp_item:
+            # 用 is not None 而非真值判断：QPointF(0,0) 在 PySide6 中为 falsy
+            # （__bool__ 走 isNull()），从场景原点起绘时真值判断会误判为未开始绘制。
             self._update_temp_item(scene_pos)
             return
 
@@ -406,7 +408,9 @@ class InlineEditCanvas(QGraphicsView):
 
     def _update_temp_item(self, current: QPointF) -> None:
         """更新临时预览项"""
-        if not self._draw_start or not self._temp_item:
+        if self._draw_start is None or not self._temp_item:
+            # _draw_start 用 is None 判断：QPointF(0,0) 为 falsy，真值判断
+            # 会误把已设的原点起点当作未绘制，导致从原点起绘无法更新预览。
             return
 
         tool = self._current_tool
@@ -425,7 +429,8 @@ class InlineEditCanvas(QGraphicsView):
     def _finish_drawing_at(self, end: QPointF) -> None:
         """完成绘制，创建正式标注项"""
         self._drawing = False
-        if not self._draw_start:
+        if self._draw_start is None:
+            # is None 而非真值判断：QPointF(0,0) 为 falsy，原点起绘需被正确识别。
             self._remove_temp()
             return
 
