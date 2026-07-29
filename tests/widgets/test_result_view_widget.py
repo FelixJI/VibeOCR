@@ -1041,7 +1041,11 @@ class TestResultViewExportButtons:
             "单次渲染后 rendered token 应等于 active token（无双重 bump）"
         )
         assert widget._rendered_document_token != ""
-        assert widget._copy_btn.isVisible() or not widget._copy_btn.isHidden()
+        # parent 从未 show()，isVisible() 恒为 False 无法反映“显示状态”；
+        # isHidden() 才可靠：show() 后为 False、hide() 后为 True。
+        assert not widget._copy_btn.isHidden(), (
+            "单次渲染并回填 rendered token 后，复制按钮应已 show()"
+        )
 
         toasts: list[str] = []
         monkeypatch.setattr(

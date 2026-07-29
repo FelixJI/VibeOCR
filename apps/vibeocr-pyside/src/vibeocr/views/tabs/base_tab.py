@@ -240,6 +240,9 @@ class BaseOcrTab(QWidget):
         content_index 补建、``_content_index_result`` / ``_text_index_by_content``
         设置、preview.set_content_list / set_text_content_index）。
         """
+        # 不冻结预览：纯文本路径随后用 display_text_layout 渲染，其快照直接读
+        # result 模型（_capture_stable_result_snapshot），不读 preview 活模型；
+        # 冻结/解冻由渲染路径自管。
         # 统一构建 content_list 并回填到 result，保证右侧结果区与左侧预览、
         # 编辑回调用同一套索引。通用 OCR 管道的 content_list 为空（只有 text_blocks），
         # 若不回填，display_result 会走 raw_text 的 <pre> 分支，无法按块编辑；
