@@ -9,8 +9,8 @@ from PySide6.QtGui import QColor, QImage
 from PySide6.QtWidgets import QStatusBar
 
 from tests.qt_responsiveness import assert_qt_event_loop_responsive
-from vibeocr.utils.image_jobs import GenerationImageJobs
-from vibeocr.views.main_window import MainWindow
+from vibeocr.classic.utils.image_jobs import GenerationImageJobs
+from vibeocr.classic.views.main_window import MainWindow
 
 
 class _ImageLoadHarness(QObject):
@@ -62,7 +62,7 @@ def test_slow_decode_is_responsive_and_latest_request_wins(qtbot, qapp, monkeypa
             return _solid_image("red")
         return _solid_image("blue")
 
-    monkeypatch.setattr("vibeocr.views.main_window.decode_image_file", decode)
+    monkeypatch.setattr("vibeocr.classic.views.main_window.decode_image_file", decode)
     harness = _ImageLoadHarness()
     harness._request_image_load("first.png")
     assert first_entered.wait(timeout=1)
@@ -100,7 +100,7 @@ def test_close_drops_late_image_decode_result(qtbot, monkeypatch):
         release.wait(timeout=2)
         return _solid_image("green")
 
-    monkeypatch.setattr("vibeocr.views.main_window.decode_image_file", decode)
+    monkeypatch.setattr("vibeocr.classic.views.main_window.decode_image_file", decode)
     harness = _ImageLoadHarness()
     harness._request_image_load("slow.png")
     assert entered.wait(timeout=1)
@@ -125,7 +125,7 @@ def test_busy_state_drops_loaded_image_and_decode_errors_reach_statusbar(
     def fail_decode(_path: str, _cancel_event) -> QImage:
         raise ValueError("broken image")
 
-    monkeypatch.setattr("vibeocr.views.main_window.decode_image_file", fail_decode)
+    monkeypatch.setattr("vibeocr.classic.views.main_window.decode_image_file", fail_decode)
     harness._request_image_load("broken.png")
     qtbot.waitUntil(
         lambda: "broken image" in harness._statusbar.currentMessage(), timeout=1000

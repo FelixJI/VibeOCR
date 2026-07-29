@@ -8,7 +8,7 @@
 //     inherited VIBEOCR_SUP_TOKEN env var — never on argv/stdout/logs;
 //   * on disposal the whole process tree is terminated.
 //
-// Production wiring spawns `python -m vibeocr.supervisor.main`. Tests inject
+// Production wiring spawns `python -m vibeocr.backend.supervisor.main`. Tests inject
 // an alternate FileName (e.g. a fake script) and read the ready line back.
 using System.Diagnostics;
 using System.Text.Json;

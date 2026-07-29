@@ -4,7 +4,7 @@ Plan §10 requires:
 1. Build contracts/client/backend wheels from the same commit.
 2. Verify the settings migration writes a ``.v1.bak`` backup.
 3. Verify rollback: restore the backup config and confirm the old schema is intact.
-4. Verify the workspace wheel-build still produces 6 wheels.
+4. Verify the workspace wheel-build still produces four non-overlapping wheels.
 5. Verify the supervisor entry point exists in the backend wheel.
 
 These are fast, deterministic tests that validate the release pipeline's
@@ -41,11 +41,11 @@ class TestReleaseBuild:
             capture_output=True, text=True, timeout=120,
         )
         assert result.returncode == 0, f"contracts build failed: {result.stderr[-500:]}"
-        wheels = list(tmp_path.glob("vibeocr_contracts_py-*.whl"))
+        wheels = list(tmp_path.glob("vibeocr_runtime_contracts-*.whl"))
         assert len(wheels) == 1, f"expected 1 contracts wheel, got {wheels}"
         with zipfile.ZipFile(wheels[0]) as archive:
             members = set(archive.namelist())
-        assert "vibeocr/protocol/v2/golden/golden.json" in members
+        assert "vibeocr/runtime_contracts/golden/golden.json" in members
         assert not any(name.startswith("vibeocr/protocol/v1/") for name in members)
 
     def test_backend_wheel_builds(self, tmp_path: Path) -> None:
@@ -65,14 +65,14 @@ class TestReleaseBuild:
         assert len(wheels) == 1, f"expected 1 backend wheel, got {wheels}"
         with zipfile.ZipFile(wheels[0]) as archive:
             members = set(archive.namelist())
-        assert "vibeocr/supervisor/main.py" in members
+        assert "vibeocr/backend/supervisor/main.py" in members
         assert not any(name.startswith("vibeocr/worker_host/") for name in members)
 
     def test_supervisor_entry_point_exists(self) -> None:
         """The vibeocr-supervisor console script is registered in backend pyproject."""
         pyproject = (_REPO_ROOT / "packages" / "vibeocr-backend" / "pyproject.toml").read_text()
         assert "vibeocr-supervisor" in pyproject, "vibeocr-supervisor entry point missing"
-        assert "vibeocr.supervisor.main:main" in pyproject, "wrong entry point target"
+        assert "vibeocr.backend.supervisor.main:main" in pyproject, "wrong entry point target"
 
 
 class TestSettingsMigrationRollback:
@@ -80,7 +80,7 @@ class TestSettingsMigrationRollback:
 
     def test_migration_creates_backup(self, tmp_path: Path) -> None:
         """Migrating legacy settings creates a .v1.bak backup."""
-        from vibeocr.migration.residency_migration import migrate_settings_file
+        from vibeocr.backend.migration.residency_migration import migrate_settings_file
 
         settings = tmp_path / "settings.json"
         settings.write_text(json.dumps({
@@ -105,7 +105,7 @@ class TestSettingsMigrationRollback:
 
     def test_rollback_restores_original_config(self, tmp_path: Path) -> None:
         """Simulate rollback: restore .v1.bak over the migrated file."""
-        from vibeocr.migration.residency_migration import migrate_settings_file
+        from vibeocr.backend.migration.residency_migration import migrate_settings_file
 
         settings = tmp_path / "settings.json"
         original_data = {"backend": "cpu", "pipeline_ttls": {"OCR": 120}}
@@ -127,7 +127,7 @@ class TestSettingsMigrationRollback:
 
     def test_migration_is_idempotent(self, tmp_path: Path) -> None:
         """Re-running migration on an already-migrated file is a no-op."""
-        from vibeocr.migration.residency_migration import migrate_settings_file
+        from vibeocr.backend.migration.residency_migration import migrate_settings_file
 
         settings = tmp_path / "settings.json"
         settings.write_text(json.dumps({"backend": "cpu"}), encoding="utf-8")
@@ -149,14 +149,14 @@ class TestProtocolAssetIntegrity:
 
     def test_openapi_snapshot_exists(self) -> None:
         """OpenAPI snapshot is a valid JSON file."""
-        snapshot = _REPO_ROOT / "packages" / "vibeocr-contracts-py" / "src" / "vibeocr" / "protocol" / "v2" / "openapi.snapshot.json"
+        snapshot = _REPO_ROOT / "packages" / "vibeocr-contracts-py" / "src" / "vibeocr" / "runtime_contracts" / "openapi.snapshot.json"
         assert snapshot.exists(), "OpenAPI snapshot missing"
         data = json.loads(snapshot.read_text(encoding="utf-8"))
         assert data["openapi"] == "3.1.0"
 
     def test_golden_fixtures_exist(self) -> None:
         """Golden fixtures file exists and has the expected keys."""
-        golden = _REPO_ROOT / "packages" / "vibeocr-contracts-py" / "src" / "vibeocr" / "protocol" / "v2" / "golden" / "golden.json"
+        golden = _REPO_ROOT / "packages" / "vibeocr-contracts-py" / "src" / "vibeocr" / "runtime_contracts" / "golden" / "golden.json"
         assert golden.exists(), "golden.json missing"
         data = json.loads(golden.read_text(encoding="utf-8"))
         for key in ("job_ref", "job_snapshot_running", "error_oom", "residency_status", "settings_snapshot"):
@@ -164,20 +164,20 @@ class TestProtocolAssetIntegrity:
 
     def test_errors_registry_has_18_codes(self) -> None:
         """Error registry includes the two job-interface failure codes."""
-        errors = _REPO_ROOT / "packages" / "vibeocr-contracts-py" / "src" / "vibeocr" / "protocol" / "v2" / "errors.json"
+        errors = _REPO_ROOT / "packages" / "vibeocr-contracts-py" / "src" / "vibeocr" / "runtime_contracts" / "errors.json"
         assert errors.exists(), "errors.json missing"
         data = json.loads(errors.read_text(encoding="utf-8"))
         assert len(data["codes"]) == 18, f"expected 18 error codes, got {len(data['codes'])}"
 
     def test_no_v1_protocol_remains(self) -> None:
         """Protocol v1 directory must not exist (deleted in Phase 8)."""
-        v1_dir = _REPO_ROOT / "packages" / "vibeocr-contracts-py" / "src" / "vibeocr" / "protocol" / "v1"
+        v1_dir = _REPO_ROOT / "packages" / "vibeocr-contracts-py" / "src" / "vibeocr" / "runtime_contracts" / "protocol" / "v1"
         assert not v1_dir.exists(), "v1 protocol directory should have been deleted"
 
-    def test_no_worker_host_in_client_package(self) -> None:
-        """worker_host directory must not exist in client-py (deleted in Phase 8)."""
-        wh_dir = _REPO_ROOT / "packages" / "vibeocr-client-py" / "src" / "vibeocr" / "worker_host"
-        assert not wh_dir.exists(), "client-py worker_host should have been deleted"
+    def test_legacy_client_distribution_is_deleted(self) -> None:
+        """The mixed-ownership client distribution must not survive the split."""
+        client_dir = _REPO_ROOT / "packages" / "vibeocr-client-py"
+        assert not client_dir.exists(), "vibeocr-client-py should have been deleted"
 
     def test_no_worker_host_in_backend_package(self) -> None:
         """worker_host directory must not exist in backend (deleted in Phase 8)."""

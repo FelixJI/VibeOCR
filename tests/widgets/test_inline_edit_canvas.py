@@ -6,8 +6,8 @@ from PySide6.QtCore import QPointF, QRect, QRectF
 from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsRectItem
 
-from vibeocr.widgets.editor.annotation_items import ArrowAnnotation, EditTool
-from vibeocr.widgets.inline_edit_canvas import InlineEditCanvas
+from vibeocr.classic.widgets.editor.annotation_items import ArrowAnnotation, EditTool
+from vibeocr.classic.widgets.inline_edit_canvas import InlineEditCanvas
 
 
 def _make_pixmap(
@@ -404,7 +404,7 @@ class TestFinishDrawingAt:
         canvas._finish_drawing_at(QPointF(40, 30))
         assert canvas._undo_stack.count() == before + 1
         # 场景中应有 1 个 RectAnnotation
-        from vibeocr.widgets.editor.annotation_items import RectAnnotation as RA
+        from vibeocr.classic.widgets.editor.annotation_items import RectAnnotation as RA
 
         rect_anns = [i for i in canvas._scene.items() if isinstance(i, RA)]
         assert len(rect_anns) == 1
@@ -412,7 +412,7 @@ class TestFinishDrawingAt:
     def test_rect_from_origin_creates_annotation(self, qapp):
         """回归：从场景原点(0,0)起绘也应创建标注——QPointF(0,0) 为 falsy，
         修复前 `_finish_drawing_at` 的 `if not self._draw_start` 会误判为未绘制。"""
-        from vibeocr.widgets.editor.annotation_items import RectAnnotation as RA
+        from vibeocr.classic.widgets.editor.annotation_items import RectAnnotation as RA
 
         canvas = InlineEditCanvas()
         canvas.set_tool(EditTool.RECT)
@@ -428,7 +428,7 @@ class TestFinishDrawingAt:
 
 
     def test_ellipse_creates_annotation(self, qapp):
-        from vibeocr.widgets.editor.annotation_items import EllipseAnnotation
+        from vibeocr.classic.widgets.editor.annotation_items import EllipseAnnotation
 
         canvas = InlineEditCanvas()
         canvas.set_tool(EditTool.ELLIPSE)
@@ -454,7 +454,7 @@ class TestFinishDrawingAt:
         assert len(arrows) == 1
 
     def test_mosaic_creates_item_only_with_background(self, qapp):
-        from vibeocr.widgets.editor.annotation_items import MosaicItem
+        from vibeocr.classic.widgets.editor.annotation_items import MosaicItem
 
         canvas = InlineEditCanvas()
         canvas.set_background(_make_pixmap(200, 200))  # Mosaic 需背景
@@ -480,7 +480,7 @@ class TestFinishDrawingAt:
         assert canvas._undo_stack.count() == before
 
     def test_blur_creates_item_only_with_background(self, qapp):
-        from vibeocr.widgets.editor.annotation_items import BlurItem
+        from vibeocr.classic.widgets.editor.annotation_items import BlurItem
 
         canvas = InlineEditCanvas()
         canvas.set_background(_make_pixmap(200, 200))
@@ -497,7 +497,7 @@ class TestFinishDrawingAt:
 
 class TestCreateTextAt:
     def test_creates_text_annotation_and_command(self, qapp):
-        from vibeocr.widgets.editor.annotation_items import TextAnnotation
+        from vibeocr.classic.widgets.editor.annotation_items import TextAnnotation
 
         canvas = InlineEditCanvas()
         before = canvas._undo_stack.count()

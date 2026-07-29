@@ -6,11 +6,11 @@ pytest.importorskip("pyzbar")  # pyzbar 缺失时整个文件跳过
 
 from PIL import Image
 
-from vibeocr.services.qrcode_decode_service import (
+from vibeocr.backend.services.qrcode_decode_service import (
     DecodedItem,
     QrcodeDecodeService,
 )
-from vibeocr.services.qrcode_service import QrcodeService
+from vibeocr.backend.services.qrcode_service import QrcodeService
 
 
 @pytest.fixture
@@ -131,29 +131,29 @@ class TestUrlDetection:
         assert results[0].is_url is True
 
     def test_javascript_scheme_not_url(self):
-        from vibeocr.services.qrcode_decode_service import _is_http_url
+        from vibeocr.backend.services.qrcode_decode_service import _is_http_url
 
         assert _is_http_url("javascript:alert(1)") is False
 
     def test_file_scheme_not_url(self):
-        from vibeocr.services.qrcode_decode_service import _is_http_url
+        from vibeocr.backend.services.qrcode_decode_service import _is_http_url
 
         assert _is_http_url("file:///etc/passwd") is False
 
     def test_plain_text_not_url(self):
-        from vibeocr.services.qrcode_decode_service import _is_http_url
+        from vibeocr.backend.services.qrcode_decode_service import _is_http_url
 
         assert _is_http_url("just some text") is False
 
     def test_uppercase_scheme_is_url(self):
-        from vibeocr.services.qrcode_decode_service import _is_http_url
+        from vibeocr.backend.services.qrcode_decode_service import _is_http_url
 
         assert _is_http_url("HTTPS://example.com/path") is True
 
 
 def test_is_http_url_rejects_invalid_url(decode_service):
     """_is_http_url 对非 http scheme 与无 netloc 返回 False。"""
-    from vibeocr.services.qrcode_decode_service import _is_http_url
+    from vibeocr.backend.services.qrcode_decode_service import _is_http_url
 
     # 正常情况
     assert _is_http_url("https://example.com") is True
@@ -168,7 +168,7 @@ def test_is_http_url_rejects_invalid_url(decode_service):
 
 def test_is_http_url_returns_false_when_urlparse_raises(monkeypatch):
     """urlparse 抛 ValueError/TypeError 时返回 False（line 34-36）。"""
-    from vibeocr.services import qrcode_decode_service
+    from vibeocr.backend.services import qrcode_decode_service
 
     def _raise(_v):
         raise ValueError("bad url")

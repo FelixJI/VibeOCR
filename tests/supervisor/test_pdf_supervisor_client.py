@@ -16,11 +16,11 @@ import httpx
 import pytest
 from conftest import NullExecutor
 
-from vibeocr.ipc.schemas import ProgressPhase
-from vibeocr.supervisor.app import create_app
-from vibeocr.supervisor.bootstrap import generate_session_token, new_instance_id
-from vibeocr.supervisor.module import SupervisorModule, SupervisorOptions
-from vibeocr.supervisor.pdf_client import (
+from vibeocr.backend.ipc.schemas import ProgressPhase
+from vibeocr.backend.supervisor.app import create_app
+from vibeocr.backend.supervisor.bootstrap import generate_session_token, new_instance_id
+from vibeocr.backend.supervisor.module import SupervisorModule, SupervisorOptions
+from vibeocr.classic.pdf_client import (
     PdfBackendError,
     PdfSupervisorClient,
     SyncPdfSupervisorClient,
@@ -58,7 +58,7 @@ async def test_response_hook_logs_unconsumed_stream(monkeypatch) -> None:
     def capture_log(**kwargs) -> None:
         captured.update(kwargs)
 
-    monkeypatch.setattr("vibeocr.supervisor.pdf_client.log_http_response", capture_log)
+    monkeypatch.setattr("vibeocr.classic.pdf_client.log_http_response", capture_log)
     response = httpx.Response(
         206,
         headers={"content-length": "4"},
@@ -271,7 +271,7 @@ def test_sync_save_round_trip(sync_client: SyncPdfSupervisorClient) -> None:
 
 
 def test_sync_wrapper_delegates_remaining_operations(monkeypatch) -> None:
-    import vibeocr.supervisor.pdf_client as module
+    import vibeocr.classic.pdf_client as module
 
     sync = SyncPdfSupervisorClient(
         base_url="http://127.0.0.1",

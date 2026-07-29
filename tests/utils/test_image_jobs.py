@@ -1,4 +1,4 @@
-"""``vibeocr.utils.image_jobs`` 纯 worker 函数测试。
+"""``vibeocr.classic.utils.image_jobs`` 纯 worker 函数测试。
 
 这些函数都在调用方线程中执行（不启动 QThread），输入是 QImage / 路径 / bytes，
 配合 cancel_event 验证取消与错误路径。小真 PNG 用 Qt 直接写到 tmp_path。
@@ -7,14 +7,16 @@
 from __future__ import annotations
 
 import threading
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from PySide6.QtCore import QPoint, QSize
 from PySide6.QtGui import QColor, QImage
 
-from vibeocr.utils.image_jobs import (
+from vibeocr.classic.utils.image_jobs import (
     ClipboardPngResult,
+    GenerationImageJobs,
+    _discard_result_async,
     compose_screen_images,
     decode_image_bytes,
     decode_image_file,
@@ -22,10 +24,9 @@ from vibeocr.utils.image_jobs import (
     save_image_file,
     write_clipboard_png,
 )
-from vibeocr.utils.image_jobs import (
-    GenerationImageJobs,
-    _discard_result_async,
-)
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _write_png(path: Path, width: int = 4, height: int = 4, color: str = "red") -> None:
@@ -170,8 +171,6 @@ def test_compose_screen_images_empty_physical_size_returns_empty():
 
 
 def test_compose_screen_images_midway_cancel_returns_empty():
-    release = threading.Event()
-    entered = threading.Event()
     event = threading.Event()
 
     class CancelAfterFirstDrawImage(QImage):
@@ -190,8 +189,6 @@ def test_compose_screen_images_midway_cancel_returns_empty():
 
     # 包裹 drawImage：画完第一张后 set cancel
     painter_draw_hit = {"count": 0}
-    original_draw_image = QImage  # 仅占位
-
     from PySide6.QtGui import QPainter
 
     original_draw = QPainter.drawImage

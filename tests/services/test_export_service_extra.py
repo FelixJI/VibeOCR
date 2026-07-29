@@ -2,9 +2,9 @@
 
 import pytest
 
-from vibeocr.contracts.tables import TableCellV1, TableModelV1
-from vibeocr.models.ocr_result import OCRResult
-from vibeocr.services.export_service import ExportService
+from vibeocr.backend.models.ocr_result import OCRResult
+from vibeocr.backend.services.export_service import ExportService
+from vibeocr.runtime_contracts.contracts.tables import TableCellV1, TableModelV1
 
 
 def _make_result(**kwargs):
@@ -188,7 +188,7 @@ class TestExportHtml:
     def test_structured_html_parses_each_table_only_once(
         self, tmp_path, monkeypatch
     ):
-        import vibeocr.tables.reducer as reducer
+        import vibeocr.backend.tables.reducer as reducer
 
         original = reducer.table_model_from_block
         calls = 0
@@ -212,7 +212,7 @@ class TestExportHtml:
     def test_structured_html_does_not_build_unused_markdown(
         self, tmp_path, monkeypatch
     ):
-        import vibeocr.tables.reducer as reducer
+        import vibeocr.backend.tables.reducer as reducer
 
         def fail_if_called(*args, **kwargs):
             raise AssertionError("HTML-only export must not build Markdown")
@@ -232,7 +232,7 @@ class TestExportHtml:
     def test_structured_html_matches_shared_projection_for_rich_blocks(
         self, tmp_path
     ):
-        from vibeocr.tables.reducer import build_result_projections
+        from vibeocr.backend.tables.reducer import build_result_projections
 
         result = _make_result(
             content_list=[
@@ -655,7 +655,7 @@ class TestExportCoverageGaps:
 
         直接调用 _export_html（不走 export() 外层 try）以观察异常。
         """
-        import vibeocr.services.export_service as export_mod
+        import vibeocr.backend.services.export_service as export_mod
 
         monkeypatch.setattr(
             export_mod, "build_result_projections", lambda *a, **k: None
@@ -784,7 +784,7 @@ class TestExportCoverageGaps:
         """_write_xlsx_table_sheet 在 grid 为空时返回不变计数（line 458）。"""
         from openpyxl import Workbook
 
-        import vibeocr.services.export_service as export_mod
+        import vibeocr.backend.services.export_service as export_mod
 
         empty_model = TableModelV1(
             table_id="t",
@@ -1093,7 +1093,7 @@ class TestExportCoverageGaps:
         import openpyxl
         from openpyxl import load_workbook
 
-        from vibeocr.services.export_service import ExportService
+        from vibeocr.backend.services.export_service import ExportService
 
         result = _make_result(
             content_list=[

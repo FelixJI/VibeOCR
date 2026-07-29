@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from vibeocr.application.pdf_ocr_orchestrator import (
+from vibeocr.backend.application.pdf_ocr_orchestrator import (
     BatchOutcome,
     LayerSource,
     OcrPageResult,
@@ -108,7 +108,7 @@ def isolated_sidecar(tmp_path, monkeypatch):
     Returns a real (empty) PDF path so sidecar ``os.stat`` baseline capture
     succeeds.
     """
-    import vibeocr.utils.ocr_sidecar as sidecar_mod
+    import vibeocr.backend.utils.ocr_sidecar as sidecar_mod
 
     root = tmp_path / "sidecar"
     monkeypatch.setattr(sidecar_mod, "_sessions_dir", lambda: root / "ocr_sessions")
@@ -146,7 +146,7 @@ def test_run_ocr_writes_all_pages_and_compresses(isolated_sidecar):
 
 
 def test_overwrite_false_filters_already_saved_pages(isolated_sidecar, monkeypatch):
-    import vibeocr.utils.ocr_sidecar as sidecar_mod
+    import vibeocr.backend.utils.ocr_sidecar as sidecar_mod
 
     file_path = str(isolated_sidecar)
     # Seed: pages 0 and 2 already persisted.
@@ -168,7 +168,7 @@ def test_overwrite_false_filters_already_saved_pages(isolated_sidecar, monkeypat
 
 
 def test_all_pages_saved_emits_completion_without_rendering(isolated_sidecar):
-    import vibeocr.utils.ocr_sidecar as sidecar_mod
+    import vibeocr.backend.utils.ocr_sidecar as sidecar_mod
 
     file_path = str(isolated_sidecar)
     sidecar_mod.mark_pages_saved(file_path, [0, 1], {0: 0, 1: 0})
@@ -188,7 +188,7 @@ def test_all_pages_saved_emits_completion_without_rendering(isolated_sidecar):
 
 
 def test_save_failure_keeps_pages_resumable(isolated_sidecar):
-    import vibeocr.utils.ocr_sidecar as sidecar_mod
+    import vibeocr.backend.utils.ocr_sidecar as sidecar_mod
 
     file_path = str(isolated_sidecar)
     backend = FakeBackend(save_batches=False)
@@ -226,7 +226,7 @@ def test_failed_pages_aggregate_write_errors_deduplicated(isolated_sidecar):
 
 
 def test_cancel_at_page_boundary_keeps_prior_batches(isolated_sidecar):
-    import vibeocr.utils.ocr_sidecar as sidecar_mod
+    import vibeocr.backend.utils.ocr_sidecar as sidecar_mod
 
     file_path = str(isolated_sidecar)
     backend = FakeBackend()
@@ -264,7 +264,7 @@ def test_cancel_at_page_boundary_keeps_prior_batches(isolated_sidecar):
 
 
 def test_compress_failure_keeps_completed_false_and_pages_intact(isolated_sidecar):
-    import vibeocr.utils.ocr_sidecar as sidecar_mod
+    import vibeocr.backend.utils.ocr_sidecar as sidecar_mod
 
     file_path = str(isolated_sidecar)
     backend = FakeBackend(compress_ok=False)
@@ -298,7 +298,7 @@ def test_native_layer_pages_project_to_native_not_ocr(isolated_sidecar):
 
 def test_sidecar_root_override_isolates_winui_dev(isolated_sidecar, tmp_path):
     """The winui-dev sidecar root must not write the production sidecar."""
-    from vibeocr.application.pdf_ocr_orchestrator import (
+    from vibeocr.backend.application.pdf_ocr_orchestrator import (
         _sidecar_root,
         restore_pending_pages_for,
     )
@@ -311,7 +311,7 @@ def test_sidecar_root_override_isolates_winui_dev(isolated_sidecar, tmp_path):
     with _sidecar_root(dev_root):
         assert restore_pending_pages_for(prod_file) in (None, {})
     # Production sidecar should be empty (no file written for prod_file).
-    import vibeocr.utils.ocr_sidecar as sidecar_mod
+    import vibeocr.backend.utils.ocr_sidecar as sidecar_mod
 
     assert sidecar_mod.restore_pending_pages(prod_file) in (None, {})
 
@@ -364,7 +364,7 @@ def test_compress_with_saved_zero_marks_completed_false(isolated_sidecar):
 
 def test_ocr_run_result_total_property():
     """OcrRunResult.total = completed + failed（line 104）。"""
-    from vibeocr.application.pdf_ocr_orchestrator import OcrRunResult
+    from vibeocr.backend.application.pdf_ocr_orchestrator import OcrRunResult
 
     r = OcrRunResult()
     r.completed = 3

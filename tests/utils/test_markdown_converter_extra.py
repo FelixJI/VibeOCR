@@ -1,6 +1,6 @@
 """markdown_converter 补充测试 — 覆盖 extract_plain_text、LaTeX、错误回退等分支"""
 
-from vibeocr.utils.markdown_converter import (
+from vibeocr.backend.utils.markdown_converter import (
     _process_latex_formulas,
     extract_plain_text,
     markdown_to_html,

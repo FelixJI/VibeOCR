@@ -43,6 +43,7 @@ public sealed partial class App : Application
     private IQrCodeClient? _activeQrCodeClient;
     private PortableLayout? _supervisorLayout;
     private DiagnosticsViewModel? _supervisorDiagnostics;
+    private IRuntimeInstallerClient? _runtimeInstaller;
     private FrontendExclusiveLock? _exclusiveLock;
     private WindowMessageService? _windowMessages;
     private TrayIconService? _trayIcon;
@@ -120,7 +121,12 @@ public sealed partial class App : Application
             return;
         }
         string executable = Environment.ProcessPath ?? AppContext.BaseDirectory;
-        PortableLayout layout = PortableLayout.Resolve(executable, options.Profile);
+        PortableLayout layout = PortableLayout.Resolve(
+            executable,
+            options.Profile,
+            Environment.GetEnvironmentVariable("VIBEOCR_PORTABLE_LAYOUT"));
+        _runtimeInstaller = new RuntimeInstallerClient(
+            RuntimeInstallerConfiguration.ForNext(layout));
         AppLog.Initialize(Path.Combine(layout.DataRoot, "logs"));
         AppLog.Info($"OnLaunched: profile={options.Profile} shellOnly={options.ShellOnly}");
         if (layout.Profile == "production" && File.Exists(layout.ConfigFile))
@@ -343,47 +349,31 @@ public sealed partial class App : Application
             SupervisorHealthState.Connecting, null, null, null));
         RecordMilestone(diagnostics, "T3", _startup.Elapsed);
 
-        if (!CanStartSupervisor(diagnostics.Prerequisites))
-        {
-            AppLog.Warn("Supervisor not started: Python runtime prerequisite not detected.");
-            diagnostics.UpdateSupervisor(new SupervisorHealth(
-                SupervisorHealthState.NotReady, null, null,
-                "Python 运行时未就绪，无法启动 Supervisor。"));
-            FailSoakRun("Python runtime prerequisite is unavailable.");
-            return false;
-        }
-
         await _supervisorLifecycle.WaitAsync();
         try
         {
-            // Construct supervisor process options.
-            string pythonExe = PortableLayout.ResolvePythonExecutable(layout);
+            IRuntimeInstallerClient installer = _runtimeInstaller
+                ?? throw new InvalidOperationException("Runtime Installer is unavailable.");
+            RuntimeLaunch launch = await installer.EnsureAsync(
+                _applicationShutdown.Token);
             string logPath = Path.Combine(layout.DataRoot, "supervisor.log");
             string token = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(32));
-            string supervisorRoot = ResolveSupervisorRoot(layout);
-            IReadOnlyDictionary<string, string>? environmentOverrides = null;
-            if (_soakCrashRequested && !_soakCrashInjected && !isRecovery)
+            bool injectSoakCrash =
+                _soakCrashRequested && !_soakCrashInjected && !isRecovery;
+            if (injectSoakCrash)
             {
                 _soakCrashInjected = true;
-                environmentOverrides = new Dictionary<string, string>
-                {
-                    ["VIBEOCR_SUPERVISOR_SOAK_CRASH_AFTER_READY"] = "1",
-                };
             }
-            var options = new InferenceSupervisorOptions(
-                pythonExe,
-                ["-m", "vibeocr.supervisor.main"],
-                supervisorRoot,
+            InferenceSupervisorOptions options = BuildSupervisorOptions(
+                launch,
                 logPath,
                 TimeSpan.FromSeconds(layout.Profile == "winui-dev" ? 90 : 15),
-                environmentOverrides);
+                injectSoakCrash);
 
             // Start the supervisor process.
             var process = new InferenceSupervisorProcess(options, token);
             process.UnexpectedExit += OnSupervisorUnexpectedExit;
             _supervisorProcess = process;
-            // The source-staged artifact uses its supervisor root as cwd; dev
-            // environments resolve the editable workspace packages.
             SupervisorReadyEnvelope ready = await process.StartAsync(_applicationShutdown.Token);
 
             RecordMilestone(diagnostics, "T4", _startup.Elapsed);
@@ -437,36 +427,6 @@ public sealed partial class App : Application
         }
     }
 
-    internal static string ResolveSupervisorRoot(PortableLayout layout)
-    {
-        string packaged = Path.Combine(layout.InstallRoot, "supervisor");
-        if (Directory.Exists(Path.Combine(packaged, "vibeocr", "supervisor")))
-        {
-            return packaged;
-        }
-
-        if (layout.Profile == "winui-dev")
-        {
-            string? repository = PortableLayout.FindRepositoryRoot(layout.InstallRoot);
-            if (repository is not null)
-            {
-                string source = Path.Combine(repository, "src");
-                if (Directory.Exists(Path.Combine(source, "vibeocr", "supervisor")))
-                {
-                    return source;
-                }
-                // Also check packages layout.
-                string backendPkg = Path.Combine(repository, "packages", "vibeocr-backend", "src");
-                if (Directory.Exists(Path.Combine(backendPkg, "vibeocr", "supervisor")))
-                {
-                    return backendPkg;
-                }
-            }
-        }
-
-        return layout.InstallRoot;
-    }
-
     private static void WriteSoakResult(bool requested, bool recovered, string? error = null)
     {
         string? resultPath = Environment.GetEnvironmentVariable("VIBEOCR_SOAK_RESULT");
@@ -474,6 +434,30 @@ public sealed partial class App : Application
         string fullPath = Path.GetFullPath(resultPath);
         Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
         File.WriteAllText(fullPath, JsonSerializer.Serialize(new { crash_requested = requested, recovered, error }));
+    }
+
+    internal static InferenceSupervisorOptions BuildSupervisorOptions(
+        RuntimeLaunch launch,
+        string logPath,
+        TimeSpan startupTimeout,
+        bool injectSoakCrash = false)
+    {
+        ArgumentNullException.ThrowIfNull(launch);
+        var environment = launch.Environment.ToDictionary(
+            item => item.Key,
+            item => item.Value,
+            StringComparer.OrdinalIgnoreCase);
+        if (injectSoakCrash)
+        {
+            environment["VIBEOCR_SUPERVISOR_SOAK_CRASH_AFTER_READY"] = "1";
+        }
+        return new InferenceSupervisorOptions(
+            launch.PythonExecutable,
+            ["-m", launch.SupervisorModule],
+            launch.WorkingDirectory,
+            logPath,
+            startupTimeout,
+            environment);
     }
 
     private void FailSoakRun(string error)
@@ -514,9 +498,6 @@ public sealed partial class App : Application
         Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
         File.AppendAllText(fullPath, JsonSerializer.Serialize(_startupMilestones) + Environment.NewLine);
     }
-
-    public static bool CanStartSupervisor(IEnumerable<PrerequisiteStatus> prerequisites) =>
-        prerequisites.Any(item => item.Kind == PrerequisiteKind.PythonRuntime && item.IsInstalled);
 
     private void OnSupervisorUnexpectedExit(
         object? sender,

@@ -5,7 +5,7 @@
 UI 管道下拉与注册表同步，旧导入路径仍可用。
 """
 
-from vibeocr.core.pipelines import OCRPipeline, get_all_pipelines, get_registry
+from vibeocr.backend.core.pipelines import OCRPipeline, get_all_pipelines, get_registry
 
 
 def test_full_registry_flow():
@@ -37,7 +37,7 @@ def test_pipeline_combo_has_all_registered():
 
 def test_old_imports_still_work():
     """验证旧导入路径仍然可用"""
-    from vibeocr.models.ocr_options import OCROptions
+    from vibeocr.backend.models.ocr_options import OCROptions
 
     opts = OCROptions()
     assert opts.pipeline == OCRPipeline.OCR
@@ -47,7 +47,7 @@ def test_old_imports_still_work():
 
 def test_ocr_service_get_or_create():
     """OCRService 有 get_or_create_pipeline 方法"""
-    from vibeocr.services.ocr_service import OCRService
+    from vibeocr.backend.services.ocr_service import OCRService
 
     svc = OCRService()
     assert hasattr(svc, "get_or_create_pipeline")

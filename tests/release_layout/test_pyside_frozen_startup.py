@@ -130,7 +130,7 @@ def test_frozen_startup_smoke_rejects_supervisor_loaded_outside_artifact(
                 {
                     "supervisor_ready": True,
                     "module_file": r"C:\workspace\packages\vibeocr-backend"
-                    r"\src\vibeocr\supervisor\main.py",
+                    r"\src\vibeocr\backend\supervisor\main.py",
                     "python_executable": sys.executable,
                 }
             ),

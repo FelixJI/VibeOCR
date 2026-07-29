@@ -14,11 +14,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from vibeocr.core.pipelines import OCRPipeline
-from vibeocr.models.ocr_options import OCROptions
-from vibeocr.models.ocr_result import OCRResult
-from vibeocr.services.ocr_service import OCRService
-from vibeocr.services.pipeline_cache_manager import PipelineCacheManager
+from vibeocr.backend.core.pipelines import OCRPipeline
+from vibeocr.backend.models.ocr_options import OCROptions
+from vibeocr.backend.models.ocr_result import OCRResult
+from vibeocr.backend.services.ocr_service import OCRService
+from vibeocr.backend.services.pipeline_cache_manager import PipelineCacheManager
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -101,21 +101,21 @@ class TestGetOrCreatePipeline:
         mock_registry.get.return_value = mock_spec
 
         with (
-            patch("vibeocr.services.ocr_service.OCRService._setup_cuda_dll_path"),
+            patch("vibeocr.backend.services.ocr_service.OCRService._setup_cuda_dll_path"),
             patch(
-                "vibeocr.services.ocr_service.OCRService._get_device",
+                "vibeocr.backend.services.ocr_service.OCRService._get_device",
                 return_value="cpu",
             ),
             patch(
-                "vibeocr.core.pipelines.get_registry",
+                "vibeocr.backend.core.pipelines.get_registry",
                 return_value=mock_registry,
             ),
             patch(
-                "vibeocr.services.ocr_service.OCRService._create_pipeline"
+                "vibeocr.backend.services.ocr_service.OCRService._create_pipeline"
             ) as mock_old_create,
             # 固定探测结果为 False，断言不依赖宿主环境
             patch(
-                "vibeocr.utils.cpu_info.can_safely_enable_onednn",
+                "vibeocr.backend.utils.cpu_info.can_safely_enable_onednn",
                 return_value=(False, "mocked: paddle 3.3 黑名单"),
             ),
         ):
@@ -146,17 +146,17 @@ class TestGetOrCreatePipeline:
         mock_registry.get.return_value = mock_spec
 
         with (
-            patch("vibeocr.services.ocr_service.OCRService._setup_cuda_dll_path"),
+            patch("vibeocr.backend.services.ocr_service.OCRService._setup_cuda_dll_path"),
             patch(
-                "vibeocr.services.ocr_service.OCRService._get_device",
+                "vibeocr.backend.services.ocr_service.OCRService._get_device",
                 return_value="cpu",
             ),
             patch(
-                "vibeocr.core.pipelines.get_registry",
+                "vibeocr.backend.core.pipelines.get_registry",
                 return_value=mock_registry,
             ),
             patch(
-                "vibeocr.utils.cpu_info.can_safely_enable_onednn",
+                "vibeocr.backend.utils.cpu_info.can_safely_enable_onednn",
                 return_value=(True, "mocked: AVX2 + 新 paddle"),
             ),
         ):
@@ -178,13 +178,13 @@ class TestGetOrCreatePipeline:
         mock_registry.get.return_value = mock_spec
 
         with (
-            patch("vibeocr.services.ocr_service.OCRService._setup_cuda_dll_path"),
+            patch("vibeocr.backend.services.ocr_service.OCRService._setup_cuda_dll_path"),
             patch(
-                "vibeocr.services.ocr_service.OCRService._get_device",
+                "vibeocr.backend.services.ocr_service.OCRService._get_device",
                 return_value="gpu",
             ),
             patch(
-                "vibeocr.core.pipelines.get_registry",
+                "vibeocr.backend.core.pipelines.get_registry",
                 return_value=mock_registry,
             ),
         ):
@@ -202,9 +202,9 @@ class TestGetOrCreatePipeline:
         mock_registry.has.return_value = False
 
         with (
-            patch("vibeocr.services.ocr_service.OCRService._setup_cuda_dll_path"),
+            patch("vibeocr.backend.services.ocr_service.OCRService._setup_cuda_dll_path"),
             patch(
-                "vibeocr.core.pipelines.get_registry",
+                "vibeocr.backend.core.pipelines.get_registry",
                 return_value=mock_registry,
             ),
             patch.object(
@@ -225,9 +225,9 @@ class TestGetOrCreatePipeline:
         mock_registry.has.return_value = False
 
         with (
-            patch("vibeocr.services.ocr_service.OCRService._setup_cuda_dll_path"),
+            patch("vibeocr.backend.services.ocr_service.OCRService._setup_cuda_dll_path"),
             patch(
-                "vibeocr.core.pipelines.get_registry",
+                "vibeocr.backend.core.pipelines.get_registry",
                 return_value=mock_registry,
             ),
             pytest.raises(ValueError, match="不支持的管道类型"),
@@ -248,17 +248,17 @@ class TestGetOrCreatePipeline:
         mock_registry.get.return_value = mock_spec
 
         with (
-            patch("vibeocr.services.ocr_service.OCRService._setup_cuda_dll_path"),
+            patch("vibeocr.backend.services.ocr_service.OCRService._setup_cuda_dll_path"),
             patch(
-                "vibeocr.services.ocr_service.OCRService._get_device",
+                "vibeocr.backend.services.ocr_service.OCRService._get_device",
                 return_value="cpu",
             ),
             patch(
-                "vibeocr.core.pipelines.get_registry",
+                "vibeocr.backend.core.pipelines.get_registry",
                 return_value=mock_registry,
             ),
             patch(
-                "vibeocr.utils.cpu_info.can_safely_enable_onednn",
+                "vibeocr.backend.utils.cpu_info.can_safely_enable_onednn",
                 return_value=(False, "mocked for registry locking test"),
             ),
         ):
@@ -331,7 +331,7 @@ class TestRecognizeRegistryDispatch:
         mock_registry.get.return_value = mock_spec
 
         with patch(
-            "vibeocr.core.pipelines.get_registry",
+            "vibeocr.backend.core.pipelines.get_registry",
             return_value=mock_registry,
         ):
             import numpy as np
@@ -366,7 +366,7 @@ class TestRecognizeRegistryDispatch:
         mock_registry.get.return_value = mock_spec
 
         with patch(
-            "vibeocr.core.pipelines.get_registry",
+            "vibeocr.backend.core.pipelines.get_registry",
             return_value=mock_registry,
         ):
             import numpy as np
@@ -398,7 +398,7 @@ class TestRecognizeRegistryDispatch:
         mock_registry.get.return_value = mock_table_spec
 
         with patch(
-            "vibeocr.core.pipelines.get_registry",
+            "vibeocr.backend.core.pipelines.get_registry",
             return_value=mock_registry,
         ):
             import numpy as np
@@ -430,7 +430,7 @@ class TestRecognizeRegistryDispatch:
         mock_registry.get.return_value = mock_formula_spec
 
         with patch(
-            "vibeocr.core.pipelines.get_registry",
+            "vibeocr.backend.core.pipelines.get_registry",
             return_value=mock_registry,
         ):
             import numpy as np
@@ -455,7 +455,7 @@ class TestRecognizeRegistryDispatch:
         mock_registry.get.return_value = mock_spec
 
         with patch(
-            "vibeocr.core.pipelines.get_registry",
+            "vibeocr.backend.core.pipelines.get_registry",
             return_value=mock_registry,
         ):
             # Use a valid PNG bytes input
@@ -479,7 +479,7 @@ class TestRecognizeRegistryDispatch:
 
     def test_bbox_normalization_preserved_with_registry(self):
         """Bbox normalization in recognize() still works with registry dispatch."""
-        from vibeocr.models.ocr_result import TextBlock
+        from vibeocr.backend.models.ocr_result import TextBlock
 
         service = OCRService()
 
@@ -499,7 +499,7 @@ class TestRecognizeRegistryDispatch:
         mock_registry.get.return_value = mock_spec
 
         with patch(
-            "vibeocr.core.pipelines.get_registry",
+            "vibeocr.backend.core.pipelines.get_registry",
             return_value=mock_registry,
         ):
             import numpy as np
@@ -544,7 +544,7 @@ class TestRecognizeBatch:
         mock_registry.get.return_value = mock_spec
 
         with patch(
-            "vibeocr.core.pipelines.get_registry",
+            "vibeocr.backend.core.pipelines.get_registry",
             return_value=mock_registry,
         ):
             import numpy as np
@@ -569,7 +569,7 @@ class TestRecognizeBatch:
         mock_registry.get.return_value = mock_spec
 
         with patch(
-            "vibeocr.core.pipelines.get_registry",
+            "vibeocr.backend.core.pipelines.get_registry",
             return_value=mock_registry,
         ):
             got = service.recognize_batch([], OCROptions(pipeline=OCRPipeline.OCR))
@@ -592,7 +592,7 @@ class TestRecognizeBatch:
         mock_registry.get.return_value = mock_spec
 
         with patch(
-            "vibeocr.core.pipelines.get_registry",
+            "vibeocr.backend.core.pipelines.get_registry",
             return_value=mock_registry,
         ):
             import numpy as np
@@ -609,7 +609,7 @@ class TestRecognizeBatch:
         模拟两张图：图 A 预处理尺寸 100x50（bbox 像素 50,25）；图 B 200x100
         （bbox 像素 100,50）。归一化后两者都应落在 [0,1000] 中点附近。
         """
-        from vibeocr.models.ocr_result import TextBlock
+        from vibeocr.backend.models.ocr_result import TextBlock
 
         service = OCRService()
 
@@ -635,7 +635,7 @@ class TestRecognizeBatch:
         mock_registry.get.return_value = mock_spec
 
         with patch(
-            "vibeocr.core.pipelines.get_registry",
+            "vibeocr.backend.core.pipelines.get_registry",
             return_value=mock_registry,
         ):
             import numpy as np
@@ -667,7 +667,7 @@ class TestRecognizeBatch:
         mock_registry.get.return_value = mock_spec
 
         with patch(
-            "vibeocr.core.pipelines.get_registry",
+            "vibeocr.backend.core.pipelines.get_registry",
             return_value=mock_registry,
         ):
             import numpy as np
@@ -709,12 +709,12 @@ class TestRecognizeBatch:
         mock_registry.get.return_value = mock_spec
 
         with (
-            patch("vibeocr.services.ocr_service.OCRService._setup_cuda_dll_path"),
+            patch("vibeocr.backend.services.ocr_service.OCRService._setup_cuda_dll_path"),
             patch(
-                "vibeocr.services.ocr_service.OCRService._get_device",
+                "vibeocr.backend.services.ocr_service.OCRService._get_device",
                 return_value="cpu",
             ),
-            patch("vibeocr.core.pipelines.get_registry", return_value=mock_registry),
+            patch("vibeocr.backend.core.pipelines.get_registry", return_value=mock_registry),
         ):
             got = service.recognize_batch(
                 [np.zeros((50, 100, 3), dtype=np.uint8)],
@@ -744,7 +744,7 @@ class TestRecognizeBatch:
         mock_registry.get.return_value = mock_spec
 
         with (
-            patch("vibeocr.core.pipelines.get_registry", return_value=mock_registry),
+            patch("vibeocr.backend.core.pipelines.get_registry", return_value=mock_registry),
             pytest.raises(ValueError, match="bad input"),
         ):
             service.recognize_batch(
@@ -777,12 +777,12 @@ class TestRecognizeBatch:
         mock_registry.get.return_value = mock_spec
 
         with (
-            patch("vibeocr.services.ocr_service.OCRService._setup_cuda_dll_path"),
+            patch("vibeocr.backend.services.ocr_service.OCRService._setup_cuda_dll_path"),
             patch(
-                "vibeocr.services.ocr_service.OCRService._get_device",
+                "vibeocr.backend.services.ocr_service.OCRService._get_device",
                 return_value="cpu",
             ),
-            patch("vibeocr.core.pipelines.get_registry", return_value=mock_registry),
+            patch("vibeocr.backend.core.pipelines.get_registry", return_value=mock_registry),
             pytest.raises(NotImplementedError, match="ConvertPirAttribute"),
         ):
             service.recognize_batch(
@@ -806,7 +806,7 @@ class TestRecognizeBatch:
         mock_registry.get.return_value = mock_spec
 
         with (
-            patch("vibeocr.core.pipelines.get_registry", return_value=mock_registry),
+            patch("vibeocr.backend.core.pipelines.get_registry", return_value=mock_registry),
             pytest.raises(NotImplementedError, match="ConvertPirAttribute"),
         ):
             service.recognize_batch(

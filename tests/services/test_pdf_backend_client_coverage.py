@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
-from vibeocr.services.pdf_backend_client import (
+from vibeocr.backend.services.pdf_backend_client import (
     PdfBackendClient,
     PdfBackendError,
 )
@@ -42,7 +42,7 @@ class TestResolvePythonExe:
         client = PdfBackendClient()
         from pathlib import Path
 
-        import vibeocr.env_manager as env
+        import vibeocr.backend.env_manager as env
 
         monkeypatch.setattr(env, "get_project_root", lambda: Path("/fake"))
         monkeypatch.setattr(env, "get_embedded_python", lambda r: Path("/fake/embedded/python.exe"))
@@ -54,7 +54,7 @@ class TestResolvePythonExe:
         from pathlib import Path
 
         client = PdfBackendClient()
-        import vibeocr.env_manager as env
+        import vibeocr.backend.env_manager as env
 
         monkeypatch.setattr(env, "get_project_root", lambda: Path("/fake"))
         monkeypatch.setattr(env, "get_embedded_python", lambda r: Path("/fake/none.exe"))
@@ -67,7 +67,7 @@ class TestGetBackendEnv:
         client = PdfBackendClient()
         from pathlib import Path
 
-        import vibeocr.env_manager as env
+        import vibeocr.backend.env_manager as env
 
         monkeypatch.setattr(env, "get_workspace_source_paths", lambda: [Path("/src/a"), Path("/src/b")])
         monkeypatch.delenv("PYTHONPATH", raising=False)
@@ -84,7 +84,7 @@ class TestGetBackendEnv:
         client = PdfBackendClient()
         from pathlib import Path
 
-        import vibeocr.env_manager as env
+        import vibeocr.backend.env_manager as env
 
         monkeypatch.setattr(env, "get_workspace_source_paths", lambda: [Path("/src/a")])
         monkeypatch.setenv("PYTHONPATH", "/src/a")
@@ -172,9 +172,9 @@ class TestStartAndLifecycle:
         def _fail_get(url, timeout):
             raise ConnectionError("no connection")
 
-        monkeypatch.setattr("vibeocr.services.pdf_backend_client.httpx.get", _fail_get)
+        monkeypatch.setattr("vibeocr.backend.services.pdf_backend_client.httpx.get", _fail_get)
         # 缩短超时
-        import vibeocr.services.pdf_backend_client as mod
+        import vibeocr.backend.services.pdf_backend_client as mod
 
         monkeypatch.setattr(mod, "_BACKEND_START_TIMEOUT", 0.5)
         with pytest.raises(PdfBackendError, match="超时"):
@@ -187,7 +187,7 @@ class TestStartAndLifecycle:
         client._process.poll.return_value = None
 
         resp = _mock_resp(status=200)
-        monkeypatch.setattr("vibeocr.services.pdf_backend_client.httpx.get", lambda *a, **k: resp)
+        monkeypatch.setattr("vibeocr.backend.services.pdf_backend_client.httpx.get", lambda *a, **k: resp)
         client._wait_ready()  # 不应抛异常
 
     def test_drain_stdout_tail_no_process(self):
@@ -472,7 +472,7 @@ class TestLoadStream:
         client._process.poll.return_value = None
         client._base_url = "http://x"
 
-        from vibeocr.ipc.schemas import ProgressEvent, ProgressPhase
+        from vibeocr.backend.ipc.schemas import ProgressEvent, ProgressPhase
 
         ev_json = (
             ProgressEvent(phase=ProgressPhase.LOAD, current=1, total=1, message="done")
@@ -542,7 +542,7 @@ class TestDeleteTextLayersStream:
         client._process.poll.return_value = None
         client._base_url = "http://x"
 
-        from vibeocr.ipc.schemas import ProgressEvent, ProgressPhase
+        from vibeocr.backend.ipc.schemas import ProgressEvent, ProgressPhase
 
         ev_json = (
             ProgressEvent(phase=ProgressPhase.DELETE, current=1, total=1, message="done")

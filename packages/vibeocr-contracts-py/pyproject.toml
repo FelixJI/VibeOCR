@@ -1,30 +1,30 @@
 [project]
-name = "vibeocr-contracts-py"
-version = "2.0.0rc1"
-description = "Qt-free VibeOCR protocol and DTO contracts"
+name = "vibeocr-runtime-contracts"
+version = "2.0.0"
+description = "Authoritative Python contracts for the VibeOCR Runtime Protocol"
 requires-python = ">=3.13,<3.14"
 dependencies = []
 
 [build-system]
-requires = ["hatchling>=1.0.0"]
+requires = ["hatchling==1.27.0"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/vibeocr"]
 
 [tool.hatch.build.targets.wheel.force-include]
-"src/vibeocr/protocol/v2/errors.json" = "vibeocr/protocol/v2/errors.json"
-"src/vibeocr/protocol/v2/openapi.snapshot.json" = "vibeocr/protocol/v2/openapi.snapshot.json"
-"src/vibeocr/protocol/v2/openapi.yaml" = "vibeocr/protocol/v2/openapi.yaml"
-"src/vibeocr/protocol/v2/baselines/openapi-2.0.0-rc.1.yaml" = "vibeocr/protocol/v2/baselines/openapi-2.0.0-rc.1.yaml"
-"src/vibeocr/protocol/v2/baselines/README.md" = "vibeocr/protocol/v2/baselines/README.md"
-"src/vibeocr/protocol/v2/bootstrap.schema.json" = "vibeocr/protocol/v2/bootstrap.schema.json"
-"src/vibeocr/protocol/v2/capabilities.json" = "vibeocr/protocol/v2/capabilities.json"
-"src/vibeocr/protocol/v2/generated/RuntimeProtocol.g.cs" = "vibeocr/protocol/v2/generated/RuntimeProtocol.g.cs"
-"src/vibeocr/protocol/v2/generated/RuntimeWireTypes.g.cs" = "vibeocr/protocol/v2/generated/RuntimeWireTypes.g.cs"
-"src/vibeocr/protocol/v2/golden/golden.json" = "vibeocr/protocol/v2/golden/golden.json"
-"src/vibeocr/protocol/v2/golden/runtime-api.json" = "vibeocr/protocol/v2/golden/runtime-api.json"
-"src/vibeocr/protocol/v2/schemas/errors.schema.json" = "vibeocr/protocol/v2/schemas/errors.schema.json"
-"src/vibeocr/protocol/v2/schemas/job.schema.json" = "vibeocr/protocol/v2/schemas/job.schema.json"
-"src/vibeocr/protocol/v2/schemas/job-interface.schema.json" = "vibeocr/protocol/v2/schemas/job-interface.schema.json"
-"src/vibeocr/contracts/schemas/table-v1.schema.json" = "vibeocr/contracts/schemas/table-v1.schema.json"
+"src/vibeocr/runtime_contracts/errors.json" = "vibeocr/runtime_contracts/errors.json"
+"src/vibeocr/runtime_contracts/openapi.snapshot.json" = "vibeocr/runtime_contracts/openapi.snapshot.json"
+"src/vibeocr/runtime_contracts/openapi.yaml" = "vibeocr/runtime_contracts/openapi.yaml"
+"src/vibeocr/runtime_contracts/baselines/openapi-2.0.0.yaml" = "vibeocr/runtime_contracts/baselines/openapi-2.0.0.yaml"
+"src/vibeocr/runtime_contracts/baselines/README.md" = "vibeocr/runtime_contracts/baselines/README.md"
+"src/vibeocr/runtime_contracts/bootstrap.schema.json" = "vibeocr/runtime_contracts/bootstrap.schema.json"
+"src/vibeocr/runtime_contracts/capabilities.json" = "vibeocr/runtime_contracts/capabilities.json"
+"src/vibeocr/runtime_contracts/generated/RuntimeProtocol.g.cs" = "vibeocr/runtime_contracts/generated/RuntimeProtocol.g.cs"
+"src/vibeocr/runtime_contracts/generated/RuntimeWireTypes.g.cs" = "vibeocr/runtime_contracts/generated/RuntimeWireTypes.g.cs"
+"src/vibeocr/runtime_contracts/golden/golden.json" = "vibeocr/runtime_contracts/golden/golden.json"
+"src/vibeocr/runtime_contracts/golden/runtime-api.json" = "vibeocr/runtime_contracts/golden/runtime-api.json"
+"src/vibeocr/runtime_contracts/schemas/errors.schema.json" = "vibeocr/runtime_contracts/schemas/errors.schema.json"
+"src/vibeocr/runtime_contracts/schemas/job.schema.json" = "vibeocr/runtime_contracts/schemas/job.schema.json"
+"src/vibeocr/runtime_contracts/schemas/job-interface.schema.json" = "vibeocr/runtime_contracts/schemas/job-interface.schema.json"
+"src/vibeocr/runtime_contracts/contracts/schemas/table-v1.schema.json" = "vibeocr/runtime_contracts/contracts/schemas/table-v1.schema.json"

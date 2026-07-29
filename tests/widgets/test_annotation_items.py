@@ -3,7 +3,7 @@
 from PySide6.QtCore import QRectF
 from PySide6.QtGui import QColor, QPixmap, Qt
 
-from vibeocr.widgets.editor.annotation_items import (
+from vibeocr.classic.widgets.editor.annotation_items import (
     BlurItem,
     EllipseAnnotation,
     MosaicItem,

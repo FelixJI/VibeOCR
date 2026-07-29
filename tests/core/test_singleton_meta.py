@@ -3,7 +3,7 @@
 import threading
 import time
 
-from vibeocr.core import SingletonMeta
+from vibeocr.backend.core import SingletonMeta
 
 
 class TestSingletonMeta:

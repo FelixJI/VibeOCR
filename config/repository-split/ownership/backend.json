@@ -6,22 +6,7 @@
     "vibeocr.backend"
   ],
   "current_source_patterns": [
-    "packages/vibeocr-backend/**",
-    "packages/vibeocr-client-py/src/vibeocr/application/**",
-    "packages/vibeocr-client-py/src/vibeocr/core/**",
-    "packages/vibeocr-client-py/src/vibeocr/ipc/**",
-    "packages/vibeocr-client-py/src/vibeocr/migration/**",
-    "packages/vibeocr-client-py/src/vibeocr/models/**",
-    "packages/vibeocr-client-py/src/vibeocr/tables/**",
-    "packages/vibeocr-client-py/src/vibeocr/utils/**",
-    "packages/vibeocr-client-py/src/vibeocr/services/__init__.py",
-    "packages/vibeocr-client-py/src/vibeocr/services/env_config.py",
-    "packages/vibeocr-client-py/src/vibeocr/services/text_block_processor.py",
-    "packages/vibeocr-client-py/src/vibeocr/dependency_bootstrap.py",
-    "packages/vibeocr-client-py/src/vibeocr/dependency_profiles.json",
-    "packages/vibeocr-client-py/src/vibeocr/env_manager.py",
-    "packages/vibeocr-client-py/src/vibeocr/network_detector.py",
-    "packages/vibeocr-client-py/src/vibeocr/python_path_manager.py"
+    "packages/vibeocr-backend/**"
   ],
   "forbidden_dependencies": [
     "vibeocr.runtime_client",
@@ -32,7 +17,6 @@
     "FelixJI/vibeocr-protocol"
   ],
   "allowed_current_import_prefixes": [
-    "vibeocr.contracts",
-    "vibeocr.protocol"
+    "vibeocr.runtime_contracts"
   ]
 }

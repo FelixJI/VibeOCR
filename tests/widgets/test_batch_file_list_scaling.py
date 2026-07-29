@@ -8,7 +8,7 @@ from tests.qt_responsiveness import assert_qt_event_loop_responsive
 
 
 def test_thousands_of_files_are_deduplicated_and_rows_are_chunked(qapp, qtbot):
-    from vibeocr.widgets.batch_file_list_widget import BatchFileListWidget
+    from vibeocr.classic.widgets.batch_file_list_widget import BatchFileListWidget
 
     widget = BatchFileListWidget()
     qtbot.addWidget(widget)
@@ -30,7 +30,7 @@ def test_thousands_of_files_are_deduplicated_and_rows_are_chunked(qapp, qtbot):
 
 
 def test_document_pipeline_signal_precedes_chunked_rows(qapp, qtbot, monkeypatch):
-    from vibeocr.views.batch_recognition_tab import (
+    from vibeocr.classic.views.batch_recognition_tab import (
         BatchRecognitionTab,
         BatchRecognitionWorker,
     )
@@ -38,7 +38,7 @@ def test_document_pipeline_signal_precedes_chunked_rows(qapp, qtbot, monkeypatch
     tab = BatchRecognitionTab(backend=object())
     qtbot.addWidget(tab)
     monkeypatch.setattr(
-        "vibeocr.utils.mime_types.is_document_file", lambda path: path.endswith(".pdf")
+        "vibeocr.backend.utils.mime_types.is_document_file", lambda path: path.endswith(".pdf")
     )
     monkeypatch.setattr(BatchRecognitionWorker, "start", lambda _self, *_args: None)
     tab._batch_backend = object()
@@ -58,7 +58,7 @@ def test_document_pipeline_signal_precedes_chunked_rows(qapp, qtbot, monkeypatch
 
 
 def test_status_and_selection_mapping_survive_chunked_population(qapp, qtbot):
-    from vibeocr.widgets.batch_file_list_widget import BatchFileListWidget
+    from vibeocr.classic.widgets.batch_file_list_widget import BatchFileListWidget
 
     widget = BatchFileListWidget()
     qtbot.addWidget(widget)
@@ -84,7 +84,7 @@ def test_status_and_selection_mapping_survive_chunked_population(qapp, qtbot):
 def test_path_normalization_never_resolves_or_touches_filesystem(
     qapp, qtbot, monkeypatch
 ):
-    from vibeocr.widgets.batch_file_list_widget import BatchFileListWidget
+    from vibeocr.classic.widgets.batch_file_list_widget import BatchFileListWidget
 
     def forbidden_resolve(*_args, **_kwargs):
         raise AssertionError("Path.resolve must not be used for GUI path deduplication")

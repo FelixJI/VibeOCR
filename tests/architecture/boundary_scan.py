@@ -4,8 +4,8 @@ Public API:
     scan_ui_backend_imports(ui_dirs, root) -> list[BackendImport]
     BACKEND_PACKAGES, UI_PACKAGE_DIRS
 
-A ``BackendImport`` records one ``from vibeocr.<backend_pkg> import ...`` or
-``import vibeocr.<backend_pkg>`` statement found inside a UI-layer file.
+A ``BackendImport`` records a direct import of one of Backend's internal
+subpackages from a UI-layer file.
 ``ast`` is used (not regex) so multi-line parenthesized imports, aliased
 imports and nested imports are all resolved correctly.
 """
@@ -19,14 +19,9 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from pathlib import Path
 
-# Packages that constitute the "backend" — the UI must not import these
-# directly. The source now lives in the physical pyside workspace package.
-#
-# NOTE: ``models`` is excluded — per ADR §5.3, pure data models (OCROptions,
-# OCRResult, TextBlockOptions, ExportSettings, PdfGlobalSettings, etc.) are
-# shared DTOs allowed on both sides. They are Qt-free dataclasses/enums.
-# (pdf_document.py has a QPixmap field — a known Phase-4 debt to split out,
-# tracked separately; it is not imported by the UI layer.)
+# Backend implementation packages that UI must not import directly. Pure data
+# models and presentation helpers remain external Backend API during the
+# transition; Phase 3 separately constrains environment installation access.
 BACKEND_PACKAGES: frozenset[str] = frozenset(
     {
         "services",
@@ -38,7 +33,7 @@ BACKEND_PACKAGES: frozenset[str] = frozenset(
     }
 )
 
-# UI-layer sub-packages under apps/vibeocr-pyside/src/vibeocr/.
+# UI-layer sub-packages under apps/vibeocr-pyside/src/vibeocr/classic/.
 UI_PACKAGE_DIRS: tuple[str, ...] = ("views", "widgets", "ui")
 
 
@@ -62,13 +57,13 @@ class BackendImport:
 
 
 def _backend_pkg_from_module(module: str) -> str | None:
-    """Return the backend sub-package if ``module`` is vibeocr.<backend>.<...>."""
-    if not module.startswith("vibeocr."):
+    """Return an internal subpackage under ``vibeocr.backend`` when present."""
+    if not module.startswith("vibeocr.backend."):
         return None
     parts = module.split(".")
-    if len(parts) < 2:
+    if len(parts) < 3:
         return None
-    sub = parts[1]
+    sub = parts[2]
     return sub if sub in BACKEND_PACKAGES else None
 
 
@@ -94,7 +89,7 @@ def scan_ui_backend_imports(
     Returns:
         Sorted list of :class:`BackendImport` (by file then line).
     """
-    base = root / "apps" / "vibeocr-pyside" / "src" / "vibeocr"
+    base = root / "apps" / "vibeocr-pyside" / "src" / "vibeocr" / "classic"
     hits: list[BackendImport] = []
 
     for sub in ui_dirs:

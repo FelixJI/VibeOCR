@@ -1,8 +1,11 @@
 from PySide6.QtCore import QPoint, QPointF, QRect
 from PySide6.QtGui import QPixmap
 
-from vibeocr.widgets.inline_edit_canvas import InlineEditCanvas
-from vibeocr.widgets.screen_coordinate_mapper import ScreenCoordinateMapper, ScreenInfo
+from vibeocr.classic.widgets.inline_edit_canvas import InlineEditCanvas
+from vibeocr.classic.widgets.screen_coordinate_mapper import (
+    ScreenCoordinateMapper,
+    ScreenInfo,
+)
 
 
 def _make_mapper(dpr=2.0):

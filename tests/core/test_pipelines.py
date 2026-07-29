@@ -1,7 +1,7 @@
 # tests/core/test_pipelines.py
 """管道定义模块测试"""
 
-from vibeocr.core.pipelines import (
+from vibeocr.backend.core.pipelines import (
     OCRPipeline,
     get_pipeline_description,
     get_pipeline_display_name,

@@ -6,8 +6,8 @@ from unittest.mock import Mock
 
 from PySide6.QtCore import QObject, Signal
 
-from vibeocr.views.main_window import MainWindow
-from vibeocr.views.settings_page_controller import SettingsPageController
+from vibeocr.classic.views.main_window import MainWindow
+from vibeocr.classic.views.settings_page_controller import SettingsPageController
 
 
 class _FakeManager(QObject):
@@ -103,7 +103,7 @@ def test_settings_failure_does_not_open_install_dialog(
     controller = _SettingsHarness(manager)
     warning = Mock()
     monkeypatch.setattr(
-        "vibeocr.views.settings_page_controller.QMessageBox.warning",
+        "vibeocr.classic.views.settings_page_controller.QMessageBox.warning",
         warning,
     )
 

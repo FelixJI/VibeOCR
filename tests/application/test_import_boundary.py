@@ -1,6 +1,6 @@
 """应用服务边界 import 隔离测试。
 
-验证导入 vibeocr.application 不加载 PySide6——application 层是 UI-free 边界，
+验证导入 vibeocr.backend.application 不加载 PySide6——application 层是 UI-free 边界，
 供 WorkerHost 和 WinUI 壳共享。
 """
 
@@ -33,7 +33,6 @@ def _assert_import_does_not_load_pyside6(module_name: str) -> None:
     env["PYTHONPATH"] = os.pathsep.join(
         [
             str(_PROJECT_ROOT / "packages/vibeocr-contracts-py/src"),
-            str(_PROJECT_ROOT / "packages/vibeocr-client-py/src"),
             str(_PROJECT_ROOT / "packages/vibeocr-backend/src"),
         ]
     )
@@ -52,30 +51,30 @@ class TestImportBoundary:
     """application 包导入不得触发 PySide6 加载。"""
 
     def test_import_application_no_pyside6(self):
-        """导入 vibeocr.application 不应加载 PySide6。"""
-        _assert_import_does_not_load_pyside6("vibeocr.application")
+        """导入 vibeocr.backend.application 不应加载 PySide6。"""
+        _assert_import_does_not_load_pyside6("vibeocr.backend.application")
 
     def test_import_contracts_no_pyside6(self):
-        """导入 vibeocr.application.contracts 不应加载 PySide6。"""
-        _assert_import_does_not_load_pyside6("vibeocr.application.contracts")
+        """导入 vibeocr.backend.application.contracts 不应加载 PySide6。"""
+        _assert_import_does_not_load_pyside6("vibeocr.backend.application.contracts")
 
     def test_import_ocr_facade_no_pyside6(self):
-        """导入 vibeocr.application.ocr_facade 不应加载 PySide6。"""
-        _assert_import_does_not_load_pyside6("vibeocr.application.ocr_facade")
+        """导入 vibeocr.backend.application.ocr_facade 不应加载 PySide6。"""
+        _assert_import_does_not_load_pyside6("vibeocr.backend.application.ocr_facade")
 
     def test_import_pdf_facade_no_pyside6(self):
-        """导入 vibeocr.application.pdf_facade 不应加载 PySide6。"""
-        _assert_import_does_not_load_pyside6("vibeocr.application.pdf_facade")
+        """导入 vibeocr.backend.application.pdf_facade 不应加载 PySide6。"""
+        _assert_import_does_not_load_pyside6("vibeocr.backend.application.pdf_facade")
 
     def test_import_settings_facade_no_pyside6(self):
-        """导入 vibeocr.application.settings_facade 不应加载 PySide6。"""
-        _assert_import_does_not_load_pyside6("vibeocr.application.settings_facade")
+        """导入 vibeocr.backend.application.settings_facade 不应加载 PySide6。"""
+        _assert_import_does_not_load_pyside6("vibeocr.backend.application.settings_facade")
 
     def test_contracts_source_has_no_qt(self):
         """contracts.py 源码不应 import PySide6。"""
         import inspect
 
-        from vibeocr.application import contracts
+        from vibeocr.backend.application import contracts
 
         source = inspect.getsource(contracts)
         assert "from PySide6" not in source

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from vibeocr.models import ocr_result_to_payload
-from vibeocr.protocol.v2 import (
+from vibeocr.backend.models import ocr_result_to_payload
+from vibeocr.runtime_contracts import (
     ItemOutcome,
     ItemState,
     JobItem,

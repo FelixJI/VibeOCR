@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from vibeocr import main as main_module
+from vibeocr.classic import main as main_module
 
 
 class _FakeStream:

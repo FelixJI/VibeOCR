@@ -4,9 +4,9 @@
 import pytest
 from PySide6.QtWidgets import QApplication
 
-from vibeocr.core.pipelines import OCRPipeline
-from vibeocr.models.ocr_options import OCROptions
-from vibeocr.widgets.preprocess_options_widget import PreprocessOptionsWidget
+from vibeocr.backend.core.pipelines import OCRPipeline
+from vibeocr.backend.models.ocr_options import OCROptions
+from vibeocr.classic.widgets.preprocess_options_widget import PreprocessOptionsWidget
 
 
 @pytest.fixture
@@ -88,7 +88,7 @@ class TestPreprocessOptionsWidget:
 
     def test_is_collapsible(self, widget):
         """改基类后支持折叠 API。"""
-        from vibeocr.widgets.collapsible_group_box import CollapsibleGroupBox
+        from vibeocr.classic.widgets.collapsible_group_box import CollapsibleGroupBox
 
         assert isinstance(widget, CollapsibleGroupBox)
         assert widget.is_collapsed() is False

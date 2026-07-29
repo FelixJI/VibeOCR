@@ -15,7 +15,7 @@ import os
 import sys
 from unittest.mock import MagicMock, patch
 
-from vibeocr.main import (
+from vibeocr.classic.main import (
     _cleanup_leftover_old_exes,
     _configure_standard_streams,
     _finish_t3_smoke,
@@ -41,7 +41,7 @@ class TestResolveReplacerModuleDir:
 
         monkeypatch.delattr(sys, "_MEIPASS", raising=False)
         monkeypatch.setattr(
-            "vibeocr.main.env_manager.get_project_root",
+            "vibeocr.classic.main.env_manager.get_project_root",
             MagicMock(return_value=tmp_path),
         )
 
@@ -63,7 +63,7 @@ class TestResolveReplacerModuleDir:
         """开发和打包态都找不到时返回 None。"""
         monkeypatch.delattr(sys, "_MEIPASS", raising=False)
         monkeypatch.setattr(
-            "vibeocr.main.env_manager.get_project_root",
+            "vibeocr.classic.main.env_manager.get_project_root",
             MagicMock(return_value=tmp_path),
         )
 
@@ -81,7 +81,7 @@ class TestResolveReplacerModuleDir:
 
         monkeypatch.setattr(sys, "_MEIPASS", str(meipass), raising=False)
         monkeypatch.setattr(
-            "vibeocr.main.env_manager.get_project_root",
+            "vibeocr.classic.main.env_manager.get_project_root",
             MagicMock(return_value=dev_root),
         )
 
@@ -98,7 +98,7 @@ class TestResolveAppIconPath:
         (resources / "app_icon.ico").write_bytes(b"icon")
 
         monkeypatch.setattr(
-            "vibeocr.main.env_manager.get_bundled_resources_dir",
+            "vibeocr.classic.main.env_manager.get_bundled_resources_dir",
             MagicMock(return_value=resources),
         )
 
@@ -111,7 +111,7 @@ class TestResolveAppIconPath:
         resources.mkdir()  # 无 app_icon.ico
 
         monkeypatch.setattr(
-            "vibeocr.main.env_manager.get_bundled_resources_dir",
+            "vibeocr.classic.main.env_manager.get_bundled_resources_dir",
             MagicMock(return_value=resources),
         )
 
@@ -122,27 +122,28 @@ class TestCheckProductionDependencies:
     """check_production_dependencies：生产依赖检查。"""
 
     def test_returns_true_when_ready(self, monkeypatch):
-        """is_production_environment_ready 返回就绪时返回 True，不打印缺失。"""
-        monkeypatch.setattr(
-            "vibeocr.main.env_manager.is_production_environment_ready",
-            MagicMock(return_value=(True, [])),
-        )
+        """Installer inspect 返回 verified 时启动检查通过。"""
+        client = MagicMock()
+        client.return_value.inspect.return_value = MagicMock(ready=True)
+        monkeypatch.setattr("vibeocr.classic.main.RuntimeInstallerClient", client)
         assert check_production_dependencies() is True
 
     def test_returns_false_and_prints_missing(self, monkeypatch, capsys):
-        """缺依赖时返回 False 并打印缺失项与安装指引。"""
-        monkeypatch.setattr(
-            "vibeocr.main.env_manager.is_production_environment_ready",
-            MagicMock(return_value=(False, ["paddleocr", "mineru"])),
+        """Runtime 不完整时返回 False 并打印 profile/integrity。"""
+        client = MagicMock()
+        client.return_value.inspect.return_value = MagicMock(
+            ready=False,
+            profile="win-x64-cpu",
+            integrity="not-installed",
         )
+        monkeypatch.setattr("vibeocr.classic.main.RuntimeInstallerClient", client)
 
         result = check_production_dependencies()
 
         assert result is False
         captured = capsys.readouterr()
-        assert "paddleocr" in captured.out
-        assert "mineru" in captured.out
-        assert "vibeocr-install-backend" in captured.out
+        assert "win-x64-cpu" in captured.out
+        assert "not-installed" in captured.out
 
 
 class TestCleanupLeftoverOldExes:
@@ -151,7 +152,7 @@ class TestCleanupLeftoverOldExes:
     def test_no_replacer_dir_returns_silently(self, monkeypatch):
         """_resolve_replacer_module_dir 返回 None 时静默返回。"""
         monkeypatch.setattr(
-            "vibeocr.main._resolve_replacer_module_dir", MagicMock(return_value=None)
+            "vibeocr.classic.main._resolve_replacer_module_dir", MagicMock(return_value=None)
         )
         # 不应抛异常
         _cleanup_leftover_old_exes()
@@ -161,7 +162,7 @@ class TestCleanupLeftoverOldExes:
         scripts = tmp_path / "scripts"
         scripts.mkdir()
         monkeypatch.setattr(
-            "vibeocr.main._resolve_replacer_module_dir", MagicMock(return_value=scripts)
+            "vibeocr.classic.main._resolve_replacer_module_dir", MagicMock(return_value=scripts)
         )
 
         # 让动态 import 抛异常
@@ -191,7 +192,7 @@ class TestLaunchPrewarmScheduling:
         """launch_application 源码应包括 QTimer.singleShot(0, window.prewarm_result_webengine)。"""
         import inspect
 
-        from vibeocr import main as main_module
+        from vibeocr.classic import main as main_module
 
         source = inspect.getsource(main_module.launch_application)
         # 调度预热：singleShot(0, ...) 在下一个事件循环空转触发。
@@ -270,7 +271,7 @@ class TestFinishT3Smoke:
         exited = []
         monkeypatch.setattr(os, "_exit", lambda code: exited.append(code))
 
-        with patch("vibeocr.main.flush_startup") as mock_flush:
+        with patch("vibeocr.classic.main.flush_startup") as mock_flush:
             _finish_t3_smoke(app)
 
         app.processEvents.assert_called_once()
@@ -372,7 +373,7 @@ class TestSetupAppIcon:
 
     def test_missing_icon_prints_warning_and_returns(self, qapp, monkeypatch, capsys):
         monkeypatch.setattr(
-            "vibeocr.main._resolve_app_icon_path", MagicMock(return_value=None)
+            "vibeocr.classic.main._resolve_app_icon_path", MagicMock(return_value=None)
         )
         app = MagicMock()
         _setup_app_icon(app)
@@ -387,7 +388,7 @@ class TestSetupAppIcon:
         icon_path = tmp_path / "app_icon.ico"
         icon_path.write_bytes(b"not a real icon")
         monkeypatch.setattr(
-            "vibeocr.main._resolve_app_icon_path", MagicMock(return_value=icon_path)
+            "vibeocr.classic.main._resolve_app_icon_path", MagicMock(return_value=icon_path)
         )
         app = MagicMock()
         _setup_app_icon(app)
@@ -398,7 +399,7 @@ class TestSetupAppIcon:
     def test_valid_icon_sets_window_icon(self, qapp, tmp_path, monkeypatch):
         """用真实 PNG 生成有效 QIcon（避免依赖仓库 resources）。"""
         from PySide6.QtCore import QSize
-        from PySide6.QtGui import QColor, QImage, QPixmap
+        from PySide6.QtGui import QColor, QPixmap
 
         # 构造一个有效的 1x1 PNG 文件
         pm = QPixmap(QSize(16, 16))
@@ -406,7 +407,7 @@ class TestSetupAppIcon:
         icon_path = tmp_path / "app_icon.png"
         pm.save(str(icon_path), "PNG")
         monkeypatch.setattr(
-            "vibeocr.main._resolve_app_icon_path", MagicMock(return_value=icon_path)
+            "vibeocr.classic.main._resolve_app_icon_path", MagicMock(return_value=icon_path)
         )
         app = MagicMock()
         _setup_app_icon(app)
@@ -426,4 +427,3 @@ class TestShowAnotherProductRunningDialog:
         assert title == "VibeOCR"
         assert "另一套 VibeOCR" in text
         assert "WinUI" in text
-

@@ -12,9 +12,9 @@ import logging
 
 import pytest
 
-from vibeocr.protocol.v2 import PipelineSpec, SettingsSnapshot
-from vibeocr.supervisor.inference.budgets import InputItem
-from vibeocr.supervisor.inference.mineru_adapter import MinerUProcessAdapter
+from vibeocr.backend.supervisor.inference.budgets import InputItem
+from vibeocr.backend.supervisor.inference.mineru_adapter import MinerUProcessAdapter
+from vibeocr.runtime_contracts import PipelineSpec, SettingsSnapshot
 
 
 def _raw_item(item_id: str, display_name: str, data: bytes) -> InputItem:
@@ -123,7 +123,7 @@ def test_preload_logs_and_reraises_when_lifecycle_start_fails(
     with (
         caplog.at_level(
             logging.ERROR,
-            logger="vibeocr.supervisor.inference.mineru_adapter",
+            logger="vibeocr.backend.supervisor.inference.mineru_adapter",
         ),
         pytest.raises(RuntimeError, match="mineru start failed"),
     ):
@@ -138,7 +138,7 @@ def test_preload_logs_and_reraises_when_lifecycle_start_fails(
 
 def test_mineru_executor_property_returns_adapter() -> None:
     """MinerUExecutor.adapter returns the materialised adapter (line 33)."""
-    from vibeocr.supervisor.inference.mineru_executor import MinerUExecutor
+    from vibeocr.backend.supervisor.inference.mineru_executor import MinerUExecutor
 
     inner_adapter = MinerUProcessAdapter(client_factory=lambda: _FakeMinerUClient())
     executor = MinerUExecutor(adapter_factory=lambda: inner_adapter)

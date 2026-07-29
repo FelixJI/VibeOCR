@@ -3,7 +3,7 @@
 
 import pytest
 
-from vibeocr.core.pipelines import (
+from vibeocr.backend.core.pipelines import (
     OCRPipeline,
     get_all_pipelines,
     get_pipeline_description,
@@ -11,7 +11,7 @@ from vibeocr.core.pipelines import (
     get_pipeline_supported_options,
     is_option_supported,
 )
-from vibeocr.models.ocr_options import OCROptions
+from vibeocr.backend.models.ocr_options import OCROptions
 
 
 class TestPipelineIntegration:

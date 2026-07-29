@@ -11,11 +11,12 @@ import pytest
 from PySide6.QtCore import QObject, QThread, Slot
 
 from tests.qt_responsiveness import assert_qt_event_loop_responsive
-from vibeocr.utils.export_jobs import (
+from vibeocr.classic.utils.export_jobs import (
     BatchExportReport,
-    ExportItem,
-    ExportSaveJob,
     ExportedFile,
+    ExportItem,
+    ExportJobCancelled,
+    ExportSaveJob,
     OCRResultSnapshot,
     TextBlockSnapshot,
     _detached_value,
@@ -272,7 +273,7 @@ def test_snapshot_ocr_result_content_list_validates(monkeypatch):
         calls.append(content)
 
     monkeypatch.setattr(
-        "vibeocr.tables.blocks.validate_table_blocks", fake_validate
+        "vibeocr.backend.tables.blocks.validate_table_blocks", fake_validate
     )
     result = SimpleNamespace(
         content_list=[{"type": "text", "text": "a"}],
@@ -380,7 +381,7 @@ def test_export_single_operation_cancel_event_raises(tmp_path):
     cancel_event.set()
 
     op = export_single_operation(client, {"raw_text": "x"}, output, "txt")
-    with pytest.raises(Exception):  # ExportJobCancelled
+    with pytest.raises(ExportJobCancelled):
         op(cancel_event, lambda *args: None)
     client.export_ocr_sync.assert_not_called()
 
@@ -392,7 +393,7 @@ def test_export_via_supervisor_adapter_fallback_returns_false(tmp_path, monkeypa
         inference_sync_client = None
 
     monkeypatch.setattr(
-        "vibeocr.pyside.supervisor_adapter.get_supervisor_adapter",
+        "vibeocr.classic.pyside.supervisor_adapter.get_supervisor_adapter",
         lambda: FakeAdapter(),
     )
     output = tmp_path / "r.txt"
@@ -430,7 +431,7 @@ def test_save_bitmap_operation_cancel_raises(tmp_path):
     cancel_event.set()
 
     op = save_bitmap_operation(img, output, "PNG")
-    with pytest.raises(Exception):
+    with pytest.raises(ExportJobCancelled):
         op(cancel_event, lambda *args: None)
 
 
@@ -464,7 +465,7 @@ def test_save_svg_operation_adapter_fallback(tmp_path, monkeypatch):
         inference_sync_client = FakeClient()
 
     monkeypatch.setattr(
-        "vibeocr.pyside.supervisor_adapter.get_supervisor_adapter",
+        "vibeocr.classic.pyside.supervisor_adapter.get_supervisor_adapter",
         lambda: FakeAdapter(),
     )
     output = tmp_path / "qr.svg"
@@ -482,7 +483,7 @@ def test_save_svg_operation_adapter_unavailable_raises(tmp_path, monkeypatch):
         inference_sync_client = None
 
     monkeypatch.setattr(
-        "vibeocr.pyside.supervisor_adapter.get_supervisor_adapter",
+        "vibeocr.classic.pyside.supervisor_adapter.get_supervisor_adapter",
         lambda: FakeAdapter(),
     )
     output = tmp_path / "qr.svg"
@@ -615,7 +616,7 @@ def test_export_batch_operation_cancel_at_start_raises(tmp_path):
     cancel_event.set()
 
     op = export_batch_operation(client, items)
-    with pytest.raises(Exception):  # ExportJobCancelled
+    with pytest.raises(ExportJobCancelled):
         op(cancel_event, lambda *args: None)
     client.export_ocr_sync.assert_not_called()
 
@@ -652,7 +653,7 @@ def test_export_batch_operation_cancel_midway_stops(tmp_path):
     client.export_ocr_sync = wrapped  # type: ignore
 
     op = export_batch_operation(client, items)
-    with pytest.raises(Exception):  # ExportJobCancelled at second item
+    with pytest.raises(ExportJobCancelled):
         op(cancel_event, lambda *args: None)
 
     # 只导出了第一个
@@ -671,7 +672,7 @@ def test_export_batch_operation_adapter_fallback(tmp_path, monkeypatch):
         inference_sync_client = FakeClient()
 
     monkeypatch.setattr(
-        "vibeocr.pyside.supervisor_adapter.get_supervisor_adapter",
+        "vibeocr.classic.pyside.supervisor_adapter.get_supervisor_adapter",
         lambda: FakeAdapter(),
     )
     items = (ExportItem("a.png", {"raw_text": "x"}, tmp_path, "txt"),)

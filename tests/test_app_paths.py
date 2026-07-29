@@ -3,7 +3,7 @@
 覆盖：
 - resolve_app_paths() 在 source、PyInstaller onedir、旁路 profile、正式 portable 下的解析
 - 路径带空格
-- import vibeocr.app_paths 不加载 PySide6
+- import vibeocr.classic.app_paths 不加载 PySide6
 - profile="winui-dev" 解析到 data/profiles/winui-dev，不触碰正式配置
 """
 
@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from vibeocr.app_paths import resolve_app_paths
+from vibeocr.classic.app_paths import resolve_app_paths
 
 
 class TestAppPathsDataclass:
@@ -97,10 +97,10 @@ class TestResolveAppPaths:
 
 class TestImportBoundary:
     def test_import_app_paths_does_not_load_pyside6(self):
-        """导入 vibeocr.app_paths 不应触发 PySide6 加载。"""
+        """导入 vibeocr.classic.app_paths 不应触发 PySide6 加载。"""
         # 清除已加载的模块
         for mod in list(sys.modules):
-            if mod.startswith("vibeocr.app_paths") or mod == "vibeocr.app_paths":
+            if mod.startswith("vibeocr.classic.app_paths") or mod == "vibeocr.classic.app_paths":
                 del sys.modules[mod]
         if "PySide6" in sys.modules:
             del sys.modules["PySide6"]
@@ -109,16 +109,16 @@ class TestImportBoundary:
                 if mod.startswith("PySide6"):
                     del sys.modules[mod]
 
-        importlib.import_module("vibeocr.app_paths")
+        importlib.import_module("vibeocr.classic.app_paths")
         assert "PySide6" not in sys.modules, (
-            "导入 vibeocr.app_paths 不应加载 PySide6（app_paths 是 UI-free 边界）"
+            "导入 vibeocr.classic.app_paths 不应加载 PySide6（app_paths 是 UI-free 边界）"
         )
 
     def test_app_paths_module_has_no_qt_imports(self):
         """app_paths 模块源码不应 import 任何 PySide6/Qt 模块。"""
         import inspect
 
-        from vibeocr import app_paths
+        from vibeocr.classic import app_paths
 
         source = inspect.getsource(app_paths)
         assert "PySide6" not in source
@@ -140,7 +140,7 @@ class TestBackwardCompatibility:
 
 def test_normalize_executable_existing_non_exe_file_takes_parent(tmp_path):
     """已存在的非 exe 文件（如 python.exe 之外的脚本）取 parent（line 82）。"""
-    from vibeocr.app_paths import _normalize_executable
+    from vibeocr.classic.app_paths import _normalize_executable
 
     # 创建一个存在的非 exe 文件
     f = tmp_path / "launcher"
@@ -153,7 +153,7 @@ def test_resolve_app_paths_rejects_unknown_profile(tmp_path):
     """未知 profile raise ValueError（line 105-106）。"""
     import pytest
 
-    from vibeocr.app_paths import resolve_app_paths
+    from vibeocr.classic.app_paths import resolve_app_paths
 
     with pytest.raises(ValueError, match="unsupported profile"):
         resolve_app_paths(str(tmp_path), profile="bogus")

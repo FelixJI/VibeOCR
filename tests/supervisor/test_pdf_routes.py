@@ -18,9 +18,9 @@ import pytest
 # shared NullExecutor from it is safe at runtime.
 from conftest import NullExecutor
 
-from vibeocr.supervisor.app import create_app
-from vibeocr.supervisor.bootstrap import new_instance_id
-from vibeocr.supervisor.module import SupervisorModule, SupervisorOptions
+from vibeocr.backend.supervisor.app import create_app
+from vibeocr.backend.supervisor.bootstrap import new_instance_id
+from vibeocr.backend.supervisor.module import SupervisorModule, SupervisorOptions
 
 if TYPE_CHECKING:
     from pathlib import Path

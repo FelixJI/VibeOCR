@@ -16,9 +16,8 @@ REPO_ROOT = Path(__file__).parents[2]
 VERIFIER = REPO_ROOT / "scripts" / "verify_winui_artifact.ps1"
 FIXTURE_VERSION = "0.0.0"
 RUNTIME_WHEELS = (
-    f"vibeocr_contracts_py-{FIXTURE_VERSION}-py3-none-any.whl",
+    f"vibeocr_runtime_contracts-{FIXTURE_VERSION}-py3-none-any.whl",
     f"vibeocr_runtime_client-{FIXTURE_VERSION}-py3-none-any.whl",
-    f"vibeocr_client_py-{FIXTURE_VERSION}-py3-none-any.whl",
     f"vibeocr_backend-{FIXTURE_VERSION}-py3-none-any.whl",
 )
 
@@ -62,7 +61,7 @@ def _build_layout(root: Path, *, forbidden: list[str] | None = None) -> None:
         "Views/QrCodePage.xbf",
         "Views/RecognitionPage.xbf",
         "Views/SettingsPage.xbf",
-        "supervisor/vibeocr/supervisor/main.py",
+        "supervisor/vibeocr/backend/supervisor/main.py",
         "contracts/v2/golden/golden.json",
         "CHANGELOG.md",
         "LICENSE",
@@ -85,8 +84,10 @@ def _build_layout(root: Path, *, forbidden: list[str] | None = None) -> None:
     manifest = {
         "frontend": "winui",
         "frontend_version": FIXTURE_VERSION,
+        "backend_version": FIXTURE_VERSION,
         "backend_wheel": backend_record["file"],
         "backend_sha256": backend_record["sha256"],
+        "supervisor_module": "vibeocr.backend.supervisor.main",
         "python_wheels": wheel_records,
         "protocol_major": 2,
         "protocol_version": FIXTURE_VERSION,
@@ -198,6 +199,30 @@ def test_protocol_v1_manifest_is_rejected(tmp_path: Path) -> None:
     code, output = _run_verifier(root)
     assert code == 1, output
     assert "protocol_major must be 2" in output
+
+
+def test_legacy_supervisor_module_is_rejected(tmp_path: Path) -> None:
+    root = tmp_path / "release"
+    _build_layout(root)
+    manifest_path = root / "product-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["supervisor_module"] = "vibeocr.supervisor.main"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    code, output = _run_verifier(root)
+    assert code == 1, output
+    assert "supervisor_module" in output
+
+
+def test_backend_version_must_match_bound_wheel(tmp_path: Path) -> None:
+    root = tmp_path / "release"
+    _build_layout(root)
+    manifest_path = root / "product-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["backend_version"] = "9.9.9"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    code, output = _run_verifier(root)
+    assert code == 1, output
+    assert "backend_wheel" in output
 
 
 def test_legacy_backend_layout_is_rejected(tmp_path: Path) -> None:

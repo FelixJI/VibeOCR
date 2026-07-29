@@ -7,7 +7,7 @@ from typing import Any, cast
 import fitz
 import pytest
 
-from vibeocr.services.pdf_service import PdfService
+from vibeocr.backend.services.pdf_service import PdfService
 
 
 def _create_test_pdf(path: Path, num_pages: int = 3) -> Path:
@@ -37,7 +37,7 @@ def _create_scanned_pdf(path: Path, width: int = 612, height: int = 792) -> Path
 
 def _make_ocr_result(*blocks_texts, angle=0):
     """便捷构造 OCRResult（多个 (text, bbox) 对，归一化 [0,1000] bbox）。"""
-    from vibeocr.models.ocr_result import OCRResult, TextBlock
+    from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
 
     text_blocks = []
     for text, bbox in blocks_texts:
@@ -132,12 +132,12 @@ class TestPdfServiceSave:
         内容流 + MuPDF 无法保留 ObjStm/CrossRefStream。改默认 clean=False 后，
         文字层仍应正常写入、可搜索、页面结构完整。
         """
-        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+        from vibeocr.backend.models.pdf_ocr_options import PdfGlobalSettings
 
         path = tmp_path / "scan_clean.pdf"
         doc, pdf_doc = PdfService.open_doc(str(_create_scanned_pdf(path)))
         try:
-            from vibeocr.models.ocr_result import OCRResult, TextBlock
+            from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
 
             result = OCRResult(
                 raw_text="测试文字层",
@@ -170,7 +170,7 @@ class TestPdfServiceSave:
 
     def test_clean_on_save_default_is_false(self):
         """模型默认 clean_on_save=False（避免扫描件体积膨胀）。"""
-        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+        from vibeocr.backend.models.pdf_ocr_options import PdfGlobalSettings
 
         s = PdfGlobalSettings()
         assert s.clean_on_save is False
@@ -183,7 +183,7 @@ class TestPdfServiceSave:
 
 class TestPdfServiceRender:
     def test_render_thumbnail(self, opened_doc, qapp):
-        from vibeocr.pyside.pdf_render import render_page_pixmap
+        from vibeocr.classic.pyside.pdf_render import render_page_pixmap
 
         doc, _ = opened_doc
         pixmap = render_page_pixmap(doc, 0, dpi=96)
@@ -286,7 +286,7 @@ class TestPdfServiceTextLayer:
     def test_add_text_layer_from_ocr_result(self, tmp_path):
         import numpy as np
 
-        from vibeocr.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
 
         path = tmp_path / "scan.pdf"
         doc = fitz.open()
@@ -320,7 +320,7 @@ class TestPdfServiceTextLayer:
     def test_add_text_layer_writes_chinese_text(self, tmp_path):
         import numpy as np
 
-        from vibeocr.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
 
         path = tmp_path / "scan_cn.pdf"
         doc = fitz.open()
@@ -358,7 +358,7 @@ class TestPdfServiceTextLayer:
 
         import numpy as np
 
-        from vibeocr.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
 
         path = tmp_path / "scan_tiny.pdf"
         doc = fitz.open()
@@ -378,7 +378,7 @@ class TestPdfServiceTextLayer:
         no_bbox = TextBlock(text="无坐标", score=0.9, bbox=None, page_idx=0)
         result = OCRResult(raw_text="x", text_blocks=[good, no_bbox])
 
-        with caplog.at_level(logging.WARNING, logger="vibeocr.services.pdf_service"):
+        with caplog.at_level(logging.WARNING, logger="vibeocr.backend.services.pdf_service"):
             written, skipped = PdfService.add_text_layer(doc, pdf_doc, 0, result)
 
         assert written == 1
@@ -396,7 +396,7 @@ class TestPdfServiceTextLayer:
         """
         import numpy as np
 
-        from vibeocr.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
 
         path = tmp_path / "scan_narrow.pdf"
         doc = fitz.open()
@@ -438,7 +438,7 @@ class TestPdfServiceTextLayer:
 
         import numpy as np
 
-        from vibeocr.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
 
         path = tmp_path / "scan_fb.pdf"
         doc = fitz.open()
@@ -461,7 +461,7 @@ class TestPdfServiceTextLayer:
         )
         result = OCRResult(raw_text="中文测试", text_blocks=[narrow])
 
-        with caplog.at_level(logging.DEBUG, logger="vibeocr.services.pdf_service"):
+        with caplog.at_level(logging.DEBUG, logger="vibeocr.backend.services.pdf_service"):
             PdfService.add_text_layer(doc, pdf_doc, 0, result)
 
         # 兜底写入应有 DEBUG 日志
@@ -472,7 +472,7 @@ class TestPdfServiceTextLayer:
         """90° 预处理旋转后 bbox 仍然映射到正确位置。"""
         import numpy as np
 
-        from vibeocr.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
 
         path = tmp_path / "scan_rotated.pdf"
         doc = fitz.open()
@@ -523,8 +523,8 @@ class TestPdfServiceTextLayer:
         """PdfGlobalSettings 控制字号和重试参数。"""
         import numpy as np
 
-        from vibeocr.models.ocr_result import OCRResult, TextBlock
-        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+        from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.backend.models.pdf_ocr_options import PdfGlobalSettings
 
         path = tmp_path / "scan_settings.pdf"
         doc = fitz.open()
@@ -557,7 +557,7 @@ class TestPdfServiceTextLayer:
         """preproc_angle=0（当前生产路径）时，文字层完全落在页面内。"""
         import numpy as np
 
-        from vibeocr.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
 
         path = tmp_path / "scan_default.pdf"
         doc = fitz.open()
@@ -630,8 +630,8 @@ class TestPdfServiceTextLayer:
         """
         import numpy as np
 
-        from vibeocr.models.ocr_result import OCRResult, TextBlock
-        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+        from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.backend.models.pdf_ocr_options import PdfGlobalSettings
 
         visible = PdfGlobalSettings(text_layer_visible=True)
 
@@ -690,7 +690,7 @@ class TestPdfServiceTextLayer:
         """
         import numpy as np
 
-        from vibeocr.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
 
         path = tmp_path / "scan_short.pdf"
         doc = fitz.open()
@@ -730,7 +730,7 @@ class TestPdfServiceTextLayer:
         """
         import numpy as np
 
-        from vibeocr.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
 
         path = tmp_path / "scan_narrow.pdf"
         doc = fitz.open()
@@ -769,8 +769,8 @@ class TestPdfServiceTextLayer:
         """PdfGlobalSettings.min_font_size 控制最小字号兜底。"""
         import numpy as np
 
-        from vibeocr.models.ocr_result import OCRResult, TextBlock
-        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+        from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.backend.models.pdf_ocr_options import PdfGlobalSettings
 
         path = tmp_path / "scan_minfont.pdf"
         doc = fitz.open()
@@ -811,7 +811,7 @@ class TestPdfServiceTextLayer:
         doc.save(str(path))
         doc.close()
 
-        from vibeocr.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
 
         doc, pdf_doc = PdfService.open_doc(str(path))
         PdfService.build_page_infos(doc, pdf_doc)
@@ -846,7 +846,7 @@ class TestPdfServiceTextLayer:
         doc.save(str(path))
         doc.close()
 
-        from vibeocr.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
 
         doc, pdf_doc = PdfService.open_doc(str(path))
         PdfService.build_page_infos(doc, pdf_doc)
@@ -942,8 +942,8 @@ class TestPdfServiceTextLayerPlacement:
         """
         import numpy as np
 
-        from vibeocr.models.ocr_result import OCRResult, TextBlock
-        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+        from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.backend.models.pdf_ocr_options import PdfGlobalSettings
 
         doc, pdf_doc = self._make_scan(tmp_path)
         # 归一化 bbox：宽 600（=367pt）、高 40（=31.7pt）的典型 OCR 行
@@ -988,7 +988,7 @@ class TestPdfServiceTextLayerPlacement:
         Bug 症状：旧 insert_text 兜底用初始大字号（如 190pt）单点写入，
         文字横向延伸到 rect 右侧数百 pt 外 → '严重偏离'。
         """
-        from vibeocr.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
 
         doc, pdf_doc = self._make_scan(tmp_path)
         # 窄高块：宽 40（=24.5pt）、高 300（=237.6pt）
@@ -1016,7 +1016,7 @@ class TestPdfServiceTextLayerPlacement:
 
     def test_fontsize_matches_ocr_line_height(self, tmp_path):
         """多个不同行高的块：写入字号应与各自行高成正比（不再统一缩到偏小）。"""
-        from vibeocr.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
 
         doc, pdf_doc = self._make_scan(tmp_path)
         # 三个不同行高的行：高 40/60/80（归一化）
@@ -1026,7 +1026,7 @@ class TestPdfServiceTextLayerPlacement:
             TextBlock(text="大号行标题文字", score=0.99, bbox=(50, 300, 400, 380)),  # h≈63.4pt
         ]
         result = OCRResult(text_blocks=blocks)
-        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+        from vibeocr.backend.models.pdf_ocr_options import PdfGlobalSettings
 
         PdfService.add_text_layer(
             doc, pdf_doc, 0, result, pdf_settings=PdfGlobalSettings(text_layer_visible=True)
@@ -1062,8 +1062,8 @@ class TestPdfServiceTextLayerPlacement:
         """
         import numpy as np
 
-        from vibeocr.models.ocr_result import TextBlock
-        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+        from vibeocr.backend.models.ocr_result import TextBlock
+        from vibeocr.backend.models.pdf_ocr_options import PdfGlobalSettings
 
         def _check(rot, cropbox):
             doc = fitz.open()
@@ -1133,8 +1133,8 @@ class TestPdfServiceTextLayerPlacement:
         """
         import numpy as np
 
-        from vibeocr.models.ocr_result import OCRResult, TextBlock
-        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+        from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.backend.models.pdf_ocr_options import PdfGlobalSettings
 
         doc, pdf_doc = self._make_scan(tmp_path)
         # 三个不同行高的水平行（宽 > 高，走 insert_text 主路径）
@@ -1182,9 +1182,9 @@ class TestPdfServiceTextLayerPlacement:
         """
         import numpy as np
 
-        from vibeocr.models.ocr_result import OCRResult, TextBlock
-        from vibeocr.models.pdf_document import PdfDocument
-        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+        from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.backend.models.pdf_document import PdfDocument
+        from vibeocr.backend.models.pdf_ocr_options import PdfGlobalSettings
 
         doc = fitz.open()
         page = doc.new_page(width=595.2, height=841.68)
@@ -1232,9 +1232,9 @@ class TestPdfServiceTextLayerPlacement:
         """
         import numpy as np
 
-        from vibeocr.models.ocr_result import OCRResult, TextBlock
-        from vibeocr.models.pdf_document import PdfDocument
-        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+        from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.backend.models.pdf_document import PdfDocument
+        from vibeocr.backend.models.pdf_ocr_options import PdfGlobalSettings
 
         for rot, page_w, page_h, name in [
             (0, 612, 792, "rot0"),
@@ -1287,9 +1287,9 @@ class TestPdfServiceTextLayerPlacement:
         """
         import numpy as np
 
-        from vibeocr.models.ocr_result import OCRResult, TextBlock
-        from vibeocr.models.pdf_document import PdfDocument
-        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+        from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.backend.models.pdf_document import PdfDocument
+        from vibeocr.backend.models.pdf_ocr_options import PdfGlobalSettings
 
         doc = fitz.open()
         page = doc.new_page(width=612, height=792)
@@ -1338,10 +1338,10 @@ class TestPdfServiceTextLayerPlacement:
         远大于 1，经 [0.5,3.0] 夹紧后恒为 3.0，ink 被拉到 bbox 的 ~3 倍宽——选中框
         覆盖到无关区域。修复后用真实 advance width，scale_x 合理，ink 不溢出。
         """
-        from vibeocr.models.ocr_result import OCRResult, TextBlock
-        from vibeocr.models.pdf_document import PdfDocument
-        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
-        from vibeocr.utils.cjk_font_resolver import _CJK_RESOLVER
+        from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.backend.models.pdf_document import PdfDocument
+        from vibeocr.backend.models.pdf_ocr_options import PdfGlobalSettings
+        from vibeocr.backend.utils.cjk_font_resolver import _CJK_RESOLVER
 
         # 直接验证 _natural_width 逻辑：真实 advance vs 旧启发式
         chars = "505710786"
@@ -1421,9 +1421,9 @@ class TestPdfServiceTextLayerPlacement:
         """
         import numpy as np
 
-        from vibeocr.models.ocr_result import OCRResult, TextBlock
-        from vibeocr.models.pdf_document import PdfDocument
-        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+        from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.backend.models.pdf_document import PdfDocument
+        from vibeocr.backend.models.pdf_ocr_options import PdfGlobalSettings
 
         doc = fitz.open()
         page = doc.new_page(width=612, height=792)
@@ -1472,9 +1472,9 @@ class TestPdfServiceTextLayerPlacement:
         bbox_height/1.6 ≈ 62%；正确主路径 insert_text 给 bbox_height/_INK_RATIO
         ≈ 100% 覆盖。读回 span 字号即可区分两条路径。
         """
-        from vibeocr.models.ocr_result import OCRResult, TextBlock
-        from vibeocr.models.pdf_document import PdfDocument
-        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+        from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.backend.models.pdf_document import PdfDocument
+        from vibeocr.backend.models.pdf_ocr_options import PdfGlobalSettings
 
         doc = fitz.open()
         page = doc.new_page(width=612, height=792)
@@ -1576,9 +1576,9 @@ class TestPdfServiceTextLayerPlacement:
         就走 insert_textbox。本例构造一个『多边形竖排但 AABB 宽扁』的反例，
         确认判据来自多边形而非 AABB。
         """
-        from vibeocr.models.ocr_result import OCRResult, TextBlock
-        from vibeocr.models.pdf_document import PdfDocument
-        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+        from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.backend.models.pdf_document import PdfDocument
+        from vibeocr.backend.models.pdf_ocr_options import PdfGlobalSettings
 
         doc = fitz.open()
         page = doc.new_page(width=612, height=792)

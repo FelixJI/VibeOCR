@@ -15,9 +15,8 @@ from pathlib import Path
 from typing import Any
 
 _REQUIRED_RUNTIME_WHEELS = {
-    "vibeocr-contracts-py",
+    "vibeocr-runtime-contracts",
     "vibeocr-runtime-client",
-    "vibeocr-client-py",
     "vibeocr-backend",
 }
 _SHA256_LENGTH = 64
@@ -120,7 +119,7 @@ def verify_fixture_manifest(fixture_root: Path) -> dict[str, Any]:
             raise RuntimeError(f"fixture {name} has no canonical table expectation")
         # Import only after fixture structure/hash checks so diagnostics remain useful
         # in a minimal build environment.
-        from vibeocr.contracts.tables import TableModelV1
+        from vibeocr.runtime_contracts.contracts.tables import TableModelV1
 
         table = TableModelV1.from_payload(canonical)
         expected_topologies.append(
@@ -261,15 +260,15 @@ from importlib import resources
 from pathlib import Path
 from types import SimpleNamespace
 
-from vibeocr.contracts.tables import TableCellV1, TableModelV1
-from vibeocr.models.ocr_result import OCRResult
-from vibeocr.services.export_service import ExportService
-from vibeocr.tables.blocks import canonicalize_table_block
-from vibeocr.tables.html_adapter import table_model_from_html
+from vibeocr.runtime_contracts.contracts.tables import TableCellV1, TableModelV1
+from vibeocr.backend.models.ocr_result import OCRResult
+from vibeocr.backend.services.export_service import ExportService
+from vibeocr.backend.tables.blocks import canonicalize_table_block
+from vibeocr.backend.tables.html_adapter import table_model_from_html
 
 output = Path.cwd()
 schema = json.loads(
-    resources.files("vibeocr.contracts")
+    resources.files("vibeocr.runtime_contracts.contracts")
     .joinpath("schemas/table-v1.schema.json")
     .read_text(encoding="utf-8")
 )
@@ -302,12 +301,12 @@ def result_from_fixture(fixture):
     name = fixture["name"]
     payload = fixture["provider_payload"]
     if name.startswith("mineru-"):
-        from vibeocr.services.mineru_service import MinerUService
+        from vibeocr.backend.services.mineru_service import MinerUService
 
         service = MinerUService.__new__(MinerUService)
         return service._build_ocr_result(payload, "fixture.pdf", data=None)
     if name == "paddleocr-table-recognition":
-        from vibeocr.core.pipelines.pipeline_table import (
+        from vibeocr.backend.core.pipelines.pipeline_table import (
             TABLE_RECOGNITION_SPEC,
             TableRecognitionOptions,
         )
@@ -316,7 +315,7 @@ def result_from_fixture(fixture):
             FixtureService([payload]), None, TableRecognitionOptions()
         )
     if name == "paddleocr-pp-structure":
-        from vibeocr.core.pipelines.pipeline_pp_structure import (
+        from vibeocr.backend.core.pipelines.pipeline_pp_structure import (
             PP_STRUCTURE_V3_SPEC,
             PPStructureV3Options,
         )
@@ -329,7 +328,7 @@ def result_from_fixture(fixture):
             FixtureService([response]), None, PPStructureV3Options()
         )
     if name == "paddleocr-vl":
-        from vibeocr.core.pipelines.pipeline_paddlocr_vl import (
+        from vibeocr.backend.core.pipelines.pipeline_paddlocr_vl import (
             PADDLEOCR_VL_SPEC,
             PaddleOCRVLOptions,
         )

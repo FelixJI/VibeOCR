@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from vibeocr.widgets.result_view_widget import build_table_copy_payload
+from vibeocr.classic.widgets.result_view_widget import build_table_copy_payload
 
 
 class TestBuildTableCopyPayload:

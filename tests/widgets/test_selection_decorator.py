@@ -7,7 +7,7 @@ from PySide6.QtCore import QPointF, QRectF
 from PySide6.QtGui import QColor, QFont, QPixmap
 from PySide6.QtWidgets import QGraphicsScene
 
-from vibeocr.widgets.editor.annotation_items import (
+from vibeocr.classic.widgets.editor.annotation_items import (
     ArrowAnnotation,
     BlurItem,
     EllipseAnnotation,
@@ -15,7 +15,7 @@ from vibeocr.widgets.editor.annotation_items import (
     RectAnnotation,
     TextAnnotation,
 )
-from vibeocr.widgets.editor.selection_decorator import SelectionDecorator
+from vibeocr.classic.widgets.editor.selection_decorator import SelectionDecorator
 
 
 def _make_rect_item(x=0, y=0, w=100, h=80) -> RectAnnotation:
@@ -310,7 +310,7 @@ class TestFindCanvasAndCleanup:
     """``_find_canvas``（需 EditCanvas 视图）与 ``cleanup``。"""
 
     def test_find_canvas_returns_editcanvas(self, qapp):
-        from vibeocr.widgets.editor.edit_canvas import EditCanvas
+        from vibeocr.classic.widgets.editor.edit_canvas import EditCanvas
 
         item = _make_rect_item(0, 0, 100, 80)
         scene = QGraphicsScene()

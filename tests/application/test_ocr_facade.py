@@ -8,14 +8,14 @@ from __future__ import annotations
 
 import pytest
 
-from vibeocr.application.contracts import (
+from vibeocr.backend.application.contracts import (
     CancelToken,
     OcrApplication,
     OcrError,
     OcrRequest,
     OcrResult,
 )
-from vibeocr.application.ocr_facade import OcrFacade
+from vibeocr.backend.application.ocr_facade import OcrFacade
 
 
 class _FakeOcrAdapter:

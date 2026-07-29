@@ -10,14 +10,14 @@ public enum PrerequisiteKind
     DotNetDesktopRuntime,
     WindowsAppRuntime,
     WebView2Runtime,
-    PythonRuntime,
+    RuntimeInstaller,
 }
 
 public sealed record PrerequisiteSnapshot(
     string? DotNetDesktopVersion,
     string? WindowsAppRuntimeVersion,
     string? WebView2Version,
-    bool PythonRuntimePresent);
+    bool RuntimeInstallerPresent);
 
 public sealed record PrerequisiteStatus(
     PrerequisiteKind Kind,
@@ -71,11 +71,11 @@ public sealed class PrerequisiteDetector
                 "Evergreen",
                 "https://developer.microsoft.com/microsoft-edge/webview2/"),
             new PrerequisiteStatus(
-                PrerequisiteKind.PythonRuntime,
-                snapshot.PythonRuntimePresent,
-                snapshot.PythonRuntimePresent ? "3.13" : null,
-                "3.13",
-                "repair://vibeocr/python-runtime"),
+                PrerequisiteKind.RuntimeInstaller,
+                snapshot.RuntimeInstallerPresent,
+                snapshot.RuntimeInstallerPresent ? "Bundled" : null,
+                "Bundled",
+                "repair://vibeocr/runtime-installer"),
         ]);
     }
 
@@ -99,21 +99,11 @@ internal static class WindowsPrerequisiteProbe
 {
     public static PrerequisiteSnapshot Capture(PortableLayout layout)
     {
-        // Under winui-dev the interpreter may be the repository's .venv python
-        // (see PortableLayout.ResolvePythonExecutable). A venv python.exe does
-        // not carry python313.dll beside it (the DLL lives in the base install
-        // referenced by pyvenv.cfg), so the DLL check is only meaningful for
-        // the packaged production layout. In dev, the interpreter's own
-        // existence is the right signal.
-        string pythonExe = PortableLayout.ResolvePythonExecutable(layout);
-        bool packagedLayout = pythonExe == Path.Combine(layout.RuntimeRoot, "python.exe");
-        bool pythonPresent = File.Exists(pythonExe) &&
-            (!packagedLayout || File.Exists(Path.Combine(layout.RuntimeRoot, "python313.dll")));
         return new PrerequisiteSnapshot(
             FindDotNetDesktopVersion(),
             FindWindowsAppRuntimeVersion(),
             FindWebView2Version(),
-            pythonPresent);
+            File.Exists(RuntimeInstallerConfiguration.ForNext(layout).Executable));
     }
 
     private static string? FindDotNetDesktopVersion()

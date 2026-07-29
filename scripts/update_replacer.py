@@ -3,7 +3,7 @@
 被两个调用方复用：
 1. ``scripts/updater_main.py`` —— 独立 updater.exe（新架构首选替换器）。
    updater 自动判断新旧路径（``_detect_self_exe_names``）决定 ``self_exe_names``。
-2. ``apps/vibeocr-pyside/src/vibeocr/main.py`` —— 复用本模块的
+2. ``apps/vibeocr-pyside/src/vibeocr/classic/main.py`` —— 复用本模块的
    ``cleanup_leftover_old_exes`` 做后台残留清理
    （主程序启动时 daemon 线程调用）；``update_replacer`` 内的工具函数（``_busy_remove`` 等）
    也可被主程序侧动态 import 复用。

@@ -1,6 +1,6 @@
 """管道元数据测试。"""
 
-from vibeocr.contracts.pipelines import (
+from vibeocr.runtime_contracts.contracts.pipelines import (
     _PIPELINE_METADATA,
     OCRPipeline,
     get_all_pipelines,

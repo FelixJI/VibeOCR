@@ -20,18 +20,18 @@ import time
 
 import pytest
 
-from vibeocr.protocol.v2 import (
+from vibeocr.classic.pyside.supervisor_adapter import (
+    SupervisorClientAdapter,
+    set_supervisor_adapter,
+)
+from vibeocr.runtime_client.job_handle import JobHandle
+from vibeocr.runtime_contracts import (
     JobKind,
     JobPriority,
     PipelineSelection,
     SubmitItem,
     SubmitRequest,
 )
-from vibeocr.pyside.supervisor_adapter import (
-    SupervisorClientAdapter,
-    set_supervisor_adapter,
-)
-from vibeocr.supervisor.job_handle import JobHandle
 
 from ._fake_supervisor_server import SHARED_FAKE_SERVER
 

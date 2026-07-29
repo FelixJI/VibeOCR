@@ -15,7 +15,10 @@ class TestSessionCloseSync:
 
     def test_remove_waits_for_active_op(self):
         """remove() 等待 active_ops 归零后再 close doc"""
-        from vibeocr.services.pdf_backend_process import BackendSession, SessionRegistry
+        from vibeocr.backend.services.pdf_backend_process import (
+            BackendSession,
+            SessionRegistry,
+        )
 
         reg = SessionRegistry()
         mock_doc = MagicMock()
@@ -51,7 +54,10 @@ class TestSessionCloseSync:
 
     def test_remove_acquires_fitz_lock_before_close(self):
         """remove() 在 fitz_lock 内 close doc"""
-        from vibeocr.services.pdf_backend_process import BackendSession, SessionRegistry
+        from vibeocr.backend.services.pdf_backend_process import (
+            BackendSession,
+            SessionRegistry,
+        )
 
         reg = SessionRegistry()
         mock_doc = MagicMock()
@@ -83,7 +89,10 @@ class TestSessionCloseSync:
 
     def test_remove_sets_closing_state(self):
         """remove() 设置 CLOSING 状态，拒绝新操作"""
-        from vibeocr.services.pdf_backend_process import BackendSession, SessionRegistry
+        from vibeocr.backend.services.pdf_backend_process import (
+            BackendSession,
+            SessionRegistry,
+        )
 
         reg = SessionRegistry()
         mock_doc = MagicMock()
@@ -104,7 +113,10 @@ class TestSessionCloseSync:
 
         from fastapi import HTTPException
 
-        from vibeocr.services.pdf_backend_process import BackendSession, SessionRegistry
+        from vibeocr.backend.services.pdf_backend_process import (
+            BackendSession,
+            SessionRegistry,
+        )
 
         reg = SessionRegistry()
         mock_doc = Mock()

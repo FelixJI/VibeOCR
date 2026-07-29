@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from vibeocr.migration.profile_migrator import (
+from vibeocr.backend.migration.profile_migrator import (
     CURRENT_SCHEMA_VERSION,
     migrate_config,
     migrate_profile,
@@ -120,7 +120,7 @@ def test_real_fixtures_load() -> None:
 
 def test_write_hashed_backup_returns_none_when_read_fails(tmp_path: Path, monkeypatch) -> None:
     """源文件读取失败时 _write_hashed_backup 返回 None 并记日志（line 72-74）。"""
-    from vibeocr.migration import profile_migrator
+    from vibeocr.backend.migration import profile_migrator
 
     path = tmp_path / "app_settings.json"
     path.write_text("{}", encoding="utf-8")
@@ -135,7 +135,7 @@ def test_write_hashed_backup_returns_none_when_read_fails(tmp_path: Path, monkey
 
 def test_write_hashed_backup_returns_none_when_write_fails(tmp_path: Path, monkeypatch) -> None:
     """备份文件写入失败时返回 None（line 80-82）。"""
-    from vibeocr.migration import profile_migrator
+    from vibeocr.backend.migration import profile_migrator
 
     path = tmp_path / "app_settings.json"
     path.write_text("{}", encoding="utf-8")

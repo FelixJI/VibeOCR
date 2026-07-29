@@ -8,13 +8,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from vibeocr.protocol.v2 import PipelineSpec
-from vibeocr.services.pipeline_cache_manager import (
+from vibeocr.backend.services.pipeline_cache_manager import (
     FALLBACK_MAX_HEAVY,
     VRAM_TIER_8GB,
     PipelineCacheManager,
     compute_max_heavy_by_vram,
 )
+from vibeocr.runtime_contracts import PipelineSpec
 
 # --- compute_max_heavy_by_vram ---
 
@@ -452,7 +452,9 @@ def test_release_paddle_calls_empty_cache(monkeypatch) -> None:
 
 def test_compute_max_heavy_by_vram_8gb_threshold() -> None:
     """≤8GB=1, >8GB=2, 未知=1。"""
-    from vibeocr.services.pipeline_cache_manager import compute_max_heavy_by_vram
+    from vibeocr.backend.services.pipeline_cache_manager import (
+        compute_max_heavy_by_vram,
+    )
 
     assert compute_max_heavy_by_vram(0) == 1  # 未知
     assert compute_max_heavy_by_vram(4096) == 1  # 4GB

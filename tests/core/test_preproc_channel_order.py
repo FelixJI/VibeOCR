@@ -21,7 +21,7 @@ import io
 import numpy as np
 from PIL import Image
 
-from vibeocr.core.pipelines.pipeline_ocr import _extract_preproc_info
+from vibeocr.backend.core.pipelines.pipeline_ocr import _extract_preproc_info
 
 
 class _FakeRes:

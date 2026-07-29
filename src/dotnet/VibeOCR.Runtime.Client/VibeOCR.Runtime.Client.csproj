@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <PackageId>VibeOCR.Runtime.Client</PackageId>
-    <Version>2.0.0-rc.1</Version>
+    <Version>2.0.0</Version>
     <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>VibeOCR.Runtime.Client</RootNamespace>
     <AssemblyName>VibeOCR.Runtime.Client</AssemblyName>

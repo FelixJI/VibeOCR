@@ -1,31 +1,27 @@
-"""services 命名空间 __init__ 兼容层测试。"""
+"""Backend services 使用最终物理模块，不保留旧命名空间兼容导出。"""
 
 import pytest
 
 
-def test_get_ocr_service_returns_instance():
-    """get_ocr_service 返回 OCRService 实例（line 22-23）。"""
-    from vibeocr.services import get_ocr_service
+def test_ocr_service_constructs_from_final_module():
+    """OCRService 由 Backend 最终所有者模块直接导出。"""
+    from vibeocr.backend.services.ocr_service import OCRService
 
-    # OCRService 是单例，构造不触发模型加载（lazy）
-    svc = get_ocr_service()
+    svc = OCRService()
     assert svc is not None
     assert svc.__class__.__name__ == "OCRService"
 
 
-def test_getattr_ocr_service_returns_class():
-    """services.OCRService 转发到直接实现（line 29-32）。"""
-    import vibeocr.services as services
+def test_services_namespace_has_no_compat_ocr_service_export():
+    import vibeocr.backend.services as services
 
-    cls = services.OCRService
-    assert cls.__name__ == "OCRService"
-    # 第二次访问命中缓存（globals 已设置）
-    assert services.OCRService is cls
+    with pytest.raises(AttributeError):
+        _ = services.OCRService
 
 
 def test_getattr_unknown_attribute_raises():
     """请求已删除的历史导出时 raise AttributeError（line 33）。"""
-    import vibeocr.services as services
+    import vibeocr.backend.services as services
 
     with pytest.raises(AttributeError, match="has no attribute"):
         _ = services.OCRServiceSubprocess
@@ -33,6 +29,6 @@ def test_getattr_unknown_attribute_raises():
 
 def test_getattr_other_unknown_attribute_raises():
     with pytest.raises(AttributeError, match="MinerUBatchService"):
-        import vibeocr.services as services
+        import vibeocr.backend.services as services
 
         _ = services.MinerUBatchService

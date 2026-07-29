@@ -10,10 +10,10 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from PIL import Image
 
-from vibeocr.models.ocr_result import OCRResult, TextBlock
-from vibeocr.protocol.v2 import PipelineSelection
-from vibeocr.supervisor.inference.budgets import InputItem
-from vibeocr.supervisor.inference.paddle_adapter import PaddlePipelineAdapter
+from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
+from vibeocr.backend.supervisor.inference.budgets import InputItem
+from vibeocr.backend.supervisor.inference.paddle_adapter import PaddlePipelineAdapter
+from vibeocr.runtime_contracts import PipelineSelection
 
 if TYPE_CHECKING:
     import numpy as np
@@ -139,7 +139,7 @@ def test_recognize_many_logs_pipeline_items_result_and_elapsed(
 
     with caplog.at_level(
         logging.INFO,
-        logger="vibeocr.supervisor.inference.paddle_adapter",
+        logger="vibeocr.backend.supervisor.inference.paddle_adapter",
     ):
         adapter.recognize_many(
             _raw_items("a", "b"),
@@ -183,7 +183,7 @@ def test_preload_logs_each_pipeline_result_and_elapsed(
 
     with caplog.at_level(
         logging.INFO,
-        logger="vibeocr.supervisor.inference.paddle_adapter",
+        logger="vibeocr.backend.supervisor.inference.paddle_adapter",
     ):
         adapter.preload(("OCR", "PP-StructureV3"))
 
@@ -222,7 +222,7 @@ def test_preload_missing_result_is_reported_as_failure(
     with (
         caplog.at_level(
             logging.ERROR,
-            logger="vibeocr.supervisor.inference.paddle_adapter",
+            logger="vibeocr.backend.supervisor.inference.paddle_adapter",
         ),
         pytest.raises(RuntimeError, match="OCR"),
     ):

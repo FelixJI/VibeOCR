@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from vibeocr.protocol.v2 import (
+from vibeocr.runtime_contracts import (
     ErrorCode,
     ErrorPayload,
     ItemOutcome,
@@ -20,8 +20,8 @@ from vibeocr.protocol.v2 import (
     UnknownJobError,
     new_job_id,
 )
-from vibeocr.protocol.v2.dtos import _to_iso
-from vibeocr.protocol.v2.errors import ErrorCategories, entry_for
+from vibeocr.runtime_contracts.dtos import _to_iso
+from vibeocr.runtime_contracts.errors import ErrorCategories, entry_for
 
 
 def test_to_iso_none_returns_none() -> None:

@@ -16,7 +16,7 @@ def test_main_table_regression_covers_cross_layer_surfaces_and_has_ratchet():
         "tests/widgets/test_result_view_widget.py",
     ):
         assert path in workflow
-    assert "--cov=vibeocr.tables" in workflow
+    assert "--cov=vibeocr.backend.tables" in workflow
     assert "--cov-branch" in workflow
     assert "--cov-fail-under=85" in workflow
 

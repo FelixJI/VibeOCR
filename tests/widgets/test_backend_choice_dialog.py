@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from vibeocr.widgets import backend_choice_dialog as bcd_module
+from vibeocr.classic.widgets import backend_choice_dialog as bcd_module
 
 
 @pytest.fixture

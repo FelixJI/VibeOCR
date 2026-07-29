@@ -8,8 +8,8 @@ PaddleOCR-VL 两个重管道；门控与上下文锁定正交、不被 unlock_pi
 import pytest
 from PySide6.QtWidgets import QApplication
 
-from vibeocr.core.pipelines import OCRPipeline
-from vibeocr.widgets.preprocess_options_widget import PreprocessOptionsWidget
+from vibeocr.backend.core.pipelines import OCRPipeline
+from vibeocr.classic.widgets.preprocess_options_widget import PreprocessOptionsWidget
 
 
 @pytest.fixture
@@ -20,7 +20,7 @@ def app(qtbot):
 @pytest.fixture
 def widget(app, qtbot, monkeypatch):
     """创建组件，并强制 GPU 缓存未就绪（不在构造时应用门控）。"""
-    import vibeocr.env_manager as em
+    import vibeocr.backend.env_manager as em
 
     monkeypatch.setattr(em, "_runtime_gpu_capability_cache", None)
     w = PreprocessOptionsWidget()
@@ -105,7 +105,7 @@ class TestGpuGating:
 
     def test_init_reads_process_cache_when_set(self, app, qtbot, monkeypatch):
         """构造时若进程缓存已就绪为 CPU，应立即应用门控（覆盖懒加载 inline 面板）。"""
-        import vibeocr.env_manager as em
+        import vibeocr.backend.env_manager as em
 
         monkeypatch.setattr(em, "_runtime_gpu_capability_cache", False)
         w = PreprocessOptionsWidget()

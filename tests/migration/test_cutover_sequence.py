@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from vibeocr.migration.cutover_sequence import (
+from vibeocr.backend.migration.cutover_sequence import (
     CutoverError,
     CutoverPlan,
     run_cutover,

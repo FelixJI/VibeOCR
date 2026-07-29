@@ -269,13 +269,13 @@
       "vibeocr.platform": {
         "type": "Project",
         "dependencies": {
-          "VibeOCR.Runtime.Client": "[2.0.0-rc.1, )"
+          "VibeOCR.Runtime.Client": "[2.0.0, )"
         }
       },
       "vibeocr.runtime.client": {
         "type": "Project",
         "dependencies": {
-          "VibeOCR.Runtime.Contracts": "[2.0.0-rc.1, )"
+          "VibeOCR.Runtime.Contracts": "[2.0.0, )"
         }
       },
       "VibeOCR.Runtime.Contracts": {
@@ -286,7 +286,7 @@
         "dependencies": {
           "Microsoft.WindowsAppSDK": "[2.2.0, )",
           "VibeOCR.Platform": "[1.0.0, )",
-          "VibeOCR.Runtime.Contracts": "[2.0.0-rc.1, )"
+          "VibeOCR.Runtime.Contracts": "[2.0.0, )"
         }
       },
       "Microsoft.Web.WebView2": {

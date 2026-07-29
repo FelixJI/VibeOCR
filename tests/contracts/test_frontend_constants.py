@@ -4,7 +4,7 @@
 避免后续误改导致 PDF worker 等待行为回归。
 """
 
-from vibeocr.contracts import frontend
+from vibeocr.runtime_contracts.contracts import frontend
 
 
 def test_pdf_worker_terminate_wait_ms_value() -> None:

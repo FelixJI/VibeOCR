@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from vibeocr.core.pipelines.pipeline_pp_structure import (
+from vibeocr.backend.core.pipelines.pipeline_pp_structure import (
     PPStructureV3Options,
     _build_ocr_result,
     _consume_generator_safely,
@@ -185,7 +185,7 @@ class TestRecognizePpStructureBlockTypes:
     """覆盖 formula/image/text/markdown 分支（line 173-184, 196-203, 273-323）。"""
 
     def test_formula_block(self):
-        from vibeocr.core.pipelines.pipeline_pp_structure import (
+        from vibeocr.backend.core.pipelines.pipeline_pp_structure import (
             PPStructureV3Options,
             _recognize_pp_structure,
         )
@@ -219,7 +219,7 @@ class TestRecognizePpStructureBlockTypes:
         assert "$$" in result.markdown_text
 
     def test_image_block_with_path(self):
-        from vibeocr.core.pipelines.pipeline_pp_structure import (
+        from vibeocr.backend.core.pipelines.pipeline_pp_structure import (
             PPStructureV3Options,
             _recognize_pp_structure,
         )
@@ -252,7 +252,7 @@ class TestRecognizePpStructureBlockTypes:
         assert img_blocks[0].get("img_path") == "imgs/fig0.png"
 
     def test_text_block(self):
-        from vibeocr.core.pipelines.pipeline_pp_structure import (
+        from vibeocr.backend.core.pipelines.pipeline_pp_structure import (
             PPStructureV3Options,
             _recognize_pp_structure,
         )
@@ -286,7 +286,7 @@ class TestRecognizePpStructureBlockTypes:
 
     def test_markdown_extraction_from_result(self):
         """res.markdown dict 含 markdown_texts/images → 提取（line 195-203）。"""
-        from vibeocr.core.pipelines.pipeline_pp_structure import (
+        from vibeocr.backend.core.pipelines.pipeline_pp_structure import (
             PPStructureV3Options,
             _recognize_pp_structure,
         )
@@ -320,7 +320,7 @@ class TestRecognizePpStructureBlockTypes:
         """doc_preprocessor_res.output_img 被提取（line 169-184）。"""
         import numpy as np
 
-        from vibeocr.core.pipelines.pipeline_pp_structure import (
+        from vibeocr.backend.core.pipelines.pipeline_pp_structure import (
             PPStructureV3Options,
             _recognize_pp_structure,
         )

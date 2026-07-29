@@ -51,7 +51,7 @@ $requiredFiles = @(
     'Views\QrCodePage.xbf',
     'Views\RecognitionPage.xbf',
     'Views\SettingsPage.xbf',
-    'supervisor\vibeocr\supervisor\main.py',
+    'supervisor\vibeocr\backend\supervisor\main.py',
     'product-manifest.json',
     'contracts\v2\golden\golden.json',
     'CHANGELOG.md',
@@ -81,14 +81,21 @@ if (Test-Path $manifestPath -PathType Leaf) {
         if ($manifest.protocol_major -ne 2) {
             $errors.Add("product manifest protocol_major must be 2")
         }
+        if ($manifest.supervisor_module -ne 'vibeocr.backend.supervisor.main') {
+            $errors.Add("product manifest supervisor_module must be vibeocr.backend.supervisor.main")
+        }
+        if ($manifest.backend_version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
+            $errors.Add("product manifest backend_version is invalid")
+        } elseif ($manifest.backend_wheel -notlike "vibeocr_backend-$($manifest.backend_version)-*") {
+            $errors.Add("product manifest backend_wheel does not match backend_version")
+        }
         $records = @($manifest.python_wheels)
-        if ($records.Count -ne 4) {
-            $errors.Add("expected 4 WinUI runtime wheels, found $($records.Count)")
+        if ($records.Count -ne 3) {
+            $errors.Add("expected 3 WinUI runtime wheels, found $($records.Count)")
         }
         $expectedWheelPrefixes = @(
-            'vibeocr_contracts_py-',
+            'vibeocr_runtime_contracts-',
             'vibeocr_runtime_client-',
-            'vibeocr_client_py-',
             'vibeocr_backend-'
         )
         foreach ($prefix in $expectedWheelPrefixes) {
@@ -108,6 +115,14 @@ if (Test-Path $manifestPath -PathType Leaf) {
             if ($actualHash -ne $record.sha256) {
                 $errors.Add("bound runtime wheel hash mismatch: $($record.file)")
             }
+        }
+        $manifestBackendRecord = @(
+            $records | Where-Object { $_.file -eq $manifest.backend_wheel }
+        )
+        if ($manifestBackendRecord.Count -ne 1) {
+            $errors.Add("product manifest backend_wheel must identify one bound wheel")
+        } elseif ($manifestBackendRecord[0].sha256 -ne $manifest.backend_sha256) {
+            $errors.Add("product manifest backend_sha256 does not match bound wheel")
         }
     }
 }

@@ -8,10 +8,9 @@
 
 from unittest.mock import MagicMock, patch
 
-import pytest
 from PySide6.QtWidgets import QMessageBox
 
-from vibeocr.widgets.install_dialog import InstallDialog
+from vibeocr.classic.widgets.install_dialog import InstallDialog
 
 
 def _show_dialog(dlg: InstallDialog) -> None:
@@ -164,8 +163,8 @@ class TestOnCancelClicked:
 class TestStartInstall:
     """``_start_install`` 构造 worker、连信号、显示取消按钮、``.start()``。"""
 
-    @patch("vibeocr.widgets.install_dialog.InstallWorker")
-    @patch("vibeocr.widgets.install_dialog.track_dialog_worker")
+    @patch("vibeocr.classic.widgets.install_dialog.InstallWorker")
+    @patch("vibeocr.classic.widgets.install_dialog.track_dialog_worker")
     def test_start_creates_worker_and_connects_signals(
         self, mock_track, mock_worker_cls, qapp, tmp_path
     ):
@@ -184,8 +183,8 @@ class TestStartInstall:
         assert not dlg._cancel_button.isHidden()
         assert dlg._worker is mock_worker
 
-    @patch("vibeocr.widgets.install_dialog.InstallWorker")
-    @patch("vibeocr.widgets.install_dialog.track_dialog_worker")
+    @patch("vibeocr.classic.widgets.install_dialog.InstallWorker")
+    @patch("vibeocr.classic.widgets.install_dialog.track_dialog_worker")
     def test_start_logs_intro_message(
         self, mock_track, mock_worker_cls, qapp, tmp_path
     ):

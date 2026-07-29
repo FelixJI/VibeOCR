@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <PackageId>VibeOCR.Runtime.Contracts</PackageId>
-    <Version>2.0.0-rc.1</Version>
+    <Version>2.0.0</Version>
     <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>VibeOCR.Contracts</RootNamespace>
     <AssemblyName>VibeOCR.Contracts</AssemblyName>
@@ -12,9 +12,9 @@
     <RepositoryUrl>https://github.com/FelixJI/vibeocr-protocol</RepositoryUrl>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="..\..\..\packages\vibeocr-contracts-py\src\vibeocr\protocol\v2\generated\RuntimeProtocol.g.cs"
+    <Compile Include="..\..\..\packages\vibeocr-contracts-py\src\vibeocr\runtime_contracts\generated\RuntimeProtocol.g.cs"
              Link="Generated\RuntimeProtocol.g.cs" />
-    <Compile Include="..\..\..\packages\vibeocr-contracts-py\src\vibeocr\protocol\v2\generated\RuntimeWireTypes.g.cs"
+    <Compile Include="..\..\..\packages\vibeocr-contracts-py\src\vibeocr\runtime_contracts\generated\RuntimeWireTypes.g.cs"
              Link="Generated\RuntimeWireTypes.g.cs" />
     <None Include="README.md" Pack="true" PackagePath="\" />
   </ItemGroup>

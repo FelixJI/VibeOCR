@@ -1,6 +1,6 @@
 from PySide6.QtCore import QRect
 
-from vibeocr.widgets.selection_resize_frame import _constrain_rect
+from vibeocr.classic.widgets.selection_resize_frame import _constrain_rect
 
 
 class TestConstrainRect:

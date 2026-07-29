@@ -27,8 +27,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-import vibeocr.env_manager as em
-from vibeocr.env_manager import (
+import vibeocr.backend.env_manager as em
+from vibeocr.backend.env_manager import (
     CUDA_VERSION_MAP,
     _dedup_preserve_order,
     _is_gpu_requirement,
@@ -90,14 +90,14 @@ class TestEnvironmentModeAndPaths:
 
     def test_get_embedded_venv_python_default_project_root(self, monkeypatch):
         """project_root=None 时用 get_project_root()（line 403）。"""
-        with patch("vibeocr.env_manager.get_project_root", return_value=Path("/fake")):
+        with patch("vibeocr.backend.env_manager.get_project_root", return_value=Path("/fake")):
             result = get_embedded_venv_python()
         assert "venv" in str(result).lower() or ".venv" in str(result)
 
     def test_get_embedded_venv_python_active_env(self, tmp_path, monkeypatch):
         """_is_active_python_environment_root True 时返回 sys.executable（line 405-406）。"""
         monkeypatch.setattr(
-            "vibeocr.env_manager._is_active_python_environment_root",
+            "vibeocr.backend.env_manager._is_active_python_environment_root",
             lambda project_root: True,
         )
         result = get_embedded_venv_python(tmp_path)
@@ -105,7 +105,7 @@ class TestEnvironmentModeAndPaths:
 
     def test_get_embedded_python_info_none_project_root(self, tmp_path, monkeypatch):
         """project_root=None 走 get_project_root()（line 439-440）。"""
-        monkeypatch.setattr("vibeocr.env_manager.get_project_root", lambda: tmp_path)
+        monkeypatch.setattr("vibeocr.backend.env_manager.get_project_root", lambda: tmp_path)
         info = get_embedded_python_info()
         assert info["mode"] == "none"
         assert info["ready"] is False
@@ -144,7 +144,7 @@ class TestNonWindowsPaths:
     def test_get_embedded_python_executable_posix(self, tmp_path, monkeypatch):
         monkeypatch.setattr(em.os, "name", "posix")
         monkeypatch.setattr(
-            "vibeocr.env_manager._is_active_python_environment_root",
+            "vibeocr.backend.env_manager._is_active_python_environment_root",
             lambda project_root: False,
         )
         result = get_embedded_python_executable(tmp_path)
@@ -154,7 +154,7 @@ class TestNonWindowsPaths:
     def test_get_embedded_venv_python_posix(self, tmp_path, monkeypatch):
         monkeypatch.setattr(em.os, "name", "posix")
         monkeypatch.setattr(
-            "vibeocr.env_manager._is_active_python_environment_root",
+            "vibeocr.backend.env_manager._is_active_python_environment_root",
             lambda project_root: False,
         )
         result = get_embedded_venv_python(tmp_path)
@@ -163,7 +163,7 @@ class TestNonWindowsPaths:
     def test_get_embedded_python_path_posix(self, tmp_path, monkeypatch):
         monkeypatch.setattr(em.os, "name", "posix")
         monkeypatch.setattr(
-            "vibeocr.env_manager._is_active_python_environment_root",
+            "vibeocr.backend.env_manager._is_active_python_environment_root",
             lambda project_root: False,
         )
         # 无 venv → 返回 portable python/
@@ -232,8 +232,8 @@ class TestDownloadFileWithProgress:
         )
 
         with (
-            patch("vibeocr.env_manager.urlopen", side_effect=cm),
-            caplog.at_level(logging.INFO, logger="vibeocr.env_manager"),
+            patch("vibeocr.backend.env_manager.urlopen", side_effect=cm),
+            caplog.at_level(logging.INFO, logger="vibeocr.backend.env_manager"),
         ):
             ok = download_file_with_progress(
                 "http://x", dest, description="测试", max_retries=1
@@ -274,7 +274,7 @@ class TestDownloadFileWithProgress:
         def cm(*a, **kw):
             yield resp
 
-        with patch("vibeocr.env_manager.urlopen", side_effect=cm):
+        with patch("vibeocr.backend.env_manager.urlopen", side_effect=cm):
             ok = download_file_with_progress("http://x", dest, max_retries=1)
 
         assert ok is True
@@ -284,7 +284,7 @@ class TestDownloadFileWithProgress:
     def test_download_failure_returns_false(self, tmp_path):
         """异常时重试 max_retries 次后返回 False（line 545-550）。"""
         dest = tmp_path / "out.zip"
-        with patch("vibeocr.env_manager.urlopen", side_effect=OSError("network")):
+        with patch("vibeocr.backend.env_manager.urlopen", side_effect=OSError("network")):
             ok = download_file_with_progress("http://x", dest, max_retries=2)
         assert ok is False
 
@@ -315,7 +315,7 @@ class TestDownloadFileWithProgress:
         def cm(*a, **kw):
             yield resp
 
-        with patch("vibeocr.env_manager.urlopen", side_effect=cm):
+        with patch("vibeocr.backend.env_manager.urlopen", side_effect=cm):
             ok = download_file_with_progress("http://x", dest, max_retries=1)
 
         assert ok is True
@@ -335,13 +335,13 @@ class TestDownloadArtifactMultiSourceFallback:
         import sys
 
         monkeypatch.setitem(
-            sys.modules, "vibeocr.services.update_service", None
+            sys.modules, "vibeocr.classic.services.update_service", None
         )
         dest = tmp_path / "out.zip"
 
         # download_file_with_progress 成功 → use_sha=False 路径直接成功
         with patch(
-            "vibeocr.env_manager.download_file_with_progress", return_value=True
+            "vibeocr.backend.env_manager.download_file_with_progress", return_value=True
         ):
             ok, reason = download_artifact_multi_source(
                 ["https://github.com/x/y/z.tar.gz"], dest
@@ -355,7 +355,7 @@ class TestDownloadArtifactMultiSourceFallback:
         import sys
 
         monkeypatch.setitem(
-            sys.modules, "vibeocr.services.update_service", None
+            sys.modules, "vibeocr.classic.services.update_service", None
         )
         dest = tmp_path / "out.zip"
         sha_dest = tmp_path / "out.sha256"
@@ -369,7 +369,7 @@ class TestDownloadArtifactMultiSourceFallback:
 
         with (
             patch(
-                "vibeocr.env_manager.download_file_with_progress",
+                "vibeocr.backend.env_manager.download_file_with_progress",
                 side_effect=fake_dl,
             ),
             # sha 文件内容与实际 hash 不匹配
@@ -392,7 +392,7 @@ class TestDownloadArtifactMultiSourceFallback:
         import sys
 
         monkeypatch.setitem(
-            sys.modules, "vibeocr.services.update_service", None
+            sys.modules, "vibeocr.classic.services.update_service", None
         )
         dest = tmp_path / "out.zip"
         sha_dest = tmp_path / "out.sha256"
@@ -409,7 +409,7 @@ class TestDownloadArtifactMultiSourceFallback:
             return False
 
         with patch(
-            "vibeocr.env_manager.download_file_with_progress", side_effect=fake_dl
+            "vibeocr.backend.env_manager.download_file_with_progress", side_effect=fake_dl
         ):
             ok, reason = download_artifact_multi_source(
                 ["https://github.com/x/y/z.zip"],
@@ -425,7 +425,7 @@ class TestDownloadArtifactMultiSourceFallback:
         """download_file_with_progress 抛异常 → exception reason（line 678-685）。"""
         dest = tmp_path / "out.zip"
         with patch(
-            "vibeocr.env_manager.download_file_with_progress",
+            "vibeocr.backend.env_manager.download_file_with_progress",
             side_effect=RuntimeError("boom"),
         ):
             ok, reason = download_artifact_multi_source(
@@ -443,7 +443,7 @@ class TestDownloadArtifactMultiSourceFallback:
             switches.append((label, reason))
 
         with patch(
-            "vibeocr.env_manager.download_file_with_progress", return_value=False
+            "vibeocr.backend.env_manager.download_file_with_progress", return_value=False
         ):
             download_artifact_multi_source(
                 ["https://github.com/a", "https://ghproxy.com/b"],
@@ -523,7 +523,7 @@ class TestLoadLockedVersions:
         em._locked_versions_cache = None
         monkeypatch.setattr(em, "get_project_root", lambda: tmp_path)
         with patch(
-            "vibeocr.env_manager._load_packaged_dependency_profiles",
+            "vibeocr.backend.env_manager._load_packaged_dependency_profiles",
             return_value={"locked_versions": {"torch": "2.6.0"}},
         ):
             result = _load_locked_versions()
@@ -534,7 +534,7 @@ class TestLoadLockedVersions:
         em._locked_versions_cache = None
         monkeypatch.setattr(em, "get_project_root", lambda: tmp_path)
         with patch(
-            "vibeocr.env_manager._load_packaged_dependency_profiles",
+            "vibeocr.backend.env_manager._load_packaged_dependency_profiles",
             return_value={"locked_versions": "not-a-dict"},
         ):
             assert _load_locked_versions() == {}
@@ -564,7 +564,7 @@ class TestCheckDependencies:
     def test_python_not_exists_returns_empty(self, tmp_path):
         """python.exe 不存在 → 空 dict（line 1018-1019）。"""
         with patch(
-            "vibeocr.env_manager.get_embedded_python_executable",
+            "vibeocr.backend.env_manager.get_embedded_python_executable",
             return_value=tmp_path / "nope.exe",
         ):
             assert check_dependencies(tmp_path) == {}
@@ -582,10 +582,10 @@ class TestCheckDependencies:
 
         with (
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=python_exe,
             ),
-            patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run),
+            patch("vibeocr.backend.env_manager.subprocess.run", side_effect=mock_run),
         ):
             deps = check_dependencies(tmp_path)
 
@@ -613,10 +613,10 @@ class TestCheckDependencies:
 
         with (
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=python_exe,
             ),
-            patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run),
+            patch("vibeocr.backend.env_manager.subprocess.run", side_effect=mock_run),
         ):
             deps = check_dependencies(tmp_path)
 
@@ -694,15 +694,15 @@ class TestInstallEmbeddedPythonBranches:
     def test_skips_symlink_members(self, tmp_path):
         """含符号链接的成员应被跳过（line 802-804）。"""
         with (
-            patch("vibeocr.env_manager.get_environment_mode", return_value="none"),
+            patch("vibeocr.backend.env_manager.get_environment_mode", return_value="none"),
             patch(
-                "vibeocr.env_manager.download_file_with_progress", return_value=True
+                "vibeocr.backend.env_manager.download_file_with_progress", return_value=True
             ) as mock_dl,
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=tmp_path / "python" / "python.exe",
             ),
-            patch("vibeocr.env_manager.subprocess.run"),
+            patch("vibeocr.backend.env_manager.subprocess.run"),
         ):
             def _fake_dl(url, dest, *a, **kw):
                 dest.write_bytes(self._make_tar_with_symlink())
@@ -718,7 +718,7 @@ class TestInstallEmbeddedPythonBranches:
 
     def test_international_network_orders_github_first(self, tmp_path):
         """international 网络时 GitHub 直链在前（line 745）。"""
-        from vibeocr.env_manager import install_embedded_python
+        from vibeocr.backend.env_manager import install_embedded_python
 
         captured_urls = []
 
@@ -728,15 +728,15 @@ class TestInstallEmbeddedPythonBranches:
             return True
 
         with (
-            patch("vibeocr.env_manager.get_environment_mode", return_value="none"),
+            patch("vibeocr.backend.env_manager.get_environment_mode", return_value="none"),
             patch(
-                "vibeocr.env_manager.download_file_with_progress", side_effect=fake_dl
+                "vibeocr.backend.env_manager.download_file_with_progress", side_effect=fake_dl
             ),
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=tmp_path / "python" / "python.exe",
             ),
-            patch("vibeocr.env_manager.subprocess.run"),
+            patch("vibeocr.backend.env_manager.subprocess.run"),
         ):
             install_embedded_python(tmp_path, network_type="international")
 
@@ -745,7 +745,7 @@ class TestInstallEmbeddedPythonBranches:
 
     def test_pip_self_check_fails_returns_warning(self, tmp_path, caplog):
         """pip 自检 returncode != 0 时记 warning（line 833-837）。"""
-        from vibeocr.env_manager import install_embedded_python
+        from vibeocr.backend.env_manager import install_embedded_python
 
         def fake_run(cmd, **kw):
             r = MagicMock()
@@ -760,16 +760,16 @@ class TestInstallEmbeddedPythonBranches:
             return r
 
         with (
-            patch("vibeocr.env_manager.get_environment_mode", return_value="none"),
+            patch("vibeocr.backend.env_manager.get_environment_mode", return_value="none"),
             patch(
-                "vibeocr.env_manager.download_file_with_progress", return_value=True
+                "vibeocr.backend.env_manager.download_file_with_progress", return_value=True
             ) as mock_dl,
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=tmp_path / "python" / "python.exe",
             ),
-            patch("vibeocr.env_manager.subprocess.run", side_effect=fake_run),
-            caplog.at_level(logging.WARNING, logger="vibeocr.env_manager"),
+            patch("vibeocr.backend.env_manager.subprocess.run", side_effect=fake_run),
+            caplog.at_level(logging.WARNING, logger="vibeocr.backend.env_manager"),
         ):
             def _fake_dl(url, dest, *a, **kw):
                 dest.write_bytes(self._make_tar_with_symlink())
@@ -783,7 +783,7 @@ class TestInstallEmbeddedPythonBranches:
 
     def test_pip_self_check_exception_logs_warning(self, tmp_path, caplog):
         """pip 自检 subprocess 异常时记 warning（line 838-839）。"""
-        from vibeocr.env_manager import install_embedded_python
+        from vibeocr.backend.env_manager import install_embedded_python
 
         def fake_run(cmd, **kw):
             if "pip" in " ".join(cmd) and "--version" in cmd:
@@ -795,16 +795,16 @@ class TestInstallEmbeddedPythonBranches:
             return r
 
         with (
-            patch("vibeocr.env_manager.get_environment_mode", return_value="none"),
+            patch("vibeocr.backend.env_manager.get_environment_mode", return_value="none"),
             patch(
-                "vibeocr.env_manager.download_file_with_progress", return_value=True
+                "vibeocr.backend.env_manager.download_file_with_progress", return_value=True
             ) as mock_dl,
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=tmp_path / "python" / "python.exe",
             ),
-            patch("vibeocr.env_manager.subprocess.run", side_effect=fake_run),
-            caplog.at_level(logging.WARNING, logger="vibeocr.env_manager"),
+            patch("vibeocr.backend.env_manager.subprocess.run", side_effect=fake_run),
+            caplog.at_level(logging.WARNING, logger="vibeocr.backend.env_manager"),
         ):
             def _fake_dl(url, dest, *a, **kw):
                 dest.write_bytes(self._make_tar_with_symlink())
@@ -818,20 +818,20 @@ class TestInstallEmbeddedPythonBranches:
 
     def test_extract_fails_returns_false(self, tmp_path):
         """解压抛异常时返回失败并清理（line 806-810）。"""
-        from vibeocr.env_manager import install_embedded_python
+        from vibeocr.backend.env_manager import install_embedded_python
 
         with (
-            patch("vibeocr.env_manager.get_environment_mode", return_value="none"),
+            patch("vibeocr.backend.env_manager.get_environment_mode", return_value="none"),
             patch(
-                "vibeocr.env_manager.download_file_with_progress", return_value=True
+                "vibeocr.backend.env_manager.download_file_with_progress", return_value=True
             ) as mock_dl,
             patch("tarfile.open", side_effect=OSError("corrupt tar")),
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=tmp_path / "python" / "python.exe",
             ),
-            patch("vibeocr.env_manager.subprocess.run"),
-            patch("vibeocr.env_manager.shutil.rmtree"),
+            patch("vibeocr.backend.env_manager.subprocess.run"),
+            patch("vibeocr.backend.env_manager.shutil.rmtree"),
         ):
             def _fake_dl(url, dest, *a, **kw):
                 dest.write_bytes(b"not a real tar")
@@ -845,20 +845,20 @@ class TestInstallEmbeddedPythonBranches:
 
     def test_python_exe_missing_after_extract_returns_false(self, tmp_path):
         """解压后 python.exe 不存在 → 失败（line 813-819）。"""
-        from vibeocr.env_manager import install_embedded_python
+        from vibeocr.backend.env_manager import install_embedded_python
 
         with (
-            patch("vibeocr.env_manager.get_environment_mode", return_value="none"),
+            patch("vibeocr.backend.env_manager.get_environment_mode", return_value="none"),
             patch(
-                "vibeocr.env_manager.download_file_with_progress", return_value=True
+                "vibeocr.backend.env_manager.download_file_with_progress", return_value=True
             ) as mock_dl,
             # 解压后 get_embedded_python_executable 返回的路径不存在
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=tmp_path / "python" / "missing.exe",
             ),
-            patch("vibeocr.env_manager.subprocess.run"),
-            patch("vibeocr.env_manager.shutil.rmtree"),
+            patch("vibeocr.backend.env_manager.subprocess.run"),
+            patch("vibeocr.backend.env_manager.shutil.rmtree"),
         ):
             # 用真实 tar（解压成功但不含 missing.exe）
             buf = io.BytesIO()
@@ -883,12 +883,12 @@ class TestInstallEmbeddedPythonBranches:
 
     def test_venv_mode_incomplete_returns_false(self, tmp_path):
         """venv 模式但 python.exe 不存在 → 失败（line 716-717）。"""
-        from vibeocr.env_manager import install_embedded_python
+        from vibeocr.backend.env_manager import install_embedded_python
 
         with (
-            patch("vibeocr.env_manager.get_environment_mode", return_value="venv"),
+            patch("vibeocr.backend.env_manager.get_environment_mode", return_value="venv"),
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=tmp_path / "python" / "missing.exe",
             ),
         ):
@@ -900,11 +900,11 @@ class TestInstallEmbeddedPythonBranches:
 class TestReinstallEmbeddedPython:
     def test_reinstall_reports_progress(self, tmp_path):
         """reinstall_embedded_python 调用 progress_callback（line 865-877）。"""
-        from vibeocr.env_manager import reinstall_embedded_python
+        from vibeocr.backend.env_manager import reinstall_embedded_python
 
         messages = []
         with patch(
-            "vibeocr.env_manager.install_embedded_python",
+            "vibeocr.backend.env_manager.install_embedded_python",
             return_value=(True, "ok"),
         ) as mock_install:
             ok, _msg = reinstall_embedded_python(
@@ -926,7 +926,7 @@ class TestReinstallEmbeddedPython:
 class TestSwitchPaddleBackendBranches:
     def test_invalid_target_returns_false(self, tmp_path):
         """无效 target → 失败（line 3083-3084）。"""
-        from vibeocr.env_manager import switch_paddle_backend
+        from vibeocr.backend.env_manager import switch_paddle_backend
 
         ok, msg = switch_paddle_backend(tmp_path, "tpu")
         assert ok is False
@@ -934,10 +934,10 @@ class TestSwitchPaddleBackendBranches:
 
     def test_python_missing_returns_false(self, tmp_path):
         """python.exe 不存在 → 失败（line 3087-3088）。"""
-        from vibeocr.env_manager import switch_paddle_backend
+        from vibeocr.backend.env_manager import switch_paddle_backend
 
         with patch(
-            "vibeocr.env_manager.get_embedded_python_executable",
+            "vibeocr.backend.env_manager.get_embedded_python_executable",
             return_value=tmp_path / "nope.exe",
         ):
             ok, msg = switch_paddle_backend(tmp_path, "gpu")
@@ -946,7 +946,7 @@ class TestSwitchPaddleBackendBranches:
 
     def test_cancel_during_uninstall(self, tmp_path):
         """uninstall 后 cancel_event 被置位 → 取消（line 3126-3127）。"""
-        from vibeocr.env_manager import switch_paddle_backend
+        from vibeocr.backend.env_manager import switch_paddle_backend
 
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
@@ -961,10 +961,10 @@ class TestSwitchPaddleBackendBranches:
 
         with (
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=python_exe,
             ),
-            patch("vibeocr.env_manager.subprocess.Popen", return_value=proc),
+            patch("vibeocr.backend.env_manager.subprocess.Popen", return_value=proc),
         ):
             ok, msg = switch_paddle_backend(
                 tmp_path, "gpu", cancel_event=cancel, on_proc=on_proc
@@ -974,7 +974,7 @@ class TestSwitchPaddleBackendBranches:
 
     def test_install_failure_returns_false(self, tmp_path):
         """install_embedded_dependencies 失败 → 失败（line 3139-3140）。"""
-        from vibeocr.env_manager import switch_paddle_backend
+        from vibeocr.backend.env_manager import switch_paddle_backend
 
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
@@ -983,12 +983,12 @@ class TestSwitchPaddleBackendBranches:
 
         with (
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=python_exe,
             ),
-            patch("vibeocr.env_manager.subprocess.Popen", return_value=proc),
+            patch("vibeocr.backend.env_manager.subprocess.Popen", return_value=proc),
             patch(
-                "vibeocr.env_manager.install_embedded_dependencies",
+                "vibeocr.backend.env_manager.install_embedded_dependencies",
                 return_value=(False, "install failed"),
             ),
         ):
@@ -998,7 +998,7 @@ class TestSwitchPaddleBackendBranches:
 
     def test_uninstall_timeout_kills_proc(self, tmp_path):
         """uninstall 超时 → kill 进程（line 3121-3123）。"""
-        from vibeocr.env_manager import switch_paddle_backend
+        from vibeocr.backend.env_manager import switch_paddle_backend
 
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
@@ -1011,15 +1011,15 @@ class TestSwitchPaddleBackendBranches:
 
         with (
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=python_exe,
             ),
-            patch("vibeocr.env_manager.subprocess.Popen", return_value=proc),
+            patch("vibeocr.backend.env_manager.subprocess.Popen", return_value=proc),
             patch(
-                "vibeocr.env_manager.install_embedded_dependencies",
+                "vibeocr.backend.env_manager.install_embedded_dependencies",
                 return_value=(True, "ok"),
             ),
-            patch("vibeocr.env_manager.update_cache_field", return_value=True),
+            patch("vibeocr.backend.env_manager.update_cache_field", return_value=True),
         ):
             ok, _msg = switch_paddle_backend(tmp_path, "cpu")
         # 应 kill 并继续
@@ -1028,7 +1028,7 @@ class TestSwitchPaddleBackendBranches:
 
     def test_success_cpu_writes_pending_backend(self, tmp_path):
         """成功切换 cpu → 写 pending_backend（line 3146-3150）。"""
-        from vibeocr.env_manager import switch_paddle_backend
+        from vibeocr.backend.env_manager import switch_paddle_backend
 
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
@@ -1037,15 +1037,15 @@ class TestSwitchPaddleBackendBranches:
 
         with (
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=python_exe,
             ),
-            patch("vibeocr.env_manager.subprocess.Popen", return_value=proc),
+            patch("vibeocr.backend.env_manager.subprocess.Popen", return_value=proc),
             patch(
-                "vibeocr.env_manager.install_embedded_dependencies",
+                "vibeocr.backend.env_manager.install_embedded_dependencies",
                 return_value=(True, "ok"),
             ),
-            patch("vibeocr.env_manager.update_cache_field", return_value=True) as mock_update,
+            patch("vibeocr.backend.env_manager.update_cache_field", return_value=True) as mock_update,
         ):
             ok, _msg = switch_paddle_backend(tmp_path, "cpu")
         assert ok is True
@@ -1053,7 +1053,7 @@ class TestSwitchPaddleBackendBranches:
 
     def test_cache_update_failure_warns(self, tmp_path, caplog):
         """update_cache_field 失败 → warning（line 3146-3147）。"""
-        from vibeocr.env_manager import switch_paddle_backend
+        from vibeocr.backend.env_manager import switch_paddle_backend
 
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
@@ -1062,16 +1062,16 @@ class TestSwitchPaddleBackendBranches:
 
         with (
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=python_exe,
             ),
-            patch("vibeocr.env_manager.subprocess.Popen", return_value=proc),
+            patch("vibeocr.backend.env_manager.subprocess.Popen", return_value=proc),
             patch(
-                "vibeocr.env_manager.install_embedded_dependencies",
+                "vibeocr.backend.env_manager.install_embedded_dependencies",
                 return_value=(True, "ok"),
             ),
-            patch("vibeocr.env_manager.update_cache_field", return_value=False),
-            caplog.at_level(logging.INFO, logger="vibeocr.env_manager"),
+            patch("vibeocr.backend.env_manager.update_cache_field", return_value=False),
+            caplog.at_level(logging.INFO, logger="vibeocr.backend.env_manager"),
         ):
             ok, _msg = switch_paddle_backend(tmp_path, "cpu")
         assert ok is True
@@ -1079,18 +1079,18 @@ class TestSwitchPaddleBackendBranches:
 
     def test_generic_exception_returns_false(self, tmp_path):
         """install 抛通用异常 → 失败（line 3154-3155）。"""
-        from vibeocr.env_manager import switch_paddle_backend
+        from vibeocr.backend.env_manager import switch_paddle_backend
 
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
 
         with (
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=python_exe,
             ),
             patch(
-                "vibeocr.env_manager.subprocess.Popen",
+                "vibeocr.backend.env_manager.subprocess.Popen",
                 side_effect=RuntimeError("unexpected"),
             ),
         ):
@@ -1107,19 +1107,19 @@ class TestSwitchPaddleBackendBranches:
 class TestDetectDependencyUpdatesBranches:
     def test_venv_mode_returns_empty(self, tmp_path):
         """venv 模式 → 空 dict（line 2584-2585）。"""
-        from vibeocr.env_manager import detect_dependency_updates
+        from vibeocr.backend.env_manager import detect_dependency_updates
 
-        with patch("vibeocr.env_manager.get_environment_mode", return_value="venv"):
+        with patch("vibeocr.backend.env_manager.get_environment_mode", return_value="venv"):
             assert detect_dependency_updates(tmp_path) == {}
 
     def test_python_missing_returns_empty(self, tmp_path):
         """portable 但 python.exe 不存在 → 空（line 2587-2589）。"""
-        from vibeocr.env_manager import detect_dependency_updates
+        from vibeocr.backend.env_manager import detect_dependency_updates
 
         with (
-            patch("vibeocr.env_manager.get_environment_mode", return_value="portable"),
+            patch("vibeocr.backend.env_manager.get_environment_mode", return_value="portable"),
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=tmp_path / "nope.exe",
             ),
         ):
@@ -1127,26 +1127,26 @@ class TestDetectDependencyUpdatesBranches:
 
     def test_outdated_version_reported(self, tmp_path):
         """已装 < 锁定版 → 报告更新（line 2643-2644/2651-2652）。"""
-        from vibeocr.env_manager import detect_dependency_updates
+        from vibeocr.backend.env_manager import detect_dependency_updates
 
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
         with (
-            patch("vibeocr.env_manager.get_environment_mode", return_value="portable"),
+            patch("vibeocr.backend.env_manager.get_environment_mode", return_value="portable"),
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=python_exe,
             ),
             patch(
-                "vibeocr.env_manager._load_dep_specs",
+                "vibeocr.backend.env_manager._load_dep_specs",
                 return_value={"paddleocr": "paddleocr>=3.7.0"},
             ),
             patch(
-                "vibeocr.env_manager.get_dependency_versions",
+                "vibeocr.backend.env_manager.get_dependency_versions",
                 return_value={"paddleocr": "3.6.0"},  # 旧版
             ),
             patch(
-                "vibeocr.env_manager._load_locked_versions",
+                "vibeocr.backend.env_manager._load_locked_versions",
                 return_value={"paddleocr": "3.7.0"},
             ),
         ):
@@ -1155,26 +1155,26 @@ class TestDetectDependencyUpdatesBranches:
 
     def test_not_installed_reported(self, tmp_path):
         """未安装（空版本串）→ 报告更新（line 2635-2636）。"""
-        from vibeocr.env_manager import detect_dependency_updates
+        from vibeocr.backend.env_manager import detect_dependency_updates
 
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
         with (
-            patch("vibeocr.env_manager.get_environment_mode", return_value="portable"),
+            patch("vibeocr.backend.env_manager.get_environment_mode", return_value="portable"),
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=python_exe,
             ),
             patch(
-                "vibeocr.env_manager._load_dep_specs",
+                "vibeocr.backend.env_manager._load_dep_specs",
                 return_value={"paddleocr": "paddleocr>=3.7.0"},
             ),
             patch(
-                "vibeocr.env_manager.get_dependency_versions",
+                "vibeocr.backend.env_manager.get_dependency_versions",
                 return_value={"paddleocr": ""},  # 未安装
             ),
             patch(
-                "vibeocr.env_manager._load_locked_versions",
+                "vibeocr.backend.env_manager._load_locked_versions",
                 return_value={"paddleocr": "3.7.0"},
             ),
         ):
@@ -1183,26 +1183,26 @@ class TestDetectDependencyUpdatesBranches:
 
     def test_up_to_date_not_reported(self, tmp_path):
         """已装 == 锁定版 → 不报告（line 2651 条件不满足）。"""
-        from vibeocr.env_manager import detect_dependency_updates
+        from vibeocr.backend.env_manager import detect_dependency_updates
 
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
         with (
-            patch("vibeocr.env_manager.get_environment_mode", return_value="portable"),
+            patch("vibeocr.backend.env_manager.get_environment_mode", return_value="portable"),
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=python_exe,
             ),
             patch(
-                "vibeocr.env_manager._load_dep_specs",
+                "vibeocr.backend.env_manager._load_dep_specs",
                 return_value={"paddleocr": "paddleocr>=3.7.0"},
             ),
             patch(
-                "vibeocr.env_manager.get_dependency_versions",
+                "vibeocr.backend.env_manager.get_dependency_versions",
                 return_value={"paddleocr": "3.7.0"},  # 最新
             ),
             patch(
-                "vibeocr.env_manager._load_locked_versions",
+                "vibeocr.backend.env_manager._load_locked_versions",
                 return_value={"paddleocr": "3.7.0"},
             ),
         ):
@@ -1211,25 +1211,25 @@ class TestDetectDependencyUpdatesBranches:
 
     def test_no_lower_bound_skipped(self, tmp_path):
         """约束无版本（纯包名）→ 跳过（line 2629-2630）。"""
-        from vibeocr.env_manager import detect_dependency_updates
+        from vibeocr.backend.env_manager import detect_dependency_updates
 
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
         with (
-            patch("vibeocr.env_manager.get_environment_mode", return_value="portable"),
+            patch("vibeocr.backend.env_manager.get_environment_mode", return_value="portable"),
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=python_exe,
             ),
             patch(
-                "vibeocr.env_manager._load_dep_specs",
+                "vibeocr.backend.env_manager._load_dep_specs",
                 return_value={"paddleocr": "paddleocr"},  # 无版本约束
             ),
             patch(
-                "vibeocr.env_manager.get_dependency_versions", return_value={}
+                "vibeocr.backend.env_manager.get_dependency_versions", return_value={}
             ),
             patch(
-                "vibeocr.env_manager._load_locked_versions", return_value={}
+                "vibeocr.backend.env_manager._load_locked_versions", return_value={}
             ),
         ):
             updates = detect_dependency_updates(tmp_path)
@@ -1244,7 +1244,7 @@ class TestDetectDependencyUpdatesBranches:
 class TestInstallBackendDependencies:
     def test_missing_python_returns_false(self, tmp_path):
         """python_exe 不存在 → 失败（line 2089-2090）。"""
-        from vibeocr.env_manager import install_backend_dependencies
+        from vibeocr.backend.env_manager import install_backend_dependencies
 
         ok, msg = install_backend_dependencies(python_exe=tmp_path / "nope.exe")
         assert ok is False
@@ -1252,7 +1252,7 @@ class TestInstallBackendDependencies:
 
     def test_cpu_profile_success(self, tmp_path):
         """cpu profile → 调 _install_paddle_stack（line 2092-2111）。"""
-        from vibeocr.env_manager import install_backend_dependencies
+        from vibeocr.backend.env_manager import install_backend_dependencies
 
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
@@ -1263,9 +1263,9 @@ class TestInstallBackendDependencies:
             return True, "ok"
 
         with (
-            patch("vibeocr.env_manager._load_dep_specs", return_value={}),
+            patch("vibeocr.backend.env_manager._load_dep_specs", return_value={}),
             patch(
-                "vibeocr.env_manager._install_paddle_stack", side_effect=fake_stack
+                "vibeocr.backend.env_manager._install_paddle_stack", side_effect=fake_stack
             ),
         ):
             ok, _msg = install_backend_dependencies(python_exe=python_exe, profile="cpu")
@@ -1275,7 +1275,7 @@ class TestInstallBackendDependencies:
 
     def test_gpu_profile_success(self, tmp_path):
         """gpu-cu126 profile → use_gpu=True + cu126（line 2092-2093）。"""
-        from vibeocr.env_manager import install_backend_dependencies
+        from vibeocr.backend.env_manager import install_backend_dependencies
 
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
@@ -1286,9 +1286,9 @@ class TestInstallBackendDependencies:
             return True, "ok"
 
         with (
-            patch("vibeocr.env_manager._load_dep_specs", return_value={}),
+            patch("vibeocr.backend.env_manager._load_dep_specs", return_value={}),
             patch(
-                "vibeocr.env_manager._install_paddle_stack", side_effect=fake_stack
+                "vibeocr.backend.env_manager._install_paddle_stack", side_effect=fake_stack
             ),
         ):
             ok, _msg = install_backend_dependencies(
@@ -1307,7 +1307,7 @@ class TestInstallBackendDependencies:
 class TestGetWorkspaceSourcePaths:
     def test_dev_mode_returns_four_roots(self):
         """开发态返回四个 source root（line 3196-3207）。"""
-        from vibeocr.env_manager import get_workspace_source_paths
+        from vibeocr.backend.env_manager import get_workspace_source_paths
 
         result = get_workspace_source_paths()
         # 开发态应有四个 roots
@@ -1315,10 +1315,10 @@ class TestGetWorkspaceSourcePaths:
 
     def test_non_workspace_returns_empty(self, tmp_path, monkeypatch):
         """非工作区 → 空元组（line 3207）。"""
-        from vibeocr.env_manager import get_workspace_source_paths
+        from vibeocr.backend.env_manager import get_workspace_source_paths
 
         monkeypatch.setattr(
-            "vibeocr.env_manager.get_project_root", lambda: tmp_path
+            "vibeocr.backend.env_manager.get_project_root", lambda: tmp_path
         )
         assert get_workspace_source_paths() == ()
 
@@ -1350,7 +1350,7 @@ class TestCudaVersionMap:
 class TestUninstallRemovedDepsBranches:
     def test_cancel_event_aborts(self, tmp_path):
         """cancel_event 在循环中被检测 → 取消（line 2704-2706）。"""
-        from vibeocr.env_manager import uninstall_removed_deps
+        from vibeocr.backend.env_manager import uninstall_removed_deps
 
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
@@ -1359,7 +1359,7 @@ class TestUninstallRemovedDepsBranches:
 
         with (
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=python_exe,
             ),
         ):
@@ -1371,7 +1371,7 @@ class TestUninstallRemovedDepsBranches:
 
     def test_uninstall_timeout_recorded_as_failed(self, tmp_path):
         """pip uninstall 超时 → 记入 failed（line 2727-2729）。"""
-        from vibeocr.env_manager import uninstall_removed_deps
+        from vibeocr.backend.env_manager import uninstall_removed_deps
 
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
@@ -1387,15 +1387,15 @@ class TestUninstallRemovedDepsBranches:
 
         with (
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=python_exe,
             ),
             patch(
-                "vibeocr.env_manager._check_imports", return_value={}
+                "vibeocr.backend.env_manager._check_imports", return_value={}
             ),
-            patch("vibeocr.env_manager.update_cache_field"),
+            patch("vibeocr.backend.env_manager.update_cache_field"),
             patch(
-                "vibeocr.env_manager.subprocess.Popen",
+                "vibeocr.backend.env_manager.subprocess.Popen",
                 side_effect=_popen_side_effect(mock_run),
             ),
         ):
@@ -1405,7 +1405,7 @@ class TestUninstallRemovedDepsBranches:
 
     def test_uninstall_generic_exception_recorded(self, tmp_path):
         """pip uninstall 抛通用异常 → 记入 failed（line 2731-2733）。"""
-        from vibeocr.env_manager import uninstall_removed_deps
+        from vibeocr.backend.env_manager import uninstall_removed_deps
 
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
@@ -1421,15 +1421,15 @@ class TestUninstallRemovedDepsBranches:
 
         with (
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=python_exe,
             ),
             patch(
-                "vibeocr.env_manager._check_imports", return_value={}
+                "vibeocr.backend.env_manager._check_imports", return_value={}
             ),
-            patch("vibeocr.env_manager.update_cache_field"),
+            patch("vibeocr.backend.env_manager.update_cache_field"),
             patch(
-                "vibeocr.env_manager.subprocess.Popen",
+                "vibeocr.backend.env_manager.subprocess.Popen",
                 side_effect=_popen_side_effect(mock_run),
             ),
         ):
@@ -1439,7 +1439,7 @@ class TestUninstallRemovedDepsBranches:
 
     def test_refresh_cache_failure_does_not_fail(self, tmp_path):
         """卸载成功后刷新缓存失败不影响整体成功（line 2737-2742）。"""
-        from vibeocr.env_manager import uninstall_removed_deps
+        from vibeocr.backend.env_manager import uninstall_removed_deps
 
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
@@ -1453,16 +1453,16 @@ class TestUninstallRemovedDepsBranches:
 
         with (
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=python_exe,
             ),
             patch(
-                "vibeocr.env_manager._check_imports",
+                "vibeocr.backend.env_manager._check_imports",
                 side_effect=RuntimeError("cache fail"),
             ),
-            patch("vibeocr.env_manager.update_cache_field"),
+            patch("vibeocr.backend.env_manager.update_cache_field"),
             patch(
-                "vibeocr.env_manager.subprocess.Popen",
+                "vibeocr.backend.env_manager.subprocess.Popen",
                 side_effect=_popen_side_effect(mock_run),
             ),
         ):
@@ -1500,7 +1500,7 @@ def _popen_side_effect(mock_run):
 class TestDetectGpuInfoException:
     def test_parse_exception_falls_back_to_detect_gpu(self, monkeypatch):
         """解析异常时回退到 detect_gpu（line 2953-2962）。"""
-        import vibeocr.env_manager as em
+        import vibeocr.backend.env_manager as em
 
         # _run_pip 抛通用异常（非 InstallCancelled）
         def boom(*a, **kw):
@@ -1522,7 +1522,7 @@ class TestDetectGpuInfoException:
 class TestProbeModuleSubprocessException:
     def test_import_subprocess_exception(self, tmp_path):
         """metadata 成功但 import subprocess 抛异常 → usable=False（line 1149-1151）。"""
-        from vibeocr.env_manager import _probe_module
+        from vibeocr.backend.env_manager import _probe_module
 
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
@@ -1538,7 +1538,7 @@ class TestProbeModuleSubprocessException:
             # import 子进程抛异常
             raise OSError("subprocess crashed")
 
-        with patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run):
+        with patch("vibeocr.backend.env_manager.subprocess.run", side_effect=mock_run):
             installed, usable, _missing = _probe_module(
                 python_exe, "mineru", "mineru"
             )
@@ -1554,7 +1554,7 @@ class TestProbeModuleSubprocessException:
 class TestGetDirectDependenciesPackagingFallback:
     def test_packaging_import_error_falls_back(self, tmp_path, monkeypatch):
         """packaging 不可用时退化为纯名解析（line 2379-2383）。"""
-        from vibeocr.env_manager import get_direct_dependencies
+        from vibeocr.backend.env_manager import get_direct_dependencies
 
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
@@ -1569,7 +1569,7 @@ class TestGetDirectDependenciesPackagingFallback:
         import sys
 
         monkeypatch.setitem(sys.modules, "packaging.requirements", None)
-        with patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run):
+        with patch("vibeocr.backend.env_manager.subprocess.run", side_effect=mock_run):
             deps = get_direct_dependencies(python_exe, "mineru")
         # 退化为纯名解析（无 marker 过滤）
         assert "numpy" in deps
@@ -1577,7 +1577,7 @@ class TestGetDirectDependenciesPackagingFallback:
 
     def test_subprocess_returns_empty_on_nonzero(self, tmp_path):
         """returncode != 0 → 空 list（line 2368-2369）。"""
-        from vibeocr.env_manager import get_direct_dependencies
+        from vibeocr.backend.env_manager import get_direct_dependencies
 
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
@@ -1588,19 +1588,19 @@ class TestGetDirectDependenciesPackagingFallback:
             r.stdout = ""
             return r
 
-        with patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run):
+        with patch("vibeocr.backend.env_manager.subprocess.run", side_effect=mock_run):
             deps = get_direct_dependencies(python_exe, "mineru")
         assert deps == []
 
     def test_subprocess_exception_returns_empty(self, tmp_path):
         """subprocess 抛异常 → 空 list（line 2373-2374）。"""
-        from vibeocr.env_manager import get_direct_dependencies
+        from vibeocr.backend.env_manager import get_direct_dependencies
 
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
 
         with patch(
-            "vibeocr.env_manager.subprocess.run", side_effect=OSError("boom")
+            "vibeocr.backend.env_manager.subprocess.run", side_effect=OSError("boom")
         ):
             deps = get_direct_dependencies(python_exe, "mineru")
         assert deps == []
@@ -1609,7 +1609,7 @@ class TestGetDirectDependenciesPackagingFallback:
         """无效 requirement 串被跳过（line 2389-2390）。"""
         import json
 
-        from vibeocr.env_manager import get_direct_dependencies
+        from vibeocr.backend.env_manager import get_direct_dependencies
 
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
@@ -1620,7 +1620,7 @@ class TestGetDirectDependenciesPackagingFallback:
             r.stdout = json.dumps(["!!!invalid", "numpy"])
             return r
 
-        with patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run):
+        with patch("vibeocr.backend.env_manager.subprocess.run", side_effect=mock_run):
             deps = get_direct_dependencies(python_exe, "mineru")
         # 无效串跳过，保留 numpy
         assert "numpy" in deps
@@ -1635,12 +1635,12 @@ class TestGetDirectDependenciesPackagingFallback:
 class TestInstallMissingAllInstalled:
     def test_all_installed_refreshes_cache(self, tmp_path):
         """全部已装时刷新缓存并返回成功（line 2287-2296）。"""
-        from vibeocr.env_manager import install_missing_dependencies
+        from vibeocr.backend.env_manager import install_missing_dependencies
 
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
 
-        from vibeocr.services.env_config import (
+        from vibeocr.backend.services.env_config import (
             OCR_CHECK_LEAF_MODULES,
             OCR_CHECK_MODULES,
         )
@@ -1653,19 +1653,19 @@ class TestInstallMissingAllInstalled:
 
         with (
             patch(
-                "vibeocr.env_manager.get_pip_source",
+                "vibeocr.backend.env_manager.get_pip_source",
                 return_value="https://pypi.org/simple",
             ),
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=python_exe,
             ),
             patch(
-                "vibeocr.env_manager._check_imports_detailed",
+                "vibeocr.backend.env_manager._check_imports_detailed",
                 return_value=detailed,
             ),
-            patch("vibeocr.env_manager.update_cache_field") as mock_update,
-            patch("vibeocr.env_manager.detect_gpu", return_value=(False, None)),
+            patch("vibeocr.backend.env_manager.update_cache_field") as mock_update,
+            patch("vibeocr.backend.env_manager.detect_gpu", return_value=(False, None)),
         ):
             ok, msg = install_missing_dependencies(tmp_path)
 
@@ -1682,7 +1682,7 @@ class TestInstallMissingAllInstalled:
 class TestCheckEmbeddedDepsCacheRevalidation:
     def test_cache_valid_with_deps_uses_cache(self, tmp_path):
         """有效缓存含 dependencies → 直接返回（line 931-975 简化路径）。"""
-        from vibeocr.env_manager import check_embedded_environment_dependencies
+        from vibeocr.backend.env_manager import check_embedded_environment_dependencies
 
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
@@ -1694,23 +1694,23 @@ class TestCheckEmbeddedDepsCacheRevalidation:
 
         with (
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=python_exe,
             ),
             patch(
-                "vibeocr.env_manager.is_cache_valid",
+                "vibeocr.backend.env_manager.is_cache_valid",
                 return_value=(True, {"dependencies": dict(cached_deps)}),
             ),
             patch(
-                "vibeocr.machine_cache.get_cache_age_seconds", return_value=100
+                "vibeocr.backend.runtime_state.get_cache_age_seconds", return_value=100
             ),
             # 复核 False 项
             patch(
-                "vibeocr.env_manager._quick_verify_deps",
+                "vibeocr.backend.env_manager._quick_verify_deps",
                 return_value={"paddlepaddle": True, "torch": False},
             ),
-            patch("vibeocr.env_manager.detect_gpu", return_value=(False, None)),
-            patch("vibeocr.env_manager.create_cache_entry"),
+            patch("vibeocr.backend.env_manager.detect_gpu", return_value=(False, None)),
+            patch("vibeocr.backend.env_manager.create_cache_entry"),
         ):
             deps = check_embedded_environment_dependencies(tmp_path)
 
@@ -1719,7 +1719,7 @@ class TestCheckEmbeddedDepsCacheRevalidation:
 
     def test_cache_empty_deps_falls_to_live_check(self, tmp_path):
         """缓存有效但 dependencies 为空 → 实时检测（line 976-996）。"""
-        from vibeocr.env_manager import check_embedded_environment_dependencies
+        from vibeocr.backend.env_manager import check_embedded_environment_dependencies
 
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
@@ -1728,16 +1728,16 @@ class TestCheckEmbeddedDepsCacheRevalidation:
 
         with (
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=python_exe,
             ),
             patch(
-                "vibeocr.env_manager.is_cache_valid",
+                "vibeocr.backend.env_manager.is_cache_valid",
                 return_value=(True, {"dependencies": {}}),  # 空 dependencies
             ),
-            patch("vibeocr.env_manager._check_imports", return_value=live_deps),
-            patch("vibeocr.env_manager.detect_gpu", return_value=(False, None)),
-            patch("vibeocr.env_manager.create_cache_entry"),
+            patch("vibeocr.backend.env_manager._check_imports", return_value=live_deps),
+            patch("vibeocr.backend.env_manager.detect_gpu", return_value=(False, None)),
+            patch("vibeocr.backend.env_manager.create_cache_entry"),
         ):
             deps = check_embedded_environment_dependencies(tmp_path)
 
@@ -1745,18 +1745,18 @@ class TestCheckEmbeddedDepsCacheRevalidation:
 
     def test_python_missing_returns_empty(self, tmp_path):
         """python.exe 不存在 → 空 dict（line 981-982）。"""
-        from vibeocr.env_manager import check_embedded_environment_dependencies
+        from vibeocr.backend.env_manager import check_embedded_environment_dependencies
 
         with patch(
-            "vibeocr.env_manager.get_embedded_python_executable",
+            "vibeocr.backend.env_manager.get_embedded_python_executable",
             return_value=tmp_path / "nope.exe",
-        ), patch("vibeocr.env_manager.is_cache_valid", return_value=(False, None)):
+        ), patch("vibeocr.backend.env_manager.is_cache_valid", return_value=(False, None)):
             deps = check_embedded_environment_dependencies(tmp_path)
         assert deps == {}
 
     def test_ttl_expired_rechecks_true_items(self, tmp_path):
         """缓存超 TTL 时复核 True 项（line 944-949）。"""
-        from vibeocr.env_manager import check_embedded_environment_dependencies
+        from vibeocr.backend.env_manager import check_embedded_environment_dependencies
 
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
@@ -1765,24 +1765,24 @@ class TestCheckEmbeddedDepsCacheRevalidation:
 
         with (
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=python_exe,
             ),
             patch(
-                "vibeocr.env_manager.is_cache_valid",
+                "vibeocr.backend.env_manager.is_cache_valid",
                 return_value=(True, {"dependencies": dict(cached_deps)}),
             ),
             # TTL 已过
             patch(
-                "vibeocr.machine_cache.get_cache_age_seconds", return_value=9999999
+                "vibeocr.backend.runtime_state.get_cache_age_seconds", return_value=9999999
             ),
             # 复核发现 torch 实际缺失
             patch(
-                "vibeocr.env_manager._quick_verify_deps",
+                "vibeocr.backend.env_manager._quick_verify_deps",
                 return_value={"paddlepaddle": True, "torch": False},
             ),
-            patch("vibeocr.env_manager.detect_gpu", return_value=(False, None)),
-            patch("vibeocr.env_manager.create_cache_entry") as mock_create,
+            patch("vibeocr.backend.env_manager.detect_gpu", return_value=(False, None)),
+            patch("vibeocr.backend.env_manager.create_cache_entry") as mock_create,
         ):
             deps = check_embedded_environment_dependencies(tmp_path)
 
@@ -1799,7 +1799,7 @@ class TestCheckEmbeddedDepsCacheRevalidation:
 class TestGetDependencyVersionsFallback:
     def test_metadata_subprocess_exception(self, tmp_path):
         """metadata 子进程异常 → 走 dunder 回退（line 1444-1445）。"""
-        from vibeocr.env_manager import get_dependency_versions
+        from vibeocr.backend.env_manager import get_dependency_versions
 
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
@@ -1816,7 +1816,7 @@ class TestGetDependencyVersionsFallback:
             r.stdout = "1.2.3"
             return r
 
-        with patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run):
+        with patch("vibeocr.backend.env_manager.subprocess.run", side_effect=mock_run):
             versions = get_dependency_versions(python_exe)
 
         # 应至少有一个版本来自 dunder 回退
@@ -1824,7 +1824,7 @@ class TestGetDependencyVersionsFallback:
 
     def test_dunder_subprocess_exception(self, tmp_path):
         """dunder 回退也异常 → 空串（line 1462-1463）。"""
-        from vibeocr.env_manager import get_dependency_versions
+        from vibeocr.backend.env_manager import get_dependency_versions
 
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
@@ -1832,7 +1832,7 @@ class TestGetDependencyVersionsFallback:
         def mock_run(cmd, **kw):
             raise OSError("always crashes")
 
-        with patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run):
+        with patch("vibeocr.backend.env_manager.subprocess.run", side_effect=mock_run):
             versions = get_dependency_versions(python_exe)
 
         # 全部异常 → 全空串
@@ -1847,14 +1847,14 @@ class TestGetDependencyVersionsFallback:
 class TestInstallPaddleStackCancelAndGpuRetry:
     def test_cancel_between_packages(self, tmp_path):
         """requirements_override 模式下包之间取消（line 1817-1819）。"""
-        from vibeocr.env_manager import _install_paddle_stack
+        from vibeocr.backend.env_manager import _install_paddle_stack
 
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
         cancel = threading.Event()
         cancel.set()  # 进入循环前已取消
 
-        with patch("vibeocr.env_manager.subprocess.Popen") as mock_popen:
+        with patch("vibeocr.backend.env_manager.subprocess.Popen") as mock_popen:
             ok, msg = _install_paddle_stack(
                 python_exe=python_exe,
                 specs={"paddleocr": "paddleocr"},
@@ -1874,7 +1874,7 @@ class TestInstallPaddleStackCancelAndGpuRetry:
 
     def test_gpu_package_retry_exhausted_records_failure(self, tmp_path):
         """GPU 包重试耗尽 → 记入 failed 继续（line 1877-1927）。"""
-        from vibeocr.env_manager import _install_paddle_stack
+        from vibeocr.backend.env_manager import _install_paddle_stack
 
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
@@ -1893,7 +1893,7 @@ class TestInstallPaddleStackCancelAndGpuRetry:
             return r
 
         with patch(
-            "vibeocr.env_manager.subprocess.Popen",
+            "vibeocr.backend.env_manager.subprocess.Popen",
             side_effect=_popen_side_effect(mock_run),
         ):
             ok, msg = _install_paddle_stack(
@@ -1916,7 +1916,7 @@ class TestInstallPaddleStackCancelAndGpuRetry:
 
     def test_version_not_found_falls_back_to_pypi(self, tmp_path):
         """非 GPU 包 + 版本未找到 → 回退 PyPI（line 1928-1962）。"""
-        from vibeocr.env_manager import _install_paddle_stack
+        from vibeocr.backend.env_manager import _install_paddle_stack
 
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
@@ -1937,7 +1937,7 @@ class TestInstallPaddleStackCancelAndGpuRetry:
             return r
 
         with patch(
-            "vibeocr.env_manager.subprocess.Popen",
+            "vibeocr.backend.env_manager.subprocess.Popen",
             side_effect=_popen_side_effect(mock_run),
         ):
             ok, _msg = _install_paddle_stack(
@@ -1958,7 +1958,7 @@ class TestInstallPaddleStackCancelAndGpuRetry:
 
     def test_pypi_fallback_also_fails(self, tmp_path):
         """非 GPU 包镜像 + PyPI 都失败 → 记入 failed（line 1951-1962）。"""
-        from vibeocr.env_manager import _install_paddle_stack
+        from vibeocr.backend.env_manager import _install_paddle_stack
 
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
@@ -1971,7 +1971,7 @@ class TestInstallPaddleStackCancelAndGpuRetry:
             return r
 
         with patch(
-            "vibeocr.env_manager.subprocess.Popen",
+            "vibeocr.backend.env_manager.subprocess.Popen",
             side_effect=_popen_side_effect(mock_run),
         ):
             ok, msg = _install_paddle_stack(
@@ -1993,7 +1993,7 @@ class TestInstallPaddleStackCancelAndGpuRetry:
 
     def test_non_gpu_non_version_error_fails_directly(self, tmp_path):
         """非 GPU 且非版本问题（网络中断）→ 直接失败（line 1963-1973）。"""
-        from vibeocr.env_manager import _install_paddle_stack
+        from vibeocr.backend.env_manager import _install_paddle_stack
 
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
@@ -2006,7 +2006,7 @@ class TestInstallPaddleStackCancelAndGpuRetry:
             return r
 
         with patch(
-            "vibeocr.env_manager.subprocess.Popen",
+            "vibeocr.backend.env_manager.subprocess.Popen",
             side_effect=_popen_side_effect(mock_run),
         ):
             ok, _msg = _install_paddle_stack(
@@ -2027,7 +2027,7 @@ class TestInstallPaddleStackCancelAndGpuRetry:
 
     def test_install_writes_cache_on_success(self, tmp_path):
         """成功后刷新缓存（line 1992-1999）。"""
-        from vibeocr.env_manager import _install_paddle_stack
+        from vibeocr.backend.env_manager import _install_paddle_stack
 
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
@@ -2040,11 +2040,11 @@ class TestInstallPaddleStackCancelAndGpuRetry:
 
         with (
             patch(
-                "vibeocr.env_manager.subprocess.Popen",
+                "vibeocr.backend.env_manager.subprocess.Popen",
                 side_effect=_popen_side_effect(mock_run),
             ),
-            patch("vibeocr.env_manager._quick_verify_deps", return_value={"x": True}),
-            patch("vibeocr.env_manager.update_cache_field") as mock_update,
+            patch("vibeocr.backend.env_manager._quick_verify_deps", return_value={"x": True}),
+            patch("vibeocr.backend.env_manager.update_cache_field") as mock_update,
         ):
             ok, _msg = _install_paddle_stack(
                 python_exe=python_exe,
@@ -2066,7 +2066,7 @@ class TestInstallPaddleStackCancelAndGpuRetry:
 
     def test_cache_refresh_failure_warns(self, tmp_path, caplog):
         """成功后刷新缓存失败 → warning（line 1997-1998）。"""
-        from vibeocr.env_manager import _install_paddle_stack
+        from vibeocr.backend.env_manager import _install_paddle_stack
 
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
@@ -2079,14 +2079,14 @@ class TestInstallPaddleStackCancelAndGpuRetry:
 
         with (
             patch(
-                "vibeocr.env_manager.subprocess.Popen",
+                "vibeocr.backend.env_manager.subprocess.Popen",
                 side_effect=_popen_side_effect(mock_run),
             ),
             patch(
-                "vibeocr.env_manager._quick_verify_deps",
+                "vibeocr.backend.env_manager._quick_verify_deps",
                 side_effect=RuntimeError("cache fail"),
             ),
-            caplog.at_level(logging.WARNING, logger="vibeocr.env_manager"),
+            caplog.at_level(logging.WARNING, logger="vibeocr.backend.env_manager"),
         ):
             ok, _msg = _install_paddle_stack(
                 python_exe=python_exe,
@@ -2117,7 +2117,7 @@ class TestRunPipBranches:
         """cancel_event 进入前已 set → InstallCancelled（line 1574-1575）。"""
         import threading
 
-        from vibeocr.env_manager import InstallCancelled, _run_pip
+        from vibeocr.backend.env_manager import InstallCancelled, _run_pip
 
         cancel = threading.Event()
         cancel.set()
@@ -2128,14 +2128,14 @@ class TestRunPipBranches:
         """超时 → TimeoutExpired（line 1626-1630）。"""
         from unittest.mock import MagicMock, patch
 
-        from vibeocr.env_manager import _run_pip
+        from vibeocr.backend.env_manager import _run_pip
 
         proc = MagicMock()
         proc.poll.return_value = None  # 永不退出
         proc.communicate.return_value = ("", "")
         with (
-            patch("vibeocr.env_manager.subprocess.Popen", return_value=proc),
-            patch("vibeocr.env_manager.subprocess.CREATE_NO_WINDOW", 0),
+            patch("vibeocr.backend.env_manager.subprocess.Popen", return_value=proc),
+            patch("vibeocr.backend.env_manager.subprocess.CREATE_NO_WINDOW", 0),
         ):
             with pytest.raises(subprocess.TimeoutExpired):
                 _run_pip(["echo", "x"], timeout=1)
@@ -2149,7 +2149,7 @@ class TestRunPipBranches:
         """
         from unittest.mock import MagicMock, patch
 
-        from vibeocr.env_manager import _run_pip
+        from vibeocr.backend.env_manager import _run_pip
 
         proc = MagicMock()
         # poll 第一次返回 None（运行中），第二次返回 0（已退出）→ 跳出循环
@@ -2161,8 +2161,8 @@ class TestRunPipBranches:
 
         proc.communicate.side_effect = boom
         with (
-            patch("vibeocr.env_manager.subprocess.Popen", return_value=proc),
-            patch("vibeocr.env_manager.subprocess.CREATE_NO_WINDOW", 0),
+            patch("vibeocr.backend.env_manager.subprocess.Popen", return_value=proc),
+            patch("vibeocr.backend.env_manager.subprocess.CREATE_NO_WINDOW", 0),
         ):
             with pytest.raises(RuntimeError, match="comm fail"):
                 _run_pip(["echo", "x"], timeout=5)
@@ -2177,11 +2177,11 @@ class TestRunPipBranches:
 class TestReinstallEmbeddedPythonProgress:
     def test_progress_callback_invoked(self, tmp_path):
         """progress_callback 在清理阶段被调用（line 865-877）。"""
-        from vibeocr.env_manager import reinstall_embedded_python
+        from vibeocr.backend.env_manager import reinstall_embedded_python
 
         messages: list[tuple[str, str]] = []
         with patch(
-            "vibeocr.env_manager.install_embedded_python",
+            "vibeocr.backend.env_manager.install_embedded_python",
             return_value=(True, "ok"),
         ):
             ok, _msg = reinstall_embedded_python(

@@ -3,8 +3,8 @@
 from PySide6.QtCore import QPointF, Qt
 from PySide6.QtWidgets import QScrollArea
 
-from vibeocr.models.ocr_result import TextBlock
-from vibeocr.widgets.preview_widget import PreviewWidget
+from vibeocr.backend.models.ocr_result import TextBlock
+from vibeocr.classic.widgets.preview_widget import PreviewWidget
 
 
 class TestPreviewWidgetBasic:
@@ -668,7 +668,7 @@ class TestLegendModifiedEntry:
         from PySide6.QtCore import QRectF
         from PySide6.QtGui import QColor
 
-        from vibeocr.widgets.preview_widget import (
+        from vibeocr.classic.widgets.preview_widget import (
             BLOCK_BORDER_COLORS,
             EDIT_BORDER,
             UnifiedBBoxOverlay,
@@ -701,7 +701,7 @@ class TestLegendModifiedEntry:
         from PySide6.QtCore import QRectF
         from PySide6.QtGui import QColor
 
-        from vibeocr.widgets.preview_widget import (
+        from vibeocr.classic.widgets.preview_widget import (
             BLOCK_BORDER_COLORS,
             UnifiedBBoxOverlay,
         )
@@ -729,7 +729,7 @@ class TestLegendModifiedEntry:
         from PySide6.QtCore import QRectF
         from PySide6.QtGui import QColor
 
-        from vibeocr.widgets.preview_widget import (
+        from vibeocr.classic.widgets.preview_widget import (
             BLOCK_BORDER_COLORS,
             UnifiedBBoxOverlay,
         )
@@ -761,7 +761,7 @@ def test_fifty_thousand_blocks_use_bounded_overlay_working_set(
     """大结果保留完整模型，但单帧只创建有界数量的 Qt 绘制对象。"""
     import time
 
-    from vibeocr.widgets.preview_widget import MAX_INTERACTIVE_OVERLAY_BLOCKS
+    from vibeocr.classic.widgets.preview_widget import MAX_INTERACTIVE_OVERLAY_BLOCKS
 
     widget = PreviewWidget()
     qtbot.addWidget(widget)
@@ -787,7 +787,7 @@ def test_repeated_large_block_update_reuses_indexes_and_bounded_overlay(
     qapp, qtbot, sample_pixmap
 ):
     """Editing the same large result must not rescan all blocks on the GUI thread."""
-    from vibeocr.widgets.preview_widget import MAX_INTERACTIVE_OVERLAY_BLOCKS
+    from vibeocr.classic.widgets.preview_widget import MAX_INTERACTIVE_OVERLAY_BLOCKS
 
     class ObservedBlocks(list):
         iterations = 0

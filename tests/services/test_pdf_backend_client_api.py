@@ -23,7 +23,7 @@ from unittest.mock import MagicMock
 import httpx
 import pytest
 
-from vibeocr.ipc.schemas import (
+from vibeocr.backend.ipc.schemas import (
     DetectTextLayersResponse,
     HealthResponse,
     ModelDiff,
@@ -33,7 +33,7 @@ from vibeocr.ipc.schemas import (
     ProgressEvent,
     SaveResponse,
 )
-from vibeocr.services.pdf_backend_client import (
+from vibeocr.backend.services.pdf_backend_client import (
     _HTTP_LONG_TIMEOUT,
     _HTTP_TIMEOUT,
     PdfBackendClient,
@@ -253,7 +253,7 @@ class TestTextLayerOperations:
         assert payload["save"] is True
 
     def test_rewrite_text_layer(self) -> None:
-        from vibeocr.models.ocr_result import TextBlock
+        from vibeocr.backend.models.ocr_result import TextBlock
 
         client, post = self._client()
         blocks = [

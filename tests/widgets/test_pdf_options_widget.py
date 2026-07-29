@@ -3,9 +3,9 @@
 
 import pytest
 
-from vibeocr.core.pipelines import OCRPipeline
-from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
-from vibeocr.widgets.pdf_options_widget import PdfOptionsWidget
+from vibeocr.backend.core.pipelines import OCRPipeline
+from vibeocr.backend.models.pdf_ocr_options import PdfGlobalSettings
+from vibeocr.classic.widgets.pdf_options_widget import PdfOptionsWidget
 
 
 @pytest.fixture

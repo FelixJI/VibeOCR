@@ -8,7 +8,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from vibeocr.managers.subprocess_manager import (
+from vibeocr.classic.managers.subprocess_manager import (
     SubprocessManager,
     SubprocessStartSignals,
     SupervisorStartTask,
@@ -34,7 +34,7 @@ def test_start_task_reports_process_and_handshake_stage(monkeypatch) -> None:
     task.signals.progress.connect(progress.append)
     task.signals.started.connect(started.append)
     monkeypatch.setattr(
-        "vibeocr.supervisor.process.SupervisorProcess.launch",
+        "vibeocr.runtime_client.process.SupervisorProcess.launch",
         lambda **_kwargs: Mock(),
     )
 
@@ -84,20 +84,16 @@ def test_t6_smoke_uses_explicit_test_python(
 def test_production_start_ignores_test_python_override(
     manager: SubprocessManager, monkeypatch, tmp_path
 ) -> None:
-    embedded_python = tmp_path / "python" / "python.exe"
     monkeypatch.delenv("VIBEOCR_SELF_TEST_SMOKE", raising=False)
     monkeypatch.setenv(
         "VIBEOCR_SELF_TEST_PYTHON", str(tmp_path / "untrusted-python.exe")
-    )
-    monkeypatch.setattr(
-        "vibeocr.env_manager.get_embedded_python_executable",
-        lambda _project_root: embedded_python,
     )
     manager._thread_pool.start = Mock()
 
     manager.start_supervisor()
 
-    assert manager._start_task._python_exe == str(embedded_python)
+    assert manager._start_task._python_exe is None
+    assert manager._start_task._installer_client is manager._installer_client
 
 
 def test_start_is_idempotent_when_ready_or_starting(
@@ -126,10 +122,13 @@ def test_worker_start_keeps_qt_event_loop_responsive(
         session_token="test-token",
         ready=SimpleNamespace(instance_id="sup-test"),
     )
-
-    monkeypatch.setattr(
-        "vibeocr.env_manager.get_embedded_python_executable",
-        lambda _project_root: expected_python,
+    manager._installer_client.ensure = Mock(
+        return_value=SimpleNamespace(
+            python_executable=str(expected_python),
+            supervisor_module="vibeocr.backend.supervisor.main",
+            working_directory=str(manager._project_root),
+            environment={"VIBEOCR_RUNTIME_ROOT": str(expected_python.parent)},
+        )
     )
 
     def slow_launch(**kwargs):
@@ -139,7 +138,7 @@ def test_worker_start_keeps_qt_event_loop_responsive(
         return fake_process
 
     monkeypatch.setattr(
-        "vibeocr.supervisor.process.SupervisorProcess.launch",
+        "vibeocr.runtime_client.process.SupervisorProcess.launch",
         slow_launch,
     )
     ready: list[bool] = []
@@ -159,19 +158,29 @@ def test_worker_start_keeps_qt_event_loop_responsive(
     assert manager.is_ready is True
     assert manager._supervisor_process is fake_process
     assert launch_kwargs["python_exe"] == str(expected_python)
-    from vibeocr.pyside.supervisor_adapter import get_supervisor_adapter
+    assert launch_kwargs["module"] == "vibeocr.backend.supervisor.main"
+    assert launch_kwargs["working_directory"] == str(manager._project_root)
+    assert launch_kwargs["extra_env"]["VIBEOCR_RUNTIME_ROOT"] == str(
+        expected_python.parent
+    )
+    from vibeocr.classic.pyside.supervisor_adapter import get_supervisor_adapter
 
     assert get_supervisor_adapter().thread() is qapp.thread()
 
 
-def test_on_started_transfers_process_owner(manager: SubprocessManager) -> None:
+def test_on_started_transfers_process_owner(
+    manager: SubprocessManager, monkeypatch
+) -> None:
     process = Mock()
     task = SupervisorStartTask("python")
     task.supervisor_proc = process
     manager._start_task = task
+    install_adapter = Mock()
+    monkeypatch.setattr(manager, "_install_runtime_adapter", install_adapter)
 
     manager._on_started(True)
 
+    install_adapter.assert_called_once_with(process)
     assert manager.is_ready is True
     assert manager._supervisor_process is process
     assert task.supervisor_proc is None
@@ -210,7 +219,7 @@ def test_take_shutdown_callable_closes_adapter_then_process(
     manager._is_ready = True
     manager._supervisor_process = process
     monkeypatch.setattr(
-        "vibeocr.pyside.supervisor_adapter.get_supervisor_adapter",
+        "vibeocr.classic.pyside.supervisor_adapter.get_supervisor_adapter",
         lambda: adapter,
     )
 
@@ -232,7 +241,7 @@ def test_take_shutdown_callable_recovers_process_from_cancelled_task(
     task.supervisor_proc = process
     manager._start_task = task
     monkeypatch.setattr(
-        "vibeocr.pyside.supervisor_adapter.get_supervisor_adapter",
+        "vibeocr.classic.pyside.supervisor_adapter.get_supervisor_adapter",
         lambda: adapter,
     )
 

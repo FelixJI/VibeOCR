@@ -1,4 +1,4 @@
-"""Tests for the defensive / error branches of ``vibeocr.supervisor.app``.
+"""Tests for the defensive / error branches of ``vibeocr.backend.supervisor.app``.
 
 Existing test files cover the happy-path of each route; this file covers the
 branches left behind: middleware loopback/auth rejection, validation errors
@@ -15,9 +15,9 @@ import httpx
 import pytest
 from fastapi.exceptions import ResponseValidationError
 
-from vibeocr.supervisor.app import create_app
-from vibeocr.supervisor.bootstrap import new_instance_id
-from vibeocr.supervisor.module import SupervisorModule, SupervisorOptions
+from vibeocr.backend.supervisor.app import create_app
+from vibeocr.backend.supervisor.bootstrap import new_instance_id
+from vibeocr.backend.supervisor.module import SupervisorModule, SupervisorOptions
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -274,7 +274,7 @@ async def test_submit_returns_draining_when_module_rejects(
     pdf_app, supervisor_token: str, pdf_module: SupervisorModule
 ) -> None:
     """When the module raises ShutdownRequested, the route returns DRAINING."""
-    from vibeocr.supervisor.module import ShutdownRequested
+    from vibeocr.backend.supervisor.module import ShutdownRequested
 
     def raise_draining(*a, **k):  # type: ignore[no-untyped-def]
         raise ShutdownRequested("draining")
@@ -316,7 +316,7 @@ async def test_observe_negative_after_sequence_returns_validation_error(
 ) -> None:
     """observe() with after_sequence=-1 raises ContractError → VALIDATION_ERROR.
     Needs a real job id because JobNotFoundError is checked first."""
-    from vibeocr.protocol.v2 import JobKind, JobPriority
+    from vibeocr.runtime_contracts import JobKind, JobPriority
 
     ref = pdf_module.submit(
         kind=JobKind.RECOGNITION,
@@ -362,7 +362,7 @@ async def test_command_cancel_on_terminal_returns_not_cancellable(
 ) -> None:
     """Cancelling an already-terminal job raises ShutdownRequested in
     request_cancel; the route maps that to JOB_NOT_CANCELLABLE."""
-    from vibeocr.protocol.v2 import TERMINAL_JOB_STATES, JobKind, JobPriority
+    from vibeocr.runtime_contracts import TERMINAL_JOB_STATES, JobKind, JobPriority
 
     ref = pdf_module.submit(
         kind=JobKind.RECOGNITION,
@@ -631,7 +631,7 @@ async def test_export_returns_internal_error_when_service_fails(
     pdf_app, supervisor_token: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Force ExportService.export to raise → INTERNAL_ERROR path (line 367-368)."""
-    from vibeocr.services import export_service
+    from vibeocr.backend.services import export_service
 
     def boom(*a, **k):  # type: ignore[no-untyped-def]
         raise RuntimeError("boom")
@@ -655,7 +655,7 @@ async def test_export_returns_internal_error_when_export_returns_false(
     pdf_app, supervisor_token: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """ExportService.export returning False → INTERNAL_ERROR (lines 362-365)."""
-    from vibeocr.services import export_service
+    from vibeocr.backend.services import export_service
 
     monkeypatch.setattr(export_service.ExportService, "export", lambda *a, **k: False)
     target = tmp_path / "out.md"
@@ -801,7 +801,7 @@ async def test_qrcode_decode_returns_internal_error_when_service_fails(
     pdf_app, supervisor_token: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Force the decode service to raise → INTERNAL_ERROR (line 810-811)."""
-    from vibeocr.services import qrcode_decode_service
+    from vibeocr.backend.services import qrcode_decode_service
 
     class _Boom:
         def __init__(self, *a, **k):  # type: ignore[no-untyped-def]
@@ -835,7 +835,7 @@ async def test_qrcode_decode_round_trips_with_real_image(
     import base64
     import io
 
-    from vibeocr.services.qrcode_service import QrcodeService
+    from vibeocr.backend.services.qrcode_service import QrcodeService
 
     png = QrcodeService().generate("vibeocr-branch-test", {})
     buf = io.BytesIO()
@@ -880,7 +880,7 @@ async def test_qrcode_generate_rejects_non_object_body(
 async def test_qrcode_generate_returns_internal_error_when_service_fails(
     pdf_app, supervisor_token: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from vibeocr.services import qrcode_service
+    from vibeocr.backend.services import qrcode_service
 
     class _Boom:
         def __init__(self, *a, **k):  # type: ignore[no-untyped-def]
@@ -982,21 +982,21 @@ async def test_command_cancel_returns_mode_when_job_exists(
     # non-terminal job, so we use a hanging executor.
     import threading
 
-    from vibeocr.protocol.v2 import JobKind, JobPriority
+    from vibeocr.runtime_contracts import JobKind, JobPriority
 
     hang_entered = threading.Event()
     hang_release = threading.Event()
 
     class HangingExecutor:
         def execute(self, record, staged):  # type: ignore[no-untyped-def]
-            from vibeocr.protocol.v2 import JobState
+            from vibeocr.runtime_contracts import JobState
 
             record.transition(JobState.RUNNING)
             hang_entered.set()
             hang_release.wait(timeout=2.0)
 
         def cancel_mode_for(self, record):  # type: ignore[no-untyped-def]
-            from vibeocr.protocol.v2 import CancelMode
+            from vibeocr.runtime_contracts import CancelMode
 
             return CancelMode.COOPERATIVE
 
@@ -1023,7 +1023,7 @@ async def test_command_forget_returns_success_when_job_terminal(
     """Successful forget command (line 198-205)."""
     import time
 
-    from vibeocr.protocol.v2 import TERMINAL_JOB_STATES, JobKind, JobPriority
+    from vibeocr.runtime_contracts import TERMINAL_JOB_STATES, JobKind, JobPriority
 
     ref = pdf_module.submit(
         kind=JobKind.RECOGNITION,
@@ -1235,7 +1235,7 @@ async def test_command_retry_returns_new_job_ref(
     a retryable (failed-item) source job, then a successful retry."""
     import time
 
-    from vibeocr.protocol.v2 import (
+    from vibeocr.runtime_contracts import (
         TERMINAL_JOB_STATES,
         JobKind,
         JobPriority,
@@ -1252,7 +1252,7 @@ async def test_command_retry_returns_new_job_ref(
     # First executor: fail every item then mark the job completed-with-errors.
     class _FailItems:
         def execute(self, record, staged):  # type: ignore[no-untyped-def]
-            from vibeocr.protocol.v2 import JobState
+            from vibeocr.runtime_contracts import JobState
 
             record.transition(JobState.RUNNING)
             for it in list(record.items):
@@ -1262,7 +1262,7 @@ async def test_command_retry_returns_new_job_ref(
             record.transition(JobState.COMPLETED_WITH_ERRORS)
 
         def cancel_mode_for(self, record):  # type: ignore[no-untyped-def]
-            from vibeocr.protocol.v2 import CancelMode
+            from vibeocr.runtime_contracts import CancelMode
 
             return CancelMode.COOPERATIVE
 
@@ -1282,7 +1282,7 @@ async def test_command_retry_returns_new_job_ref(
     # Swap to a succeeding executor for the retry.
     class _Succeed:
         def execute(self, record, staged):  # type: ignore[no-untyped-def]
-            from vibeocr.protocol.v2 import JobState
+            from vibeocr.runtime_contracts import JobState
 
             record.transition(JobState.RUNNING)
             for it in list(record.items):
@@ -1292,7 +1292,7 @@ async def test_command_retry_returns_new_job_ref(
             record.transition(JobState.COMPLETED)
 
         def cancel_mode_for(self, record):  # type: ignore[no-untyped-def]
-            from vibeocr.protocol.v2 import CancelMode
+            from vibeocr.runtime_contracts import CancelMode
 
             return CancelMode.COOPERATIVE
 

@@ -1,4 +1,4 @@
-"""``vibeocr.pyside.pdf_ipc_worker`` 易测单元：_call_op 派发 + close/cancel run。
+"""``vibeocr.classic.pyside.pdf_ipc_worker`` 易测单元：_call_op 派发 + close/cancel run。
 
 _call_op 用 ``__new__`` 绕过 QThread 构造，直接设字段调方法；close/cancel
 worker 的 run() 直接同步调用（不 start QThread），用 MagicMock client 验证
@@ -11,12 +11,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from vibeocr.pyside.pdf_ipc_worker import (
+from vibeocr.classic.pyside.pdf_ipc_worker import (
     PdfIpcCancelWorker,
     PdfIpcCloseWorker,
     PdfIpcMutateWorker,
 )
-
 
 # =============================================================================
 # PdfIpcMutateWorker._call_op —— op → client 方法派发（~25 行大块）
@@ -150,7 +149,7 @@ def test_call_op_unknown_op_raises():
 
 def test_mutate_run_delete_text_layers_streams_and_emits_all_done(monkeypatch):
     """run() delete_text_layers 分支：迭代流 + get_model → all_done。"""
-    from vibeocr.ipc.schemas import ModelDiff, PdfDocumentMirror
+    from vibeocr.backend.ipc.schemas import ModelDiff, PdfDocumentMirror
 
     worker = PdfIpcMutateWorker.__new__(PdfIpcMutateWorker)
     client = MagicMock()
@@ -315,7 +314,7 @@ def test_close_worker_run_emits_completed():
     worker.completed = MagicMock()
     worker.completed.emit = lambda *a: emitted.append(a)
     worker.failed = MagicMock()
-    worker.failed.emit = lambda *a: emitted.append(("failed",) + a)
+    worker.failed.emit = lambda *a: emitted.append(("failed", *a))
 
     worker.run()
 
@@ -385,9 +384,7 @@ def test_cancel_worker_run_swallows_exception():
 
 
 def test_mineru_preflight_run_success_emits_progress_and_completed(monkeypatch):
-    from vibeocr.pyside.pdf_ipc_worker import MinerUPreflightWorker
-
-    progress_calls: list = []
+    from vibeocr.classic.pyside.pdf_ipc_worker import MinerUPreflightWorker
 
     def fake_ensure(root, *, progress_callback=None):
         # 模拟底层通过 progress_callback 上报进度
@@ -397,10 +394,10 @@ def test_mineru_preflight_run_success_emits_progress_and_completed(monkeypatch):
         return True, "ok"
 
     monkeypatch.setattr(
-        "vibeocr.env_manager.ensure_mineru_models", fake_ensure
+        "vibeocr.backend.env_manager.ensure_mineru_models", fake_ensure
     )
     monkeypatch.setattr(
-        "vibeocr.env_manager.get_project_root", lambda: "/root"
+        "vibeocr.backend.env_manager.get_project_root", lambda: "/root"
     )
 
     worker = MinerUPreflightWorker.__new__(MinerUPreflightWorker)
@@ -421,16 +418,16 @@ def test_mineru_preflight_run_success_emits_progress_and_completed(monkeypatch):
 
 
 def test_mineru_preflight_run_failure_emits_completed_false(monkeypatch):
-    from vibeocr.pyside.pdf_ipc_worker import MinerUPreflightWorker
+    from vibeocr.classic.pyside.pdf_ipc_worker import MinerUPreflightWorker
 
     def fake_ensure(root, *, progress_callback=None):
         return False, "network down"
 
     monkeypatch.setattr(
-        "vibeocr.env_manager.ensure_mineru_models", fake_ensure
+        "vibeocr.backend.env_manager.ensure_mineru_models", fake_ensure
     )
     monkeypatch.setattr(
-        "vibeocr.env_manager.get_project_root", lambda: "/root"
+        "vibeocr.backend.env_manager.get_project_root", lambda: "/root"
     )
 
     worker = MinerUPreflightWorker.__new__(MinerUPreflightWorker)
@@ -446,16 +443,16 @@ def test_mineru_preflight_run_failure_emits_completed_false(monkeypatch):
 
 
 def test_mineru_preflight_run_exception_becomes_failure(monkeypatch):
-    from vibeocr.pyside.pdf_ipc_worker import MinerUPreflightWorker
+    from vibeocr.classic.pyside.pdf_ipc_worker import MinerUPreflightWorker
 
     def fake_ensure(root, *, progress_callback=None):
         raise OSError("disk full")
 
     monkeypatch.setattr(
-        "vibeocr.env_manager.ensure_mineru_models", fake_ensure
+        "vibeocr.backend.env_manager.ensure_mineru_models", fake_ensure
     )
     monkeypatch.setattr(
-        "vibeocr.env_manager.get_project_root", lambda: "/root"
+        "vibeocr.backend.env_manager.get_project_root", lambda: "/root"
     )
 
     worker = MinerUPreflightWorker.__new__(MinerUPreflightWorker)
@@ -475,17 +472,17 @@ def test_mineru_preflight_run_exception_becomes_failure(monkeypatch):
 
 def test_mineru_preflight_run_cancelled_swallows_completed(monkeypatch):
     """取消后 run() 自然返回也不发 completed。"""
-    from vibeocr.pyside.pdf_ipc_worker import MinerUPreflightWorker
+    from vibeocr.classic.pyside.pdf_ipc_worker import MinerUPreflightWorker
 
     def fake_ensure(root, *, progress_callback=None):
         # 模拟越过取消检查点后自然返回成功
         return True, "late"
 
     monkeypatch.setattr(
-        "vibeocr.env_manager.ensure_mineru_models", fake_ensure
+        "vibeocr.backend.env_manager.ensure_mineru_models", fake_ensure
     )
     monkeypatch.setattr(
-        "vibeocr.env_manager.get_project_root", lambda: "/root"
+        "vibeocr.backend.env_manager.get_project_root", lambda: "/root"
     )
 
     worker = MinerUPreflightWorker.__new__(MinerUPreflightWorker)
@@ -504,7 +501,7 @@ def test_mineru_preflight_run_cancelled_swallows_completed(monkeypatch):
 
 
 def test_mineru_preflight_cancel_sets_flag_and_requests_interruption(monkeypatch):
-    from vibeocr.pyside.pdf_ipc_worker import MinerUPreflightWorker
+    from vibeocr.classic.pyside.pdf_ipc_worker import MinerUPreflightWorker
 
     worker = MinerUPreflightWorker.__new__(MinerUPreflightWorker)
     worker._cancelled = False
@@ -537,7 +534,7 @@ def _png_bytes_qt(width: int = 2, height: int = 2) -> bytes:
 
 
 def test_preview_worker_run_emits_completed(qapp):
-    from vibeocr.pyside.pdf_ipc_worker import PdfIpcPreviewWorker
+    from vibeocr.classic.pyside.pdf_ipc_worker import PdfIpcPreviewWorker
 
     worker = PdfIpcPreviewWorker.__new__(PdfIpcPreviewWorker)
     client = MagicMock()
@@ -571,7 +568,7 @@ def test_preview_worker_run_emits_completed(qapp):
 
 
 def test_preview_worker_run_detect_text_branch(qapp):
-    from vibeocr.pyside.pdf_ipc_worker import PdfIpcPreviewWorker
+    from vibeocr.classic.pyside.pdf_ipc_worker import PdfIpcPreviewWorker
 
     worker = PdfIpcPreviewWorker.__new__(PdfIpcPreviewWorker)
     client = MagicMock()
@@ -599,7 +596,7 @@ def test_preview_worker_run_detect_text_branch(qapp):
 
 
 def test_preview_worker_run_invalid_png_emits_failed(qapp):
-    from vibeocr.pyside.pdf_ipc_worker import PdfIpcPreviewWorker
+    from vibeocr.classic.pyside.pdf_ipc_worker import PdfIpcPreviewWorker
 
     worker = PdfIpcPreviewWorker.__new__(PdfIpcPreviewWorker)
     client = MagicMock()
@@ -626,7 +623,7 @@ def test_preview_worker_run_invalid_png_emits_failed(qapp):
 
 
 def test_preview_worker_run_render_exception_emits_failed(qapp):
-    from vibeocr.pyside.pdf_ipc_worker import PdfIpcPreviewWorker
+    from vibeocr.classic.pyside.pdf_ipc_worker import PdfIpcPreviewWorker
 
     worker = PdfIpcPreviewWorker.__new__(PdfIpcPreviewWorker)
     client = MagicMock()
@@ -651,7 +648,7 @@ def test_preview_worker_run_render_exception_emits_failed(qapp):
 
 def test_preview_worker_run_cancelled_before_emit_swallows(qapp):
     """run 期间取消：completed/failed 均不发。"""
-    from vibeocr.pyside.pdf_ipc_worker import PdfIpcPreviewWorker
+    from vibeocr.classic.pyside.pdf_ipc_worker import PdfIpcPreviewWorker
 
     worker = PdfIpcPreviewWorker.__new__(PdfIpcPreviewWorker)
     client = MagicMock()
@@ -678,7 +675,7 @@ def test_preview_worker_run_cancelled_before_emit_swallows(qapp):
 
 
 def test_preview_worker_cancel_sets_flag():
-    from vibeocr.pyside.pdf_ipc_worker import PdfIpcPreviewWorker
+    from vibeocr.classic.pyside.pdf_ipc_worker import PdfIpcPreviewWorker
 
     worker = PdfIpcPreviewWorker.__new__(PdfIpcPreviewWorker)
     worker._cancelled = False
@@ -693,7 +690,7 @@ def test_preview_worker_cancel_sets_flag():
 
 
 def test_open_worker_cancel_and_snapshot_is_atomic():
-    from vibeocr.pyside.pdf_ipc_worker import PdfIpcOpenWorker
+    from vibeocr.classic.pyside.pdf_ipc_worker import PdfIpcOpenWorker
 
     worker = PdfIpcOpenWorker.__new__(PdfIpcOpenWorker)
     worker._client = MagicMock()
@@ -714,7 +711,7 @@ def test_open_worker_cancel_and_snapshot_is_atomic():
 
 
 def test_open_worker_opened_and_incomplete_sessions_properties():
-    from vibeocr.pyside.pdf_ipc_worker import PdfIpcOpenWorker
+    from vibeocr.classic.pyside.pdf_ipc_worker import PdfIpcOpenWorker
 
     worker = PdfIpcOpenWorker.__new__(PdfIpcOpenWorker)
     worker._client = MagicMock()
@@ -730,7 +727,7 @@ def test_open_worker_opened_and_incomplete_sessions_properties():
 
 def test_open_worker_cancelled_session_owned_by_worker():
     """_cancelled_session_owned_by_worker：已取消时返回 incomplete 中的 sid。"""
-    from vibeocr.pyside.pdf_ipc_worker import PdfIpcOpenWorker
+    from vibeocr.classic.pyside.pdf_ipc_worker import PdfIpcOpenWorker
 
     worker = PdfIpcOpenWorker.__new__(PdfIpcOpenWorker)
     worker._client = MagicMock()
@@ -746,7 +743,7 @@ def test_open_worker_cancelled_session_owned_by_worker():
 
 def test_open_worker_complete_load_or_keep_cancel_ownership():
     """_complete_load_or_keep_cancel_ownership：取消时保留回收 ownership。"""
-    from vibeocr.pyside.pdf_ipc_worker import PdfIpcOpenWorker
+    from vibeocr.classic.pyside.pdf_ipc_worker import PdfIpcOpenWorker
 
     worker = PdfIpcOpenWorker.__new__(PdfIpcOpenWorker)
     worker._client = MagicMock()

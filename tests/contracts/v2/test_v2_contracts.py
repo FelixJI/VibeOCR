@@ -13,7 +13,7 @@ from importlib import resources
 
 import pytest
 
-from vibeocr.protocol.v2 import (
+from vibeocr.runtime_contracts import (
     SCHEMA_VERSION,
     CancelMode,
     ContractError,
@@ -46,12 +46,12 @@ from vibeocr.protocol.v2 import (
     parse_residency_entry,
     parse_submit_request,
 )
-from vibeocr.protocol.v2.parser import SchemaValidator
+from vibeocr.runtime_contracts.parser import SchemaValidator
 
 
 @pytest.fixture(scope="module")
 def golden() -> dict:
-    raw = resources.files("vibeocr.protocol.v2.golden").joinpath("golden.json").read_text(encoding="utf-8")
+    raw = resources.files("vibeocr.runtime_contracts.golden").joinpath("golden.json").read_text(encoding="utf-8")
     return json.loads(raw)
 
 
@@ -135,7 +135,7 @@ def test_job_snapshot_roundtrip_preserves_order() -> None:
             JobItem(item_id="it-0", display_name="a", state=ItemState.SUCCEEDED),
             JobItem(item_id="it-1", display_name="b", state=ItemState.FAILED, error="boom"),
         ),
-        summary=__import__("vibeocr.protocol.v2", fromlist=["JobSummary"]).JobSummary(
+        summary=__import__("vibeocr.runtime_contracts", fromlist=["JobSummary"]).JobSummary(
             succeeded=1, failed=1, total=2
         ),
         degraded=True,

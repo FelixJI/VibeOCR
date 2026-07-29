@@ -18,7 +18,7 @@ from unittest.mock import patch
 
 import pytest
 
-from vibeocr.services.ocr_service import OCRService
+from vibeocr.backend.services.ocr_service import OCRService
 
 
 def _site_packages() -> Path | None:

@@ -2,14 +2,14 @@
 
 import re
 
-from vibeocr import __version__
-from vibeocr.core import (
+from vibeocr.backend.core import (
     DEFAULT_SHM_SIZE,
     Constants,
     FileType,
     OCRPipeline,
 )
-from vibeocr.ui import theme
+from vibeocr.classic import __version__
+from vibeocr.classic.ui import theme
 
 # Semver 主版本号（major.minor.patch），不带预发布后缀。
 # 用于校验 APP_VERSION 是合法版本号，而非断言某个具体值（会随 bump 变化）。
@@ -147,7 +147,7 @@ class TestBackwardCompatibility:
 
     def test_batch_constants(self):
         """测试批处理常量导出"""
-        from vibeocr.core.constants import (
+        from vibeocr.backend.core.constants import (
             MIN_BATCH_SIZE,
             OCR_BATCH_GPU_SIZE_CAP,
         )

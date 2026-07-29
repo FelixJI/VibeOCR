@@ -9,7 +9,7 @@ from PySide6.QtCore import QObject, Signal
 from PySide6.QtNetwork import QLocalSocket
 
 from tests.qt_responsiveness import assert_qt_event_loop_responsive
-from vibeocr.utils.single_instance import _ACK, _CMD_RAISE, SingleInstanceGuard
+from vibeocr.classic.utils.single_instance import _ACK, _CMD_RAISE, SingleInstanceGuard
 
 
 @pytest.fixture
@@ -158,7 +158,7 @@ class _StuckAckSocket(QObject):
 def test_stuck_ack_drain_times_out_without_blocking_gui(
     guard, qtbot, monkeypatch
 ):
-    monkeypatch.setattr("vibeocr.utils.single_instance._TIMEOUT_MS", 80)
+    monkeypatch.setattr("vibeocr.classic.utils.single_instance._TIMEOUT_MS", 80)
     socket = _StuckAckSocket()
     guard._track_connection(socket)  # type: ignore[arg-type]
 

@@ -45,40 +45,38 @@ def _write_wheel(
 
 
 def _write_workspace_wheels(
-    root: Path, *, schema_owner: str = "vibeocr-contracts-py"
+    root: Path, *, schema_owner: str = "vibeocr-runtime-contracts"
 ) -> None:
     code_files = {
-        "vibeocr-contracts-py": [
-            "vibeocr/__init__.py",
-            "vibeocr/protocol/v2/golden/golden.json",
+        "vibeocr-runtime-contracts": [
+            "vibeocr/runtime_contracts/golden/golden.json",
         ],
         "vibeocr-runtime-client": [
-            "vibeocr/protocol/v2/client.py",
-            "vibeocr/protocol/v2/mock_server.py",
+            "vibeocr/runtime_client/client.py",
+            "vibeocr/runtime_client/mock_server.py",
         ],
-        "vibeocr-client-py": [
-            "vibeocr/env_manager.py",
-            "vibeocr/dependency_profiles.json",
+        "vibeocr-backend": [
+            "vibeocr/backend/env_manager.py",
+            "vibeocr/backend/dependency_profiles.json",
+            "vibeocr/backend/supervisor/main.py",
         ],
-        "vibeocr-backend": ["vibeocr/supervisor/main.py"],
-        "vibeocr-pyside": [
-            "vibeocr/main.py",
-            "vibeocr/ui/main_window.ui",
+        "vibeocr-classic": [
+            "vibeocr/classic/main.py",
+            "vibeocr/classic/ui/main_window.ui",
         ],
     }
-    code_files[schema_owner].append("vibeocr/contracts/schemas/table-v1.schema.json")
-    root_requirements = tuple(f"{distribution}==1.0" for distribution in code_files)
+    code_files[schema_owner].append(
+        "vibeocr/runtime_contracts/contracts/schemas/table-v1.schema.json"
+    )
     for distribution in (
-        "vibeocr",
-        "vibeocr-contracts-py",
+        "vibeocr-runtime-contracts",
         "vibeocr-runtime-client",
-        "vibeocr-client-py",
         "vibeocr-backend",
-        "vibeocr-pyside",
+        "vibeocr-classic",
     ):
-        requirements = root_requirements if distribution == "vibeocr" else ()
+        requirements: tuple[str, ...] = ()
         if distribution == "vibeocr-runtime-client":
-            requirements = ("vibeocr-contracts-py==1.0",)
+            requirements = ("vibeocr-runtime-contracts==1.0",)
         if distribution == "vibeocr-backend":
             requirements = (
                 "paddlepaddle>=3; extra == 'cpu'",
@@ -96,7 +94,7 @@ def test_workspace_wheel_verifier_rejects_table_schema_outside_contracts(
     tmp_path: Path,
 ) -> None:
     verifier = _load_verifier()
-    _write_workspace_wheels(tmp_path, schema_owner="vibeocr-client-py")
+    _write_workspace_wheels(tmp_path, schema_owner="vibeocr-backend")
 
     with pytest.raises(AssertionError, match=r"table-v1\.schema\.json"):
         verifier.verify(tmp_path)

@@ -15,9 +15,9 @@ from __future__ import annotations
 
 import fitz
 
-from vibeocr.managers.pdf_session_manager import PdfSessionManager
-from vibeocr.models.ocr_result import OCRResult, TextBlock
-from vibeocr.services.pdf_service import PdfService
+from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
+from vibeocr.backend.services.pdf_service import PdfService
+from vibeocr.classic.managers.pdf_session_manager import PdfSessionManager
 
 _PAGE_RECT = fitz.Rect(0, 0, 612, 792)
 

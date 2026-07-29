@@ -4,7 +4,7 @@
 import logging
 from unittest.mock import patch
 
-import vibeocr.env_manager as em
+import vibeocr.backend.env_manager as em
 
 
 def _mk_completed(stdout="", returncode=0):
@@ -259,7 +259,7 @@ class TestCudaVersionMatching:
         """cancel_event 被置位时，_run_pip 抛 InstallCancelled，返回 None。"""
         import threading
 
-        from vibeocr.env_manager import InstallCancelled
+        from vibeocr.backend.env_manager import InstallCancelled
 
         cancel = threading.Event()
         cancel.set()

@@ -5,12 +5,16 @@ from datetime import date
 from pathlib import Path
 from unittest.mock import patch
 
-from vibeocr.machine_cache import CACHE_VERSION, generate_machine_id
-from vibeocr.pipeline_status import (
+from vibeocr.backend.pipeline_status import (
     LOCAL_MARKABLE_PIPELINES,
     PIPELINE_NAMES,
     is_pipeline_ever_succeeded,
     mark_pipeline_success,
+)
+from vibeocr.backend.runtime_state import (
+    CACHE_VERSION,
+    generate_machine_id,
+    get_cache_path,
 )
 
 
@@ -20,7 +24,7 @@ def _make_cache(tmp_path: Path, pipeline_success: dict | None = None) -> Path:
     version 必须用 CACHE_VERSION——收敛到 machine_cache.is_cache_valid 后，
     pipeline_status 的读写在 version 不匹配时会判无效（P1 修复）。
     """
-    cache_file = tmp_path / ".vibeocr" / "cache.json"
+    cache_file = get_cache_path(tmp_path)
     cache_file.parent.mkdir(parents=True, exist_ok=True)
     data = {
         "version": CACHE_VERSION,
@@ -70,7 +74,7 @@ def test_mark_success_preserves_existing(tmp_path):
 
 
 def test_machine_id_mismatch_returns_false(tmp_path):
-    cache_file = tmp_path / ".vibeocr" / "cache.json"
+    cache_file = get_cache_path(tmp_path)
     cache_file.parent.mkdir(parents=True, exist_ok=True)
     cache_file.write_text(
         json.dumps(
@@ -92,7 +96,7 @@ def test_version_mismatch_returns_false(tmp_path):
     bump CACHE_VERSION 后 pipeline_success 字段仍被当作有效。收敛到
     machine_cache.is_cache_valid 后，version 不匹配即整体无效。
     """
-    cache_file = tmp_path / ".vibeocr" / "cache.json"
+    cache_file = get_cache_path(tmp_path)
     cache_file.parent.mkdir(parents=True, exist_ok=True)
     cache_file.write_text(
         json.dumps(
@@ -115,7 +119,7 @@ def test_mark_success_skipped_when_cache_invalid(tmp_path):
     """
     # 无缓存
     mark_pipeline_success("OCR", tmp_path)
-    assert not (tmp_path / ".vibeocr" / "cache.json").exists()
+    assert not get_cache_path(tmp_path).exists()
     assert is_pipeline_ever_succeeded("OCR", tmp_path) is False
 
 
@@ -159,7 +163,7 @@ def test_local_markable_pipelines_excludes_mineru_and_covers_local():
 def test_mark_success_records_today_and_reads_true_same_day(tmp_path):
     """mark 后当天 is_pipeline_ever_succeeded 应为 True。"""
     _make_cache(tmp_path)
-    with patch("vibeocr.pipeline_status._today") as mock_today:
+    with patch("vibeocr.backend.pipeline_status._today") as mock_today:
         mock_today.return_value = date(2026, 7, 24)
         mark_pipeline_success("OCR", tmp_path)
         assert is_pipeline_ever_succeeded("OCR", tmp_path) is True
@@ -177,7 +181,7 @@ def test_succeeded_marker_expires_next_day(tmp_path):
         tmp_path,
         {"OCR": {"succeeded": True, "date": yesterday.isoformat()}},
     )
-    with patch("vibeocr.pipeline_status._today", return_value=today):
+    with patch("vibeocr.backend.pipeline_status._today", return_value=today):
         assert is_pipeline_ever_succeeded("OCR", tmp_path) is False
 
 
@@ -188,7 +192,7 @@ def test_succeeded_marker_same_day_true(tmp_path):
         tmp_path,
         {"OCR": {"succeeded": True, "date": today.isoformat()}},
     )
-    with patch("vibeocr.pipeline_status._today", return_value=today):
+    with patch("vibeocr.backend.pipeline_status._today", return_value=today):
         assert is_pipeline_ever_succeeded("OCR", tmp_path) is True
 
 
@@ -199,7 +203,7 @@ def test_succeeded_marker_false_even_same_day(tmp_path):
         tmp_path,
         {"OCR": {"succeeded": False, "date": today.isoformat()}},
     )
-    with patch("vibeocr.pipeline_status._today", return_value=today):
+    with patch("vibeocr.backend.pipeline_status._today", return_value=today):
         assert is_pipeline_ever_succeeded("OCR", tmp_path) is False
 
 
@@ -210,17 +214,17 @@ def test_legacy_bool_format_still_recognized(tmp_path):
     重新标记的过渡期出现，宽容返回避免老用户升级后首次识别白白用长超时。
     """
     _make_cache(tmp_path, {"OCR": True})
-    with patch("vibeocr.pipeline_status._today", return_value=date(2026, 7, 24)):
+    with patch("vibeocr.backend.pipeline_status._today", return_value=date(2026, 7, 24)):
         assert is_pipeline_ever_succeeded("OCR", tmp_path) is True
 
 
 def test_mark_success_upgrades_legacy_to_dated_format(tmp_path):
     """mark 旧格式缓存后，应写入新格式 {succeeded, date}。"""
     _make_cache(tmp_path, {"OCR": True})
-    with patch("vibeocr.pipeline_status._today", return_value=date(2026, 7, 24)):
+    with patch("vibeocr.backend.pipeline_status._today", return_value=date(2026, 7, 24)):
         mark_pipeline_success("OCR", tmp_path)
 
-    cache_file = tmp_path / ".vibeocr" / "cache.json"
+    cache_file = get_cache_path(tmp_path)
     data = json.loads(cache_file.read_text(encoding="utf-8"))
     entry = data["pipeline_success"]["OCR"]
     assert isinstance(entry, dict)
@@ -230,14 +234,14 @@ def test_mark_success_upgrades_legacy_to_dated_format(tmp_path):
 
 def test_is_success_entry_today_dict_date_not_string():
     """succeeded dict 但 date 非 str 时返回 False（line 76-77）。"""
-    from vibeocr.pipeline_status import _is_success_entry_today
+    from vibeocr.backend.pipeline_status import _is_success_entry_today
 
     assert _is_success_entry_today({"succeeded": True, "date": 20240101}) is False
 
 
 def test_is_success_entry_today_unknown_entry_type():
     """entry 既非 bool 也非 dict（如 list/None/int）时返回 False（line 79）。"""
-    from vibeocr.pipeline_status import _is_success_entry_today
+    from vibeocr.backend.pipeline_status import _is_success_entry_today
 
     assert _is_success_entry_today(["weird", "value"]) is False
     assert _is_success_entry_today(None) is False

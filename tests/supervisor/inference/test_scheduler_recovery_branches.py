@@ -13,13 +13,13 @@ from __future__ import annotations
 import threading
 import time
 
-from vibeocr.protocol.v2 import JobPriority
-from vibeocr.supervisor.inference.recovery import (
+from vibeocr.backend.supervisor.inference.recovery import (
     FailureClass,
     RecoveryAction,
     RecoveryPolicy,
 )
-from vibeocr.supervisor.inference.scheduler import DeviceScheduler
+from vibeocr.backend.supervisor.inference.scheduler import DeviceScheduler
+from vibeocr.runtime_contracts import JobPriority
 
 # ---------------------------------------------------------------------------
 # DeviceScheduler: idempotent enqueue, cancel unknown, try_acquire unknown

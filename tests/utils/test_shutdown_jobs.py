@@ -1,6 +1,6 @@
 """ExternalShutdownJob 测试（QThread.run 纯逻辑）。"""
 
-from vibeocr.utils.shutdown_jobs import ExternalShutdownJob
+from vibeocr.classic.utils.shutdown_jobs import ExternalShutdownJob
 
 
 def test_run_executes_all_operations_in_order(qapp):

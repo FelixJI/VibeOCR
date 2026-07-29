@@ -143,7 +143,10 @@ def main(argv: list[str] | None = None) -> int:
 
     target = args.target
     if target == "python":
-        target = str(REPO / "apps/vibeocr-pyside/src/vibeocr/main.py")
+        target = str(
+            REPO
+            / "apps/vibeocr-pyside/src/vibeocr/classic/main.py"
+        )
     target = str(Path(target).resolve())
 
     print(f"Collecting {args.runs} cold-start samples for {args.name} ({target})...")

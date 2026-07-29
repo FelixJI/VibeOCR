@@ -1,6 +1,6 @@
 """ExportSettings 数据类测试。"""
 
-from vibeocr.models.export_settings import ExportSettings
+from vibeocr.backend.models.export_settings import ExportSettings
 
 
 class TestExportSettings:

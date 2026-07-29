@@ -2,7 +2,7 @@
 
 import pytest
 
-from vibeocr.managers.config_manager import ConfigManager
+from vibeocr.classic.managers.config_manager import ConfigManager
 
 
 @pytest.fixture

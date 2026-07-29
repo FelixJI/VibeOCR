@@ -3,7 +3,7 @@
 import pytest
 from PySide6.QtGui import QPixmap
 
-from vibeocr.utils.thumbnail_lru_cache import ThumbnailLruCache
+from vibeocr.classic.utils.thumbnail_lru_cache import ThumbnailLruCache
 
 
 @pytest.fixture(autouse=True)

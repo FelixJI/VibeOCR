@@ -5,12 +5,12 @@ import sys
 
 import pytest
 
-from vibeocr import __version__
+from vibeocr.classic import __version__
 
 
 @pytest.fixture
 def about_tab(qtbot):
-    from vibeocr.views.tabs.about_tab import AboutTab
+    from vibeocr.classic.views.tabs.about_tab import AboutTab
 
     tab = AboutTab()
     qtbot.addWidget(tab)
@@ -46,7 +46,7 @@ class TestAboutTab:
             encoding="utf-8",
         )
 
-        from vibeocr.views.tabs import about_tab
+        from vibeocr.classic.views.tabs import about_tab
 
         monkeypatch.setattr(
             about_tab.env_manager,
@@ -103,7 +103,7 @@ class TestAboutTabFrozen:
         monkeypatch.setattr(sys, "frozen", True, raising=False)
         monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
 
-        from vibeocr.views.tabs.about_tab import AboutTab
+        from vibeocr.classic.views.tabs.about_tab import AboutTab
 
         tab = AboutTab()
         qtbot.addWidget(tab)
@@ -117,7 +117,7 @@ class TestAboutTabFrozen:
         monkeypatch.setattr(sys, "frozen", True, raising=False)
         monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
 
-        from vibeocr.views.tabs.about_tab import AboutTab
+        from vibeocr.classic.views.tabs.about_tab import AboutTab
 
         tab = AboutTab()
         qtbot.addWidget(tab)
@@ -131,23 +131,23 @@ class TestAboutTabRepoUrls:
 
     def test_github_url_points_to_repo_root(self):
         """关于页 GitHub 链接应指向仓库主页（无 /releases 后缀）"""
-        from vibeocr.views.tabs import about_tab
+        from vibeocr.classic.views.tabs import about_tab
 
-        assert about_tab._GITHUB_URL == "https://github.com/FelixJI/VibeOCR"
+        assert about_tab._GITHUB_URL == "https://github.com/FelixJI/vibeocr-classic"
 
     def test_gitee_url_points_to_repo_root(self):
         """关于页 Gitee 链接应指向仓库主页（无 /releases 后缀）"""
-        from vibeocr.views.tabs import about_tab
+        from vibeocr.classic.views.tabs import about_tab
 
         assert about_tab._GITEE_URL == "https://gitee.com/felixjii/vibeocr"
 
     def test_urls_imported_from_env_config_ssot(self):
-        """URL 常量应与 env_config repo base SSOT 完全一致"""
-        from vibeocr.services.env_config import (
+        """URL 常量应与 Classic update_config SSOT 完全一致"""
+        from vibeocr.classic.update_config import (
             GITEE_REPO_BASE,
             GITHUB_REPO_BASE,
         )
-        from vibeocr.views.tabs import about_tab
+        from vibeocr.classic.views.tabs import about_tab
 
         assert about_tab._GITHUB_URL == GITHUB_REPO_BASE
         assert about_tab._GITEE_URL == GITEE_REPO_BASE
@@ -162,7 +162,7 @@ class TestAboutTabUpdateTiming:
 
     def test_no_card_when_progress_absent(self, qtbot, monkeypatch, tmp_path):
         """progress.json 不存在时（首次安装/未更新过）不应生成耗时卡片。"""
-        from vibeocr.views.tabs import about_tab
+        from vibeocr.classic.views.tabs import about_tab
 
         monkeypatch.setattr(
             about_tab, "get_update_progress_path", lambda: tmp_path / "missing.json"
@@ -178,7 +178,7 @@ class TestAboutTabUpdateTiming:
         """progress.json 存在时卡片应渲染各阶段名与耗时。"""
         import json
 
-        from vibeocr.views.tabs import about_tab
+        from vibeocr.classic.views.tabs import about_tab
 
         progress_path = tmp_path / "progress.json"
         progress_path.write_text(
@@ -232,7 +232,7 @@ class TestAboutTabUpdateTiming:
         """慢阶段（slow=True）和失败阶段（failed=True）应带标记。"""
         import json
 
-        from vibeocr.views.tabs import about_tab
+        from vibeocr.classic.views.tabs import about_tab
 
         progress_path = tmp_path / "progress.json"
         progress_path.write_text(

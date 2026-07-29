@@ -3,8 +3,8 @@
 
 from PySide6.QtWidgets import QToolButton
 
-from vibeocr.widgets.editor.annotation_items import EditTool
-from vibeocr.widgets.inline_toolbar import InlineToolbar
+from vibeocr.classic.widgets.editor.annotation_items import EditTool
+from vibeocr.classic.widgets.inline_toolbar import InlineToolbar
 
 
 class TestInlineToolbar:

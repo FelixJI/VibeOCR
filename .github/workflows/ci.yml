@@ -10,7 +10,7 @@ env:
   # Windows runners otherwise default Python stdout to a legacy code page,
   # and subprocesses need the src-layout package on their import path.
   PYTHONUTF8: "1"
-  PYTHONPATH: "${{ github.workspace }}/packages/vibeocr-contracts-py/src;${{ github.workspace }}/packages/vibeocr-client-py/src;${{ github.workspace }}/packages/vibeocr-backend/src;${{ github.workspace }}/apps/vibeocr-pyside/src"
+  PYTHONPATH: "${{ github.workspace }}/packages/vibeocr-contracts-py/src;${{ github.workspace }}/packages/vibeocr-runtime-client-py/src;${{ github.workspace }}/packages/vibeocr-backend/src;${{ github.workspace }}/apps/vibeocr-pyside/src"
 
 jobs:
   table-contract:
@@ -52,7 +52,7 @@ jobs:
           ./scripts/run_table_contract_gate.ps1 -PythonPath python -ReportDir reports/table-regression
           # Table projection coverage is a focused ratchet: raise this threshold
           # when tests improve; never lower it to make a regression green.
-          python -m pytest tests/contracts/test_table_contract.py tests/core/test_pipeline_table.py tests/core/test_pipeline_pp_structure_parsing.py tests/core/test_pipeline_paddlocr_vl.py tests/services/test_export_service.py tests/services/test_export_service_extra.py tests/services/test_mineru_service.py tests/supervisor/inference/test_ocr_result_serializer.py tests/supervisor/test_export_route_tables.py tests/utils/test_table_model_html.py tests/utils/test_table_model_reducer.py tests/views/tabs/test_base_tab.py tests/widgets/test_result_view_widget.py -q --cov=vibeocr.tables --cov-branch --cov-report=term-missing --cov-report=xml:reports/table-regression/coverage.xml --cov-fail-under=85 --junitxml=reports/table-regression/junit-expanded.xml
+          python -m pytest tests/contracts/test_table_contract.py tests/core/test_pipeline_table.py tests/core/test_pipeline_pp_structure_parsing.py tests/core/test_pipeline_paddlocr_vl.py tests/services/test_export_service.py tests/services/test_export_service_extra.py tests/services/test_mineru_service.py tests/supervisor/inference/test_ocr_result_serializer.py tests/supervisor/test_export_route_tables.py tests/utils/test_table_model_html.py tests/utils/test_table_model_reducer.py tests/views/tabs/test_base_tab.py tests/widgets/test_result_view_widget.py -q --cov=vibeocr.backend.tables --cov-branch --cov-report=term-missing --cov-report=xml:reports/table-regression/coverage.xml --cov-fail-under=85 --junitxml=reports/table-regression/junit-expanded.xml
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Upload table regression diagnostics
         if: always()
@@ -100,17 +100,17 @@ jobs:
           python -m pytest tests/core tests/managers tests/migration tests/models tests/release_layout/test_pyside_frozen_startup.py tests/release_layout/test_pyside_stdio.py tests/ui tests/utils tests/workers @rootTests -q
       - run: pip install build==1.3.0 hatchling==1.27.0
       - uses: ./.github/actions/build-workspace-wheels
-      - name: Install root meta wheel in a clean environment
+      - name: Install the four owned wheels in a clean environment
         shell: pwsh
         run: |
           python -m venv .wheel-smoke
           $env:PYTHONPATH = ''
           $workspaceWheels = @(Get-ChildItem -LiteralPath dist/wheels -Filter '*.whl')
-          if ($workspaceWheels.Count -ne 6) { throw 'expected exactly six workspace wheels' }
+          if ($workspaceWheels.Count -ne 4) { throw 'expected exactly four workspace wheels' }
           $wheelPaths = @($workspaceWheels | ForEach-Object { $_.FullName })
           .wheel-smoke\Scripts\python -m pip install @wheelPaths
-          .wheel-smoke\Scripts\python -c "import vibeocr, vibeocr.main, vibeocr.supervisor.main, vibeocr.protocol.v2, vibeocr.protocol.v2.client, vibeocr.protocol.v2.mock_server, vibeocr.dependency_bootstrap; print(vibeocr.__version__)"
-          .wheel-smoke\Scripts\python -c "import sys; from pathlib import Path; from vibeocr import env_manager; root=env_manager.get_project_root(); assert root == Path(sys.prefix).resolve(); assert env_manager.get_embedded_python_executable(root) == Path(sys.executable).resolve()"
+          .wheel-smoke\Scripts\python -c "import vibeocr.runtime_contracts, vibeocr.runtime_client, vibeocr.backend, vibeocr.classic"
+          .wheel-smoke\Scripts\python -c "import sys; from pathlib import Path; from vibeocr.backend import env_manager; root=env_manager.get_project_root(); assert root == Path(sys.prefix).resolve(); assert env_manager.get_embedded_python_executable(root) == Path(sys.executable).resolve()"
           .wheel-smoke\Scripts\vibeocr-install-backend --help
           if (-not (Test-Path .wheel-smoke\Scripts\vibeocr-supervisor.exe)) { throw 'vibeocr-supervisor console entry point is missing' }
 

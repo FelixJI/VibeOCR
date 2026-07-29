@@ -1,8 +1,11 @@
 from PySide6.QtCore import QPoint, QRect
 from PySide6.QtGui import QColor, QPainter, QPixmap
 
-from vibeocr.widgets.magnifier_overlay import MagnifierOverlay
-from vibeocr.widgets.screen_coordinate_mapper import ScreenCoordinateMapper, ScreenInfo
+from vibeocr.classic.widgets.magnifier_overlay import MagnifierOverlay
+from vibeocr.classic.widgets.screen_coordinate_mapper import (
+    ScreenCoordinateMapper,
+    ScreenInfo,
+)
 
 
 def _make_mapper(dpr=1.0, w=100, h=100, color="red"):

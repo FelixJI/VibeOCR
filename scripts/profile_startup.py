@@ -163,7 +163,7 @@ def _profile_imports_in_process() -> tuple[dict[str, float], float]:
     # 会触发 numpy/PIL/httpx/pydantic 等传递依赖的加载。
     try:
         try:
-            import vibeocr.env_manager  # noqa: F401  # pyright: ignore[reportUnusedImport]
+            import vibeocr.backend.env_manager  # noqa: F401  # pyright: ignore[reportUnusedImport]
         except Exception:
             pass
         total_import = time.perf_counter() - t0
@@ -190,30 +190,30 @@ def profile_gui_startup():
     sp.mark("import PySide6 + env_manager")
     from PySide6.QtWidgets import QApplication
 
-    from vibeocr import env_manager
+    from vibeocr.backend import env_manager
 
     sp.mark("创建 QApplication")
 
     app = QApplication(sys.argv)
     sp.mark("初始化 ConfigManager")
 
-    from vibeocr.managers.config_manager import ConfigManager
+    from vibeocr.classic.managers.config_manager import ConfigManager
 
     project_root = env_manager.get_project_root()
     cm = ConfigManager.instance(project_root)
     sp.mark("加载 AppSettings")
 
-    from vibeocr.utils.app_settings import AppSettings
+    from vibeocr.classic.utils.app_settings import AppSettings
 
     app_settings = AppSettings(cm)
     sp.mark("创建 qasync 事件循环")
 
-    from vibeocr.utils.qt_async import create_qasync_event_loop
+    from vibeocr.classic.utils.qt_async import create_qasync_event_loop
 
     loop = create_qasync_event_loop(app)  # noqa: F841 (持有引用，防止事件循环被回收)
     sp.mark("创建 MainWindow")
 
-    from vibeocr.views.main_window import MainWindow
+    from vibeocr.classic.views.main_window import MainWindow
 
     window = MainWindow()
     sp.mark("set_app_settings")
@@ -271,7 +271,7 @@ def run_multi_profile(runs: int, output: str) -> None:
     import json as _json
     import subprocess
 
-    from vibeocr.startup_metrics import summarize_runs
+    from vibeocr.classic.startup_metrics import summarize_runs
 
     trace_file = LOG_DIR / "multi-startup-trace.jsonl"
     trace_file.parent.mkdir(parents=True, exist_ok=True)
@@ -337,8 +337,8 @@ import os, sys
 sys.path.insert(0, os.path.join(os.getcwd(), "src"))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 # 导入 main 触发 T0/T1 记录（main 模块顶层记录 PROCESS_START 和 RUNTIME_READY）
-import vibeocr.main  # noqa: F401
-from vibeocr.startup_metrics import StartupEvent, record_startup, flush_startup
+import vibeocr.classic.main  # noqa: F401
+from vibeocr.classic.startup_metrics import StartupEvent, record_startup, flush_startup
 record_startup(StartupEvent.SHELL_CREATED)  # T2（offscreen 模式无真实窗口）
 record_startup(StartupEvent.FIRST_WINDOW)   # T3
 flush_startup()

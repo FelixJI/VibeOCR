@@ -6,13 +6,13 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from vibeocr.protocol.v2 import ItemState
-from vibeocr.supervisor.jobs.staging import (
+from vibeocr.backend.supervisor.jobs.staging import (
     InputStager,
     StagedInput,
     StagingQuotaError,
     _safe_stem,
 )
+from vibeocr.runtime_contracts import ItemState
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -105,7 +105,7 @@ def test_cleanup_stale_leaves_known_dirs(stager: InputStager) -> None:
 
 
 def _safe_dir(job_id: str) -> str:
-    from vibeocr.supervisor.jobs.staging import _safe_dir as impl
+    from vibeocr.backend.supervisor.jobs.staging import _safe_dir as impl
 
     return impl(job_id)
 

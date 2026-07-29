@@ -49,7 +49,7 @@ class TestCleanupUpdateArtifacts:
         cache_dir = tmp_path / "data" / "cache" / "update"
         paths = _make_update_residue(cache_dir)
 
-        from vibeocr import main as main_mod
+        from vibeocr.classic import main as main_mod
 
         # cache_dir = app_dir/data/cache/update → app_dir = cache_dir.parent.parent.parent
         app_dir = cache_dir.parent.parent.parent
@@ -66,7 +66,7 @@ class TestCleanupUpdateArtifacts:
         """多次调用无副作用。"""
         cache_dir = tmp_path / "data" / "cache" / "update"
         paths = _make_update_residue(cache_dir)
-        from vibeocr import main as main_mod
+        from vibeocr.classic import main as main_mod
 
         app_dir = cache_dir.parent.parent.parent
         main_mod._cleanup_update_artifacts(app_dir)
@@ -78,7 +78,7 @@ class TestCleanupUpdateArtifacts:
 
     def test_no_artifacts_no_error(self, tmp_path):
         """无残留时调用不报错。"""
-        from vibeocr import main as main_mod
+        from vibeocr.classic import main as main_mod
 
         result = main_mod._cleanup_update_artifacts(tmp_path)
 

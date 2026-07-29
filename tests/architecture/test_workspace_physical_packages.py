@@ -3,20 +3,21 @@
 from __future__ import annotations
 
 import json
-import os
-import subprocess
-import sys
-import sysconfig
 import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE_ROOTS = {
-    "vibeocr-contracts-py": ROOT / "packages/vibeocr-contracts-py/src",
+    "vibeocr-runtime-contracts": ROOT / "packages/vibeocr-contracts-py/src",
     "vibeocr-runtime-client": ROOT / "packages/vibeocr-runtime-client-py/src",
-    "vibeocr-client-py": ROOT / "packages/vibeocr-client-py/src",
     "vibeocr-backend": ROOT / "packages/vibeocr-backend/src",
-    "vibeocr-pyside": ROOT / "apps/vibeocr-pyside/src",
+    "vibeocr-classic": ROOT / "apps/vibeocr-pyside/src",
+}
+NAMESPACE_ROOTS = {
+    "vibeocr-runtime-contracts": "vibeocr/runtime_contracts",
+    "vibeocr-runtime-client": "vibeocr/runtime_client",
+    "vibeocr-backend": "vibeocr/backend",
+    "vibeocr-classic": "vibeocr/classic",
 }
 
 
@@ -24,25 +25,21 @@ def _project(path: Path) -> dict:
     return tomllib.loads(path.read_text(encoding="utf-8"))["project"]
 
 
-def test_root_is_code_free_compatibility_meta_package() -> None:
-    product_files = list((ROOT / "src/vibeocr").glob("*.py"))
-    assert not product_files
-    root = _project(ROOT / "pyproject.toml")
-    version = root["version"]
-    assert root["dependencies"] == [
-        "vibeocr-contracts-py==2.0.0rc1",
-        "vibeocr-runtime-client==2.0.0rc1",
-        f"vibeocr-client-py=={version}",
-        f"vibeocr-backend=={version}",
-        f"vibeocr-pyside=={version}",
-    ]
+def test_root_is_workspace_only_and_not_a_meta_wheel() -> None:
+    root = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    assert "project" not in root
+    assert "build-system" not in root
+    assert root["tool"]["uv"]["package"] is False
+    assert not (ROOT / "packages/vibeocr-client-py").exists()
 
 
 def test_each_wheel_archive_path_has_one_owner() -> None:
     owners: dict[str, str] = {}
     for distribution, source_root in SOURCE_ROOTS.items():
-        assert (source_root / "vibeocr").is_dir()
-        for path in source_root.rglob("*"):
+        namespace_root = source_root / NAMESPACE_ROOTS[distribution]
+        assert namespace_root.is_dir()
+        assert not (source_root / "vibeocr/__init__.py").exists()
+        for path in namespace_root.rglob("*"):
             if not path.is_file() or "__pycache__" in path.parts:
                 continue
             archive_path = path.relative_to(source_root).as_posix()
@@ -53,28 +50,29 @@ def test_each_wheel_archive_path_has_one_owner() -> None:
             owners[archive_path] = distribution
 
 
-def test_ci_builds_and_smokes_all_six_workspace_wheels() -> None:
+def test_ci_builds_and_smokes_all_four_workspace_wheels() -> None:
     action = (ROOT / ".github/actions/build-workspace-wheels/action.yml").read_text(
         encoding="utf-8"
     )
     for project in (
         "packages/vibeocr-contracts-py",
         "packages/vibeocr-runtime-client-py",
-        "packages/vibeocr-client-py",
         "packages/vibeocr-backend",
         "apps/vibeocr-pyside",
     ):
         assert f"python -m build --wheel {project}" in action
-    assert "python -m build --wheel ." in action
+    assert "packages/vibeocr-client-py" not in action
+    assert "python -m build --wheel ." not in action
     ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-    assert "Count -ne 6" in ci
-    assert "vibeocr.protocol.v2.client" in ci
-    assert "vibeocr.protocol.v2.mock_server" in ci
+    assert "Count -ne 4" in ci
+    for namespace in NAMESPACE_ROOTS.values():
+        assert namespace.replace("/", ".") in ci
 
 
 def test_dependency_profile_matches_backend_extras() -> None:
     profile_path = (
-        SOURCE_ROOTS["vibeocr-client-py"] / "vibeocr/dependency_profiles.json"
+        SOURCE_ROOTS["vibeocr-backend"]
+        / "vibeocr/backend/dependency_profiles.json"
     )
     profiles = json.loads(profile_path.read_text(encoding="utf-8"))
     backend = _project(ROOT / "packages/vibeocr-backend/pyproject.toml")
@@ -85,35 +83,13 @@ def test_dependency_profile_matches_backend_extras() -> None:
     assert profiles["dependencies"]["paddlepaddle-gpu"] in flattened
 
 
-def test_pyside_pdf_module_does_not_require_backend_wheel() -> None:
-    """Frontend modules may load with contracts/client/pyside installed alone."""
-    env = os.environ.copy()
-    env["PYTHONPATH"] = os.pathsep.join(
-        str(SOURCE_ROOTS[name])
-        for name in (
-            "vibeocr-contracts-py",
-            "vibeocr-runtime-client",
-            "vibeocr-client-py",
-            "vibeocr-pyside",
-        )
-    )
-    # ``-S`` prevents editable-install .pth files from silently adding every
-    # workspace source root. Add site-packages back as a plain directory so
-    # third-party dependencies remain importable without processing those
-    # editable .pth files.
-    site_packages = sysconfig.get_path("purelib")
-    probe = (
-        f"import sys; sys.path.append({site_packages!r}); "
-        "import importlib.util; "
-        "import vibeocr.views.tabs.pdf_tab; "
-        "assert importlib.util.find_spec('vibeocr.utils.shared_memory_v2') is None"
-    )
-    result = subprocess.run(
-        [sys.executable, "-S", "-c", probe],
-        cwd=ROOT,
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert result.returncode == 0, result.stderr or result.stdout
+def test_internal_distribution_dependencies_are_exact_and_directional() -> None:
+    contracts = _project(ROOT / "packages/vibeocr-contracts-py/pyproject.toml")
+    runtime = _project(ROOT / "packages/vibeocr-runtime-client-py/pyproject.toml")
+    backend = _project(ROOT / "packages/vibeocr-backend/pyproject.toml")
+    classic = _project(ROOT / "apps/vibeocr-pyside/pyproject.toml")
+    assert contracts["dependencies"] == []
+    assert "vibeocr-runtime-contracts==2.0.0" in runtime["dependencies"]
+    assert "vibeocr-runtime-contracts==2.0.0" in backend["dependencies"]
+    assert "vibeocr-runtime-client==2.0.0" in classic["dependencies"]
+    assert "vibeocr-backend==0.7.0" in classic["dependencies"]

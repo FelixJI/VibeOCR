@@ -3,8 +3,8 @@
 import fitz
 import pytest
 
-from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
-from vibeocr.models.pdf_session import PdfSession
+from vibeocr.backend.models.pdf_document import PdfDocument, PdfPageInfo
+from vibeocr.backend.models.pdf_session import PdfSession
 
 
 @pytest.fixture

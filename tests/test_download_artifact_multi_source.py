@@ -25,7 +25,7 @@ import pytest
 # 注意：切勿在此向 sys.modules 注入伪造的 update_service——那会污染整个
 # pytest 会话，导致 test_update_service.py 的 `from ... import ...` 全部报
 # ImportError (unknown location)。
-from vibeocr.env_manager import download_artifact_multi_source
+from vibeocr.backend.env_manager import download_artifact_multi_source
 
 # 失败原因常量值（与 src/vibeocr/services/update_service.py 一致）
 REASON_OK = "ok"
@@ -50,7 +50,7 @@ class TestNoShaPath:
     def test_single_source_success(self, dest: Path):
         urls = ["https://github.com/a/b.tar.gz"]
         with patch(
-            "vibeocr.env_manager.download_file_with_progress", return_value=True
+            "vibeocr.backend.env_manager.download_file_with_progress", return_value=True
         ) as dl:
             ok, reason = download_artifact_multi_source(
                 urls, dest, description="Python 运行时"
@@ -63,7 +63,7 @@ class TestNoShaPath:
     def test_first_fail_second_ok(self, dest: Path):
         urls = ["https://mirror.nju.edu.cn/x", "https://github.com/y"]
         with patch(
-            "vibeocr.env_manager.download_file_with_progress",
+            "vibeocr.backend.env_manager.download_file_with_progress",
             side_effect=[False, True],
         ) as dl:
             ok, reason = download_artifact_multi_source(urls, dest)
@@ -74,7 +74,7 @@ class TestNoShaPath:
     def test_all_fail_returns_reason(self, dest: Path):
         urls = ["https://a", "https://b", "https://c"]
         with patch(
-            "vibeocr.env_manager.download_file_with_progress", return_value=False
+            "vibeocr.backend.env_manager.download_file_with_progress", return_value=False
         ):
             ok, reason = download_artifact_multi_source(urls, dest)
         assert ok is False
@@ -84,7 +84,7 @@ class TestNoShaPath:
         urls = ["https://gh-proxy.com/x", "https://github.com/y"]
         switch = MagicMock()
         with patch(
-            "vibeocr.env_manager.download_file_with_progress",
+            "vibeocr.backend.env_manager.download_file_with_progress",
             side_effect=[False, True],
         ):
             ok, _ = download_artifact_multi_source(
@@ -97,7 +97,7 @@ class TestNoShaPath:
     def test_exception_treated_as_switch(self, dest: Path):
         urls = ["https://a", "https://b"]
         with patch(
-            "vibeocr.env_manager.download_file_with_progress",
+            "vibeocr.backend.env_manager.download_file_with_progress",
             side_effect=[RuntimeError("boom"), True],
         ):
             ok, reason = download_artifact_multi_source(urls, dest)
@@ -115,9 +115,9 @@ class TestWithShaPath:
         sha_urls = ["https://gitee.com/x/asset.sha256", "https://github.com/y/asset.sha256"]
         # 首源：zip+sha 都下成功但校验失败；次源：全部成功且校验通过
         with patch(
-            "vibeocr.env_manager.download_file_with_progress", return_value=True
+            "vibeocr.backend.env_manager.download_file_with_progress", return_value=True
         ), patch(
-            "vibeocr.services.update_service.verify_sha256",
+            "vibeocr.backend.env_manager.verify_sha256",
             side_effect=[False, True],
         ) as vfy:
             ok, reason = download_artifact_multi_source(
@@ -137,9 +137,9 @@ class TestWithShaPath:
         sha_urls = ["https://gitee.com/a.sha256", "https://github.com/b.sha256"]
         # download_file_with_progress: 首源 zip 成功、首源 sha 失败、次源 zip 成功、次源 sha 成功
         with patch(
-            "vibeocr.env_manager.download_file_with_progress",
+            "vibeocr.backend.env_manager.download_file_with_progress",
             side_effect=[True, False, True, True],
-        ), patch("vibeocr.services.update_service.verify_sha256", return_value=True):
+        ), patch("vibeocr.backend.env_manager.verify_sha256", return_value=True):
             ok, reason = download_artifact_multi_source(
                 zip_urls,
                 dest,
@@ -153,8 +153,8 @@ class TestWithShaPath:
         zip_urls = ["https://a/x.zip", "https://b/x.zip"]
         sha_urls = ["https://a/x.sha256", "https://b/x.sha256"]
         with patch(
-            "vibeocr.env_manager.download_file_with_progress", return_value=True
-        ), patch("vibeocr.services.update_service.verify_sha256", return_value=False):
+            "vibeocr.backend.env_manager.download_file_with_progress", return_value=True
+        ), patch("vibeocr.backend.env_manager.verify_sha256", return_value=False):
             ok, reason = download_artifact_multi_source(
                 zip_urls,
                 dest,
@@ -169,9 +169,9 @@ class TestWithShaPath:
         sha_urls = ["https://gh-proxy.com/a.sha256", "https://github.com/b.sha256"]
         switch = MagicMock()
         with patch(
-            "vibeocr.env_manager.download_file_with_progress", return_value=True
+            "vibeocr.backend.env_manager.download_file_with_progress", return_value=True
         ), patch(
-            "vibeocr.services.update_service.verify_sha256",
+            "vibeocr.backend.env_manager.verify_sha256",
             side_effect=[False, True],
         ):
             ok, _ = download_artifact_multi_source(

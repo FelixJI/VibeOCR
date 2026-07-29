@@ -18,12 +18,12 @@ from unittest.mock import MagicMock
 import httpx
 import pytest
 
-from vibeocr.protocol.v2 import ErrorCode
-from vibeocr.supervisor.pdf_client import (
+from vibeocr.classic.pdf_client import (
     PdfBackendError,
     PdfSupervisorClient,
     SyncPdfSupervisorClient,
 )
+from vibeocr.runtime_contracts import ErrorCode
 
 # ---------------------------------------------------------------------------
 # PdfBackendError legacy single-string form
@@ -213,7 +213,7 @@ async def test_log_http_response_elapsed_exception(monkeypatch) -> None:
     def capture(**kwargs: Any) -> None:
         captured.update(kwargs)
 
-    monkeypatch.setattr("vibeocr.supervisor.pdf_client.log_http_response", capture)
+    monkeypatch.setattr("vibeocr.classic.pdf_client.log_http_response", capture)
 
     request = httpx.Request("GET", "http://127.0.0.1/v2/health")
 
@@ -271,7 +271,7 @@ def test_sync_ensure_entered_drives_bg_loop_then_idempotent(monkeypatch) -> None
         return asyncio.new_event_loop().run_until_complete(coro)
 
     loop.run.side_effect = _drive
-    monkeypatch.setattr("vibeocr.supervisor.pdf_client._get_bg_loop", lambda: loop)
+    monkeypatch.setattr("vibeocr.classic.pdf_client._get_bg_loop", lambda: loop)
 
     sync.start()
     assert sync._entered is True
@@ -305,7 +305,7 @@ def test_sync_close_after_start_drives_aexit(monkeypatch) -> None:
         return asyncio.new_event_loop().run_until_complete(coro)
 
     loop.run.side_effect = _drive
-    monkeypatch.setattr("vibeocr.supervisor.pdf_client._get_bg_loop", lambda: loop)
+    monkeypatch.setattr("vibeocr.classic.pdf_client._get_bg_loop", lambda: loop)
 
     sync.start()
     sync.close()

@@ -11,11 +11,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from vibeocr.protocol.v2 import PipelineSpec
-from vibeocr.services.pipeline_cache_manager import (
+from vibeocr.backend.services.pipeline_cache_manager import (
     FALLBACK_MAX_HEAVY,
     PipelineCacheManager,
 )
+from vibeocr.runtime_contracts import PipelineSpec
 
 
 def _make_legacy_manager(
@@ -75,7 +75,7 @@ class TestDetectMaxHeavyGpu:
         fake_monitor_cls = MagicMock()
         fake_monitor_cls.return_value.get_status.return_value = fake_info
 
-        import vibeocr.utils.gpu_memory_monitor as gmm
+        import vibeocr.backend.utils.gpu_memory_monitor as gmm
 
         monkeypatch.setattr(gmm, "GPUMemoryMonitor", fake_monitor_cls)
 
@@ -94,7 +94,7 @@ class TestDetectMaxHeavyGpu:
         fake_monitor_cls = MagicMock()
         fake_monitor_cls.return_value.get_status.side_effect = RuntimeError("nvml boom")
 
-        import vibeocr.utils.gpu_memory_monitor as gmm
+        import vibeocr.backend.utils.gpu_memory_monitor as gmm
 
         monkeypatch.setattr(gmm, "GPUMemoryMonitor", fake_monitor_cls)
 
@@ -117,7 +117,7 @@ class TestDetectMaxHeavyGpu:
         fake_monitor_cls = MagicMock()
         fake_monitor_cls.return_value.get_status.return_value = fake_info
 
-        import vibeocr.utils.gpu_memory_monitor as gmm
+        import vibeocr.backend.utils.gpu_memory_monitor as gmm
 
         monkeypatch.setattr(gmm, "GPUMemoryMonitor", fake_monitor_cls)
 
@@ -154,7 +154,9 @@ class TestTtlsSetterValidation:
         """含 _RESTORE_LAST_USED_KEY → 触发 restore（line 168）。"""
         mgr = _make_legacy_manager()
         mgr._service._pipelines = {"OCR": object()}
-        from vibeocr.services.pipeline_cache_manager import _RESTORE_LAST_USED_KEY
+        from vibeocr.backend.services.pipeline_cache_manager import (
+            _RESTORE_LAST_USED_KEY,
+        )
 
         # restore_values 含一个已加载管道的时间戳
         mgr.ttls = {
@@ -167,7 +169,9 @@ class TestTtlsSetterValidation:
     def test_restore_key_non_dict_ignored(self):
         """_RESTORE_LAST_USED_KEY 非 dict → 不触发 restore（line 143）。"""
         mgr = _make_legacy_manager()
-        from vibeocr.services.pipeline_cache_manager import _RESTORE_LAST_USED_KEY
+        from vibeocr.backend.services.pipeline_cache_manager import (
+            _RESTORE_LAST_USED_KEY,
+        )
 
         mgr.ttls = {"OCR": 300, _RESTORE_LAST_USED_KEY: "not-a-dict"}
         # 正常设置 ttls，不崩

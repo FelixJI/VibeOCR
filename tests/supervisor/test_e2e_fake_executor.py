@@ -18,7 +18,13 @@ from uuid import uuid4
 import httpx
 import pytest
 
-from vibeocr.protocol.v2 import (
+from vibeocr.backend.supervisor.app import create_app
+from vibeocr.backend.supervisor.bootstrap import generate_session_token, new_instance_id
+from vibeocr.backend.supervisor.jobs.staging import InputExpiredError
+from vibeocr.backend.supervisor.module import SupervisorModule, SupervisorOptions
+from vibeocr.runtime_client.client import SupervisorClient
+from vibeocr.runtime_client.errors import InferenceClientError
+from vibeocr.runtime_contracts import (
     TERMINAL_JOB_STATES,
     CancelMode,
     ErrorCode,
@@ -36,18 +42,12 @@ from vibeocr.protocol.v2 import (
     SubmitItem,
     SubmitRequest,
 )
-from vibeocr.supervisor.app import create_app
-from vibeocr.supervisor.bootstrap import generate_session_token, new_instance_id
-from vibeocr.supervisor.client import SupervisorClient
-from vibeocr.supervisor.errors import InferenceClientError
-from vibeocr.supervisor.jobs.staging import InputExpiredError
-from vibeocr.supervisor.module import SupervisorModule, SupervisorOptions
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterable
     from pathlib import Path
 
-    from vibeocr.supervisor.jobs.staging import StagedInput
+    from vibeocr.backend.supervisor.jobs.staging import StagedInput
 
 
 class E2EExecutor:
@@ -145,7 +145,7 @@ async def test_response_hook_logs_unconsumed_stream(monkeypatch) -> None:
     def capture_log(**kwargs) -> None:
         captured.update(kwargs)
 
-    monkeypatch.setattr("vibeocr.supervisor.client.log_http_response", capture_log)
+    monkeypatch.setattr("vibeocr.runtime_client.client.log_http_response", capture_log)
     response = httpx.Response(
         200,
         headers={"content-length": "4"},

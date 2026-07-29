@@ -1,7 +1,7 @@
 """Tests for PDF document data models."""
 
-from vibeocr.models.ocr_result import TextBlock
-from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo, TextLayerInfo
+from vibeocr.backend.models.ocr_result import TextBlock
+from vibeocr.backend.models.pdf_document import PdfDocument, PdfPageInfo, TextLayerInfo
 
 
 class TestTextLayerInfo:

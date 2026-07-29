@@ -12,7 +12,12 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from vibeocr.protocol.v2 import (
+from vibeocr.backend.supervisor.module import (
+    ShutdownRequested,
+    SupervisorModule,
+    SupervisorOptions,
+)
+from vibeocr.runtime_contracts import (
     CancelMode,
     ContractError,
     ItemState,
@@ -22,17 +27,12 @@ from vibeocr.protocol.v2 import (
     ResidencyStatus,
     SettingsSnapshot,
 )
-from vibeocr.supervisor.module import (
-    ShutdownRequested,
-    SupervisorModule,
-    SupervisorOptions,
-)
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
     from pathlib import Path
 
-    from vibeocr.supervisor.jobs.staging import StagedInput
+    from vibeocr.backend.supervisor.jobs.staging import StagedInput
 
 
 class FakeExecutor:

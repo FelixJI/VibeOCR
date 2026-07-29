@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from vibeocr.build_manifest import (
+from vibeocr.classic.build_manifest import (
     ManifestEntry,
     create_manifest,
     verify_archive,
@@ -274,7 +274,7 @@ class TestCli:
         import sys
 
         result = subprocess.run(
-            [sys.executable, "-m", "vibeocr.build_manifest", "verify", str(zip_path)],
+            [sys.executable, "-m", "vibeocr.classic.build_manifest", "verify", str(zip_path)],
             capture_output=True,
             text=True,
         )
@@ -302,7 +302,7 @@ class TestCli:
         import sys
 
         result = subprocess.run(
-            [sys.executable, "-m", "vibeocr.build_manifest", "verify", str(zip_path)],
+            [sys.executable, "-m", "vibeocr.classic.build_manifest", "verify", str(zip_path)],
             capture_output=True,
             text=True,
         )
@@ -428,28 +428,28 @@ class TestCliBranches:
     """补 main() 的退出码分支（直接调用 main 而非 subprocess）。"""
 
     def test_no_args_returns_2(self, capsys):
-        from vibeocr.build_manifest import main
+        from vibeocr.classic.build_manifest import main
 
         assert main([]) == 2
         captured = capsys.readouterr()
         assert "usage" in captured.err.lower()
 
     def test_unknown_command_returns_2(self, capsys):
-        from vibeocr.build_manifest import main
+        from vibeocr.classic.build_manifest import main
 
         assert main(["bogus", "x.zip"]) == 2
         captured = capsys.readouterr()
         assert "unknown command" in captured.err.lower()
 
     def test_verify_without_archive_returns_2(self, capsys):
-        from vibeocr.build_manifest import main
+        from vibeocr.classic.build_manifest import main
 
         assert main(["verify"]) == 2
         captured = capsys.readouterr()
         assert "requires an archive path" in captured.err
 
     def test_verify_nonexistent_archive_returns_1(self, tmp_path, capsys):
-        from vibeocr.build_manifest import main
+        from vibeocr.classic.build_manifest import main
 
         rc = main(["verify", str(tmp_path / "missing.zip")])
         assert rc == 1
@@ -457,7 +457,7 @@ class TestCliBranches:
         assert "VERIFY FAIL" in captured.err
 
     def test_verify_clean_archive_returns_0(self, tmp_path, capsys):
-        from vibeocr.build_manifest import main
+        from vibeocr.classic.build_manifest import main
 
         root = tmp_path / "staging"
         _make_tree(root)

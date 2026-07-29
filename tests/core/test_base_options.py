@@ -1,4 +1,4 @@
-from vibeocr.core.pipelines.base_options import BasePipelineOptions
+from vibeocr.backend.core.pipelines.base_options import BasePipelineOptions
 
 
 def test_base_options_has_pipeline_name():

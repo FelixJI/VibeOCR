@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from vibeocr.protocol.v2 import (
+from vibeocr.runtime_contracts import (
     ContractError,
     ItemOutcome,
     ItemState,

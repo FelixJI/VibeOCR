@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from vibeocr.utils.app_settings import AppSettings
+from vibeocr.classic.utils.app_settings import AppSettings
 
 
 @pytest.fixture

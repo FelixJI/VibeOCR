@@ -16,7 +16,7 @@ from pathlib import Path
 from pprint import pformat
 
 ROOT = Path(__file__).resolve().parents[1]
-V2 = ROOT / "packages/vibeocr-contracts-py/src/vibeocr/protocol/v2"
+V2 = ROOT / "packages/vibeocr-contracts-py/src/vibeocr/runtime_contracts"
 
 
 def _read(name: str) -> dict:

@@ -5,7 +5,7 @@ from unittest.mock import Mock
 import pytest
 from PySide6.QtWidgets import QWidget
 
-from vibeocr.views.tabs.base_tab import BaseOcrTab
+from vibeocr.classic.views.tabs.base_tab import BaseOcrTab
 
 
 class ConcreteTab(BaseOcrTab):
@@ -128,8 +128,8 @@ class TestBaseOcrTabServiceRouting:
     """管道路由测试"""
 
     def test_get_service_for_pipeline_parsing(self, qapp):
-        from vibeocr.core.pipelines import OCRPipeline
-        from vibeocr.models.ocr_options import OCROptions
+        from vibeocr.backend.core.pipelines import OCRPipeline
+        from vibeocr.backend.models.ocr_options import OCROptions
 
         tab = ConcreteTab()
         mineru_mock = Mock()
@@ -140,8 +140,8 @@ class TestBaseOcrTabServiceRouting:
         assert tab._get_service_for_pipeline(options) is mineru_mock
 
     def test_get_service_for_pipeline_ocr(self, qapp):
-        from vibeocr.core.pipelines import OCRPipeline
-        from vibeocr.models.ocr_options import OCROptions
+        from vibeocr.backend.core.pipelines import OCRPipeline
+        from vibeocr.backend.models.ocr_options import OCROptions
 
         tab = ConcreteTab()
         mineru_mock = Mock()
@@ -176,7 +176,7 @@ class TestBuildContentList:
     """_build_content_list 测试"""
 
     def test_from_content_list_with_bbox_merge(self, qapp):
-        from vibeocr.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
 
         tab = ConcreteTab()
         result = OCRResult(
@@ -195,7 +195,7 @@ class TestBuildContentList:
         assert "bbox" in cl[0]
 
     def test_from_text_blocks_only(self, qapp):
-        from vibeocr.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
 
         tab = ConcreteTab()
         result = OCRResult(
@@ -210,7 +210,7 @@ class TestBuildContentList:
         assert "bbox" in cl[0]
 
     def test_empty_result(self, qapp):
-        from vibeocr.models.ocr_result import OCRResult
+        from vibeocr.backend.models.ocr_result import OCRResult
 
         tab = ConcreteTab()
         result = OCRResult()
@@ -220,7 +220,7 @@ class TestBuildContentList:
     def test_table_block_no_fake_confidence(self, qapp):
         """表格/图片等结构识别块不应写入占位置信度（pipeline 里 score 是占位值，
         显示"置信度: 90%"会误导）。文本块保留真实置信度。"""
-        from vibeocr.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
 
         tab = ConcreteTab()
         result = OCRResult(
@@ -248,7 +248,7 @@ class TestBuildContentList:
         assert "confidence" not in cl[1]
 
     def test_display_result_updates_state(self, qapp):
-        from vibeocr.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
 
         tab = ConcreteTab()
         result = OCRResult(
@@ -264,7 +264,7 @@ class TestDisplayResultContentListBackfill:
     """
 
     def test_empty_content_list_backfilled_from_text_blocks(self, qapp):
-        from vibeocr.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
 
         tab = ConcreteTab()
         result = OCRResult(
@@ -286,7 +286,7 @@ class TestDisplayResultContentListBackfill:
 
     def test_existing_content_index_not_overwritten(self, qapp):
         """结构化管道（table/formula）已设 content_index，不应被覆盖。"""
-        from vibeocr.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
 
         tab = ConcreteTab()
         result = OCRResult(
@@ -307,8 +307,8 @@ class TestDisplayResultContentListBackfill:
 
     def test_backfill_enables_block_rendering(self, qapp):
         """回填后 display_result 应走 .ocr-block 渲染（可编辑），而非 <pre>。"""
-        from vibeocr.models.ocr_result import OCRResult, TextBlock
-        from vibeocr.widgets.result_view_widget import _render_block
+        from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.classic.widgets.result_view_widget import _render_block
 
         tab = ConcreteTab()
         result = OCRResult(
@@ -332,7 +332,7 @@ class TestApplyContentIndex:
     """
 
     def test_does_not_call_display_result(self, qapp, monkeypatch):
-        from vibeocr.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
 
         tab = ConcreteTab()
         # 注入 mock 的 preview/result widget
@@ -355,7 +355,7 @@ class TestApplyContentIndex:
         与 _text_index_by_content，并为缺失 content_index 的 text_blocks 补建索引。"""
         from unittest.mock import Mock
 
-        from vibeocr.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
 
         tab = ConcreteTab()
         tab._preview_widget = Mock()
@@ -383,7 +383,7 @@ class TestApplyContentIndex:
         set_text_content_index，使左侧预览进入块类型模式（块级编辑入口）。"""
         from unittest.mock import Mock
 
-        from vibeocr.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
 
         tab = ConcreteTab()
         preview = Mock()
@@ -406,7 +406,7 @@ class TestApplyContentIndex:
         （由调用方决定后续渲染，避免二次触发）。"""
         from unittest.mock import Mock
 
-        from vibeocr.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
 
         tab = ConcreteTab()
         tab._preview_widget = Mock()
@@ -431,7 +431,7 @@ class TestApplyContentIndex:
         """结构化管道已设的 content_index 不应被覆盖。"""
         from unittest.mock import Mock
 
-        from vibeocr.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
 
         tab = ConcreteTab()
         tab._preview_widget = Mock()
@@ -461,7 +461,7 @@ class TestApplyContentListStructuredPathUnchanged:
     def test_calls_display_result_and_on_content_list_ready(self, qapp, monkeypatch):
         from unittest.mock import Mock
 
-        from vibeocr.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
 
         tab = ConcreteTab()
         preview = Mock()
@@ -496,7 +496,7 @@ class TestApplyContentListStructuredPathUnchanged:
         （content_list 回填、索引设置、preview 同步）。"""
         from unittest.mock import Mock
 
-        from vibeocr.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
 
         def make_result():
             return OCRResult(
@@ -538,7 +538,7 @@ def test_large_content_preparation_keeps_gui_responsive(qapp, qtbot, monkeypatch
     import time
 
     from tests.qt_responsiveness import assert_qt_event_loop_responsive
-    from vibeocr.models.ocr_result import OCRResult, TextBlock
+    from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
 
     tab = ConcreteTab()
     qtbot.addWidget(tab)
@@ -573,7 +573,7 @@ def test_large_content_index_backfill_is_chunked_off_gui_scan(qapp, qtbot):
     import threading
 
     from tests.qt_responsiveness import assert_qt_event_loop_responsive
-    from vibeocr.models.ocr_result import OCRResult, TextBlock
+    from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
 
     class ObservedTextBlocks(list):
         iteration_threads: list[int] = []
@@ -613,7 +613,7 @@ def test_large_text_edit_defers_aggregate_rebuild(qapp, qtbot, monkeypatch):
     import threading
     import time
 
-    from vibeocr.models.ocr_result import OCRResult, TextBlock
+    from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
 
     tab = ConcreteTab()
     qtbot.addWidget(tab)
@@ -657,8 +657,8 @@ def test_async_result_rebuild_uses_shared_mixed_content_projection(
 ):
     import threading
 
-    from vibeocr.contracts.tables import TableCellV1, TableModelV1
-    from vibeocr.models.ocr_result import OCRResult, TextBlock
+    from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
+    from vibeocr.runtime_contracts.contracts.tables import TableCellV1, TableModelV1
 
     table = TableModelV1(
         table_id="mixed-table",
@@ -756,7 +756,7 @@ def test_rapid_large_text_edits_rebuild_all_accepted_changes(
     qapp, qtbot
 ):
     """Latest-wins rebuilds must not start from aggregate text predating earlier edits."""
-    from vibeocr.models.ocr_result import OCRResult, TextBlock
+    from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
 
     tab = ConcreteTab()
     qtbot.addWidget(tab)
@@ -784,7 +784,7 @@ def test_rapid_large_text_edits_rebuild_all_accepted_changes(
 
 def test_large_repeated_text_edit_never_replaces_the_wrong_block(qapp, qtbot):
     """Ambiguous aggregate replacement must fall back to current block order."""
-    from vibeocr.models.ocr_result import OCRResult, TextBlock
+    from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
 
     texts = ["same", "same", *(f"block-{index}" for index in range(2, 50_000))]
     aggregate = "\n".join(texts)
@@ -817,7 +817,7 @@ def test_large_table_edit_submits_without_gui_model_scan(
     import threading
     import time
 
-    from vibeocr.models.ocr_result import OCRResult, TextBlock
+    from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
 
     class ObservedTextBlocks(list):
         iterations = 0
@@ -883,7 +883,7 @@ def test_large_table_edit_submits_without_gui_model_scan(
 
 def test_rapid_large_table_edits_publish_latest_complete_aggregates(qapp, qtbot):
     """Latest-wins table rebuilds must publish the last accepted table HTML."""
-    from vibeocr.models.ocr_result import OCRResult, TextBlock
+    from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
 
     initial_html = "<table><tr><td>old</td></tr></table>"
     result = OCRResult(
@@ -925,7 +925,7 @@ def test_large_nonaligned_table_edit_uses_prepared_reverse_index(
     import threading
     import time
 
-    from vibeocr.models.ocr_result import OCRResult, TextBlock
+    from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
 
     class ObservedTextBlocks(list):
         iteration_threads: list[int] = []
@@ -982,8 +982,8 @@ def test_large_nonaligned_table_edit_uses_prepared_reverse_index(
 def test_stable_table_cell_edit_updates_reordered_result_without_html_in_raw(
     qapp, qtbot
 ):
-    from vibeocr.contracts.tables import TableCellV1, TableModelV1
-    from vibeocr.models.ocr_result import OCRResult, TextBlock
+    from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
+    from vibeocr.runtime_contracts.contracts.tables import TableCellV1, TableModelV1
 
     table = TableModelV1(
         table_id="table-stable",

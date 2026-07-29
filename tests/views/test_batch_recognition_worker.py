@@ -17,13 +17,13 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
-from vibeocr.views.batch_recognition_tab import BatchRecognitionWorker
+from vibeocr.classic.views.batch_recognition_tab import BatchRecognitionWorker
 
 
 def _make_worker(service, files, options=None, *, batch_budget=None) -> Any:
     """构造 worker（正常 __init__ 以激活 Qt 信号，但不 start 线程）。"""
     if options is None:
-        from vibeocr.models.ocr_options import OCROptions
+        from vibeocr.backend.models.ocr_options import OCROptions
 
         options = OCROptions()
     # 传 mock service；files 用真实 file_info；parent=None 避免线程归属问题。
@@ -135,7 +135,7 @@ class TestBatchRecognitionWorkerRecognizeBatch:
 
     def test_encoded_byte_budget_is_applied_before_file_reads(self, tmp_path, qtbot):
         """按 stat 大小先分批，单批读取量不超过字节预算。"""
-        from vibeocr.core.batch_budget import BatchBudget
+        from vibeocr.backend.core.batch_budget import BatchBudget
 
         sizes = [6, 6, 4]
         files = []
@@ -169,7 +169,7 @@ class TestBatchRecognitionWorkerRecognizeBatch:
     ):
         from PIL import Image
 
-        from vibeocr.core.batch_budget import BatchBudget
+        from vibeocr.backend.core.batch_budget import BatchBudget
 
         files = []
         for index in range(3):
@@ -205,7 +205,7 @@ class TestBatchRecognitionWorkerRecognizeBatch:
         assert seen_markers == [0, 1, 2]
 
     def test_oversized_single_image_is_still_submitted(self, tmp_path, qtbot):
-        from vibeocr.core.batch_budget import BatchBudget
+        from vibeocr.backend.core.batch_budget import BatchBudget
 
         path = tmp_path / "oversized.bin"
         path.write_bytes(b"x" * 11)

@@ -16,7 +16,7 @@ import pytest
 
 pytest.importorskip("httpx", reason="httpx not installed")
 
-from vibeocr.services.mineru_service import MinerUService
+from vibeocr.backend.services.mineru_service import MinerUService
 
 
 def _make_service():
@@ -117,7 +117,7 @@ class TestCheckApiRunning:
     def test_exception_returns_false(self, monkeypatch):
         """httpx.get 抛异常 → 返回 False + 记 warning（lines 147-154）。"""
         s = _make_service()
-        import vibeocr.services.mineru_service as mod
+        import vibeocr.backend.services.mineru_service as mod
 
         def _boom(url, timeout):
             raise ConnectionError("boom")
@@ -128,7 +128,7 @@ class TestCheckApiRunning:
     def test_non_200_returns_false(self, monkeypatch):
         """status_code != 200 → False。"""
         s = _make_service()
-        import vibeocr.services.mineru_service as mod
+        import vibeocr.backend.services.mineru_service as mod
 
         resp = MagicMock()
         resp.status_code = 500
@@ -141,7 +141,7 @@ class TestCheckApiRunning:
     def test_200_returns_true(self, monkeypatch):
         """status_code == 200 → True。"""
         s = _make_service()
-        import vibeocr.services.mineru_service as mod
+        import vibeocr.backend.services.mineru_service as mod
 
         resp = MagicMock()
         resp.status_code = 200
@@ -158,7 +158,7 @@ class TestResolvePythonExecutable:
         s = _make_service()
         fake_path = Path("/fake/embedded/python.exe")
 
-        import vibeocr.env_manager as env_mod
+        import vibeocr.backend.env_manager as env_mod
 
         monkeypatch.setattr(env_mod, "get_project_root", lambda: Path("/fake"))
         monkeypatch.setattr(
@@ -173,7 +173,7 @@ class TestResolvePythonExecutable:
         s = _make_service()
         import sys
 
-        import vibeocr.env_manager as env_mod
+        import vibeocr.backend.env_manager as env_mod
 
         monkeypatch.setattr(env_mod, "get_project_root", lambda: Path("/fake"))
         monkeypatch.setattr(
@@ -207,11 +207,11 @@ class TestStartApi:
 
         with (
             patch.object(MinerUService, "_resolve_python_executable", return_value=Path("/fake/python.exe")),
-            patch("vibeocr.services.mineru_service.subprocess.Popen", return_value=mock_proc),
-            patch("vibeocr.services.mineru_service.httpx"),
-            patch("vibeocr.services.mineru_service.socket"),
-            patch("vibeocr.services.mineru_service.JobObjectGuard"),
-            patch("vibeocr.network_detector.NetworkDetector"),
+            patch("vibeocr.backend.services.mineru_service.subprocess.Popen", return_value=mock_proc),
+            patch("vibeocr.backend.services.mineru_service.httpx"),
+            patch("vibeocr.backend.services.mineru_service.socket"),
+            patch("vibeocr.backend.services.mineru_service.JobObjectGuard"),
+            patch("vibeocr.backend.network_detector.NetworkDetector"),
         ):
             with pytest.raises(RuntimeError, match="启动失败"):
                 s._start_api()
@@ -225,17 +225,17 @@ class TestStartApi:
 
         # 缩短超时 + 跳过 sleep，避免真实等待
         monkeypatch.setattr(
-            "vibeocr.core.constants.Constants.Timeout.MINERU_API_START", 0.01
+            "vibeocr.backend.core.constants.Constants.Timeout.MINERU_API_START", 0.01
         )
-        monkeypatch.setattr("vibeocr.services.mineru_service.time.sleep", lambda *_: None)
+        monkeypatch.setattr("vibeocr.backend.services.mineru_service.time.sleep", lambda *_: None)
 
         with (
             patch.object(MinerUService, "_resolve_python_executable", return_value=Path("/fake/python.exe")),
-            patch("vibeocr.services.mineru_service.subprocess.Popen", return_value=mock_proc),
-            patch("vibeocr.services.mineru_service.httpx"),
-            patch("vibeocr.services.mineru_service.socket"),
-            patch("vibeocr.services.mineru_service.JobObjectGuard"),
-            patch("vibeocr.network_detector.NetworkDetector"),
+            patch("vibeocr.backend.services.mineru_service.subprocess.Popen", return_value=mock_proc),
+            patch("vibeocr.backend.services.mineru_service.httpx"),
+            patch("vibeocr.backend.services.mineru_service.socket"),
+            patch("vibeocr.backend.services.mineru_service.JobObjectGuard"),
+            patch("vibeocr.backend.network_detector.NetworkDetector"),
             patch.object(MinerUService, "_check_api_running", return_value=False),
         ):
             with pytest.raises(RuntimeError, match="超时"):
@@ -263,11 +263,11 @@ class TestStartApi:
 
         with (
             patch.object(MinerUService, "_resolve_python_executable", return_value=Path("/fake/python.exe")),
-            patch("vibeocr.services.mineru_service.subprocess.Popen", side_effect=_capture_popen),
-            patch("vibeocr.services.mineru_service.httpx"),
-            patch("vibeocr.services.mineru_service.socket"),
-            patch("vibeocr.services.mineru_service.JobObjectGuard"),
-            patch("vibeocr.network_detector.NetworkDetector", _FakeDetector),
+            patch("vibeocr.backend.services.mineru_service.subprocess.Popen", side_effect=_capture_popen),
+            patch("vibeocr.backend.services.mineru_service.httpx"),
+            patch("vibeocr.backend.services.mineru_service.socket"),
+            patch("vibeocr.backend.services.mineru_service.JobObjectGuard"),
+            patch("vibeocr.backend.network_detector.NetworkDetector", _FakeDetector),
             patch.object(MinerUService, "_check_api_running", return_value=True),
         ):
             s._start_api()
@@ -336,7 +336,7 @@ class TestCallApiErrors:
         resp.status_code = 200
         resp.json.return_value = {"results": {}}
 
-        import vibeocr.services.mineru_service as mod
+        import vibeocr.backend.services.mineru_service as mod
 
         monkeypatch.setattr(mod.httpx, "post", lambda *a, **k: resp)
         with patch.object(s, "_ensure_api_running"):
@@ -349,10 +349,10 @@ class TestCallApiErrors:
         resp.status_code = 200
         resp.json.return_value = {"results": {}}
 
-        import vibeocr.services.mineru_service as mod
+        import vibeocr.backend.services.mineru_service as mod
 
         monkeypatch.setattr(mod.httpx, "post", lambda *a, **k: resp)
-        from vibeocr.models.ocr_options import OCROptions
+        from vibeocr.backend.models.ocr_options import OCROptions
 
         opts = OCROptions()
         opts.backend = "custom-backend"
@@ -376,7 +376,7 @@ class TestCallApiErrors:
             resp.json.return_value = {"results": {}}
             return resp
 
-        import vibeocr.services.mineru_service as mod
+        import vibeocr.backend.services.mineru_service as mod
 
         monkeypatch.setattr(mod.httpx, "post", _post)
         with patch.object(s, "_ensure_api_running"):
@@ -399,7 +399,7 @@ class TestCallApiErrors:
             resp.json.return_value = {"results": {}}
             return resp
 
-        import vibeocr.services.mineru_service as mod
+        import vibeocr.backend.services.mineru_service as mod
 
         monkeypatch.setattr(mod.httpx, "post", _post)
         with patch.object(s, "_ensure_api_running"):
@@ -413,7 +413,7 @@ class TestCallApiErrors:
         resp.json.side_effect = ValueError("not json")
         resp.text = "internal error text"
 
-        import vibeocr.services.mineru_service as mod
+        import vibeocr.backend.services.mineru_service as mod
 
         monkeypatch.setattr(mod.httpx, "post", lambda *a, **k: resp)
         with patch.object(s, "_ensure_api_running"):
@@ -428,7 +428,7 @@ class TestCallApiErrors:
         resp.json.return_value = {"message": "fail"}
         resp.text = '{"message": "fail"}'
 
-        import vibeocr.services.mineru_service as mod
+        import vibeocr.backend.services.mineru_service as mod
 
         monkeypatch.setattr(mod.httpx, "post", lambda *a, **k: resp)
         with patch.object(s, "_ensure_api_running"):
@@ -455,7 +455,7 @@ class TestFileParse:
         resp.status_code = 200
         resp.json.return_value = api_result
 
-        import vibeocr.services.mineru_service as mod
+        import vibeocr.backend.services.mineru_service as mod
 
         monkeypatch.setattr(mod.httpx, "post", lambda *a, **k: resp)
         with patch.object(s, "_ensure_api_running"):
@@ -475,7 +475,7 @@ class TestFileParse:
         resp.status_code = 200
         resp.json.return_value = api_result
 
-        import vibeocr.services.mineru_service as mod
+        import vibeocr.backend.services.mineru_service as mod
 
         monkeypatch.setattr(mod.httpx, "post", lambda *a, **k: resp)
         with patch.object(s, "_ensure_api_running"):
@@ -491,7 +491,7 @@ class TestFileParse:
         resp.status_code = 200
         resp.json.return_value = api_result
 
-        import vibeocr.services.mineru_service as mod
+        import vibeocr.backend.services.mineru_service as mod
 
         monkeypatch.setattr(mod.httpx, "post", lambda *a, **k: resp)
         with patch.object(s, "_ensure_api_running"):
@@ -582,7 +582,7 @@ class TestShutdownKill:
 
 class TestRemainingBranches:
     def setup_method(self):
-        from vibeocr.core.singleton_meta import SingletonMeta
+        from vibeocr.backend.core.singleton_meta import SingletonMeta
 
         SingletonMeta._instances.pop(MinerUService, None)
         MinerUService._instance = None
@@ -597,7 +597,7 @@ class TestRemainingBranches:
         注：DCL 锁内重检查（line 69）是并发防御，单线程下不可达，已 pragma。
         用 __new__ 绕过 SingletonMeta 缓存，直接测 __init__ 逻辑。
         """
-        from vibeocr.core.singleton_meta import SingletonMeta
+        from vibeocr.backend.core.singleton_meta import SingletonMeta
 
         SingletonMeta._instances.pop(MinerUService, None)
         MinerUService._initialized = False
@@ -650,10 +650,10 @@ class TestRemainingBranches:
         resp.status_code = 200
         resp.json.return_value = api_result
 
-        import vibeocr.services.mineru_service as mod
+        import vibeocr.backend.services.mineru_service as mod
 
         monkeypatch.setattr(mod.httpx, "post", lambda *a, **k: resp)
-        from vibeocr.models.ocr_options import OCROptions
+        from vibeocr.backend.models.ocr_options import OCROptions
 
         opts = OCROptions()
         with patch.object(s, "_ensure_api_running"):
@@ -668,7 +668,7 @@ class TestRemainingBranches:
         返回含非 dict raw 的条目。
         """
         s = _make_service()
-        import vibeocr.services.mineru_service as mod
+        import vibeocr.backend.services.mineru_service as mod
 
         # monkeypatch normalize_content_list 返回特殊结构
         fake_normalized = [
@@ -694,7 +694,7 @@ class TestRemainingBranches:
     def test_normalize_table_block_no_dict_raw(self, monkeypatch):
         """normalized table block 的 raw 非 dict → 跳过（branch 616->612）。"""
         s = _make_service()
-        import vibeocr.services.mineru_service as mod
+        import vibeocr.backend.services.mineru_service as mod
 
         fake_normalized = [
             {"type": "table", "text": "", "raw": None, "page_idx": 0},

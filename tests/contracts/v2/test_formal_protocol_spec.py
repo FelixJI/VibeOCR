@@ -13,7 +13,7 @@ import jsonschema
 import pytest
 
 ROOT = Path(__file__).resolve().parents[3]
-V2 = ROOT / "packages/vibeocr-contracts-py/src/vibeocr/protocol/v2"
+V2 = ROOT / "packages/vibeocr-contracts-py/src/vibeocr/runtime_contracts"
 METHODS = {"get", "put", "post", "delete", "patch", "head", "options", "trace"}
 
 
@@ -189,7 +189,7 @@ def test_security_and_error_registry_are_explicit() -> None:
 
 
 def test_generated_python_wire_models_are_strict() -> None:
-    from vibeocr.protocol.v2.generated import (
+    from vibeocr.runtime_contracts.generated import (
         RuntimeHealthEnvelope,
         RuntimeReadyEnvelope,
     )
@@ -234,7 +234,7 @@ def test_generated_python_wire_models_are_strict() -> None:
 
 
 def test_codegen_covers_wire_dtos_errors_and_operation_signatures() -> None:
-    from vibeocr.protocol.v2.generated import (
+    from vibeocr.runtime_contracts.generated import (
         ERROR_REGISTRY,
         OPERATIONS,
         RuntimeErrorCode,

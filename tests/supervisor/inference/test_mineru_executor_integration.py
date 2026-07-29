@@ -23,8 +23,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from vibeocr.protocol.v2 import TERMINAL_JOB_STATES, JobKind, JobPriority
-from vibeocr.supervisor.composition import build_supervisor
+from vibeocr.backend.supervisor.composition import build_supervisor
+from vibeocr.runtime_contracts import TERMINAL_JOB_STATES, JobKind, JobPriority
 
 if TYPE_CHECKING:
     from pathlib import Path

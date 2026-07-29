@@ -1,7 +1,7 @@
 # tests/core/test_pipeline_registry_all.py
 """验证全局注册表包含所有已定义的 PipelineSpec"""
 
-from vibeocr.core.pipelines import get_registry
+from vibeocr.backend.core.pipelines import get_registry
 
 
 def test_registry_has_all_pipelines():
@@ -67,6 +67,6 @@ def test_mineru_spec_raises_not_implemented():
 
 def test_get_registry_returns_same_instance():
     """get_registry() 应返回同一个注册表实例"""
-    from vibeocr.core.pipelines import get_registry as gr2
+    from vibeocr.backend.core.pipelines import get_registry as gr2
 
     assert get_registry() is gr2()

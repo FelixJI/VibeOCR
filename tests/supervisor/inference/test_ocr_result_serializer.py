@@ -7,8 +7,8 @@ dropped all structure.
 
 from __future__ import annotations
 
-from vibeocr.models import ocr_result_from_payload, ocr_result_to_payload
-from vibeocr.models.ocr_result import OCRResult, TextBlock
+from vibeocr.backend.models import ocr_result_from_payload, ocr_result_to_payload
+from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
 
 
 def test_dict_input_passes_through_unchanged() -> None:
@@ -132,7 +132,7 @@ def test_structured_payload_roundtrips_to_client_model() -> None:
 
 
 def test_canonical_table_and_stable_content_id_roundtrip_strictly() -> None:
-    from vibeocr.contracts.tables import TableCellV1, TableModelV1
+    from vibeocr.runtime_contracts.contracts.tables import TableCellV1, TableModelV1
 
     table = TableModelV1(
         table_id="table-wire",

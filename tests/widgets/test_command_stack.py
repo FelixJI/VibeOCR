@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 from PySide6.QtCore import QPointF, QRectF
 from PySide6.QtGui import QUndoStack
 
-from vibeocr.widgets.editor.command_stack import (
+from vibeocr.classic.widgets.editor.command_stack import (
     AddAnnotationCommand,
     MoveAnnotationCommand,
     PropertyChangeCommand,

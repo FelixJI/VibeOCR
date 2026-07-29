@@ -1,7 +1,7 @@
 # tests/test_indent_processor.py
 import pytest
 
-from vibeocr.utils.indent_processor import IndentConfig, IndentProcessor
+from vibeocr.backend.utils.indent_processor import IndentConfig, IndentProcessor
 
 
 class TestIndentConfig:
@@ -127,7 +127,7 @@ class TestIndentProcessorEdgeCases:
 
     @pytest.fixture
     def processor(self):
-        from vibeocr.utils.indent_processor import IndentProcessor
+        from vibeocr.backend.utils.indent_processor import IndentProcessor
 
         return IndentProcessor()
 

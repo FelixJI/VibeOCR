@@ -10,7 +10,7 @@ import pytest
 if TYPE_CHECKING:
     from pathlib import Path
 
-from vibeocr.migration.residency_migration import (
+from vibeocr.backend.migration.residency_migration import (
     convert_legacy_pipeline_ttls,
     migrate_settings_file,
 )

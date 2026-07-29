@@ -15,7 +15,12 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from vibeocr.protocol.v2 import (
+from vibeocr.backend.supervisor.jobs.staging import StagingQuotaError
+from vibeocr.backend.supervisor.module import (
+    SupervisorModule,
+    SupervisorOptions,
+)
+from vibeocr.runtime_contracts import (
     CancelMode,
     JobKind,
     JobPriority,
@@ -25,11 +30,6 @@ from vibeocr.protocol.v2 import (
     SettingsSnapshot,
     SubmitItem,
     SubmitRequest,
-)
-from vibeocr.supervisor.jobs.staging import StagingQuotaError
-from vibeocr.supervisor.module import (
-    SupervisorModule,
-    SupervisorOptions,
 )
 
 if TYPE_CHECKING:

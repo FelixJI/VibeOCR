@@ -5,7 +5,7 @@ from __future__ import annotations
 import threading
 
 from tests.qt_responsiveness import assert_qt_event_loop_responsive
-from vibeocr.utils.export_jobs import ExportItem, snapshot_ocr_result
+from vibeocr.classic.utils.export_jobs import ExportItem, snapshot_ocr_result
 
 
 class _SlowExportBackend:
@@ -22,7 +22,7 @@ class _SlowExportBackend:
 
 
 def test_batch_export_cancel_close_is_bounded_and_drops_late_ui(qapp, qtbot, tmp_path):
-    from vibeocr.views.batch_recognition_tab import BatchRecognitionTab
+    from vibeocr.classic.views.batch_recognition_tab import BatchRecognitionTab
 
     backend = _SlowExportBackend()
     tab = BatchRecognitionTab(backend=backend)
@@ -54,13 +54,13 @@ def test_batch_export_cancel_close_is_bounded_and_drops_late_ui(qapp, qtbot, tmp
 def test_batch_export_uses_submission_snapshot(
     qapp, qtbot, monkeypatch, tmp_path
 ):
-    from vibeocr.views.batch_recognition_tab import BatchRecognitionTab
+    from vibeocr.classic.views.batch_recognition_tab import BatchRecognitionTab
 
     backend = _SlowExportBackend()
     tab = BatchRecognitionTab(backend=backend)
     qtbot.addWidget(tab)
     monkeypatch.setattr(
-        "vibeocr.views.batch_recognition_tab.QMessageBox.information",
+        "vibeocr.classic.views.batch_recognition_tab.QMessageBox.information",
         lambda *args: None,
     )
     result = {

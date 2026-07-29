@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from vibeocr.services.env_config import (
+from vibeocr.backend.services.env_config import (
     OCR_CHECK_MODULES,
     _parse_pep508_name,
     validate_dep_check_consistency,

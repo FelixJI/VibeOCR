@@ -134,11 +134,9 @@ def main() -> int:
             raise RuntimeError("product manifest protocol_major is not 2")
         records = manifest.get("python_wheels", [])
         expected = {
-            "vibeocr",
             "vibeocr-backend",
-            "vibeocr-client-py",
-            "vibeocr-contracts-py",
-            "vibeocr-pyside",
+            "vibeocr-classic",
+            "vibeocr-runtime-contracts",
             "vibeocr-runtime-client",
         }
         if {record.get("distribution") for record in records} != expected:
@@ -159,9 +157,12 @@ def main() -> int:
         if actual != manifest.get("backend_sha256"):
             raise RuntimeError("bound backend wheel hash mismatch")
         required_members = {
-            "vibeocr-backend": "vibeocr/supervisor/main.py",
-            "vibeocr-contracts-py": "vibeocr/protocol/v2/golden/golden.json",
-            "vibeocr-runtime-client": "vibeocr/protocol/v2/client.py",
+            "vibeocr-backend": "vibeocr/backend/supervisor/main.py",
+            "vibeocr-classic": "vibeocr/classic/main.py",
+            "vibeocr-runtime-contracts": (
+                "vibeocr/runtime_contracts/golden/golden.json"
+            ),
+            "vibeocr-runtime-client": "vibeocr/runtime_client/client.py",
         }
         for distribution, required_member in required_members.items():
             record = records_by_distribution[distribution]

@@ -13,9 +13,7 @@
 import threading
 from unittest.mock import MagicMock, patch
 
-from PySide6.QtWidgets import QMessageBox
-
-from vibeocr.widgets.switch_dialog import SwitchDialog, SwitchWorker
+from vibeocr.classic.widgets.switch_dialog import SwitchDialog, SwitchWorker
 
 
 class TestSwitchWorkerCancel:
@@ -154,8 +152,8 @@ class TestSwitchDialogUi:
 class TestSwitchDialogStart:
     """``_start``/``showEvent``：构造 worker、连信号、``.start()``。"""
 
-    @patch("vibeocr.widgets.switch_dialog.SwitchWorker")
-    @patch("vibeocr.widgets.switch_dialog.track_dialog_worker")
+    @patch("vibeocr.classic.widgets.switch_dialog.SwitchWorker")
+    @patch("vibeocr.classic.widgets.switch_dialog.track_dialog_worker")
     def test_start_creates_worker_and_connects(
         self, mock_track, mock_worker_cls, qapp, tmp_path
     ):
@@ -174,8 +172,8 @@ class TestSwitchDialogStart:
         # _start 先写日志
         assert "开始切换后端" in dlg._log_text.toPlainText()
 
-    @patch("vibeocr.widgets.switch_dialog.SwitchWorker")
-    @patch("vibeocr.widgets.switch_dialog.track_dialog_worker")
+    @patch("vibeocr.classic.widgets.switch_dialog.SwitchWorker")
+    @patch("vibeocr.classic.widgets.switch_dialog.track_dialog_worker")
     def test_show_event_triggers_start_once(
         self, mock_track, mock_worker_cls, qapp, tmp_path
     ):
@@ -195,8 +193,8 @@ class TestSwitchWorkerRun:
     def _make_worker(self, tmp_path, target="gpu") -> SwitchWorker:
         return SwitchWorker(tmp_path, target)
 
-    @patch("vibeocr.network_detector.NetworkDetector")
-    @patch("vibeocr.widgets.switch_dialog.env_manager.switch_paddle_backend")
+    @patch("vibeocr.backend.network_detector.NetworkDetector")
+    @patch("vibeocr.classic.widgets.switch_dialog.env_manager.switch_paddle_backend")
     def test_run_success_emits_completed_true(
         self, mock_switch, mock_detector_cls, qapp, tmp_path, qtbot
     ):
@@ -206,8 +204,8 @@ class TestSwitchWorkerRun:
             worker.run()  # 直接在同线程调用 QThread.run
         assert blocker.args == [True, "已切换到 GPU"]
 
-    @patch("vibeocr.network_detector.NetworkDetector")
-    @patch("vibeocr.widgets.switch_dialog.env_manager.switch_paddle_backend")
+    @patch("vibeocr.backend.network_detector.NetworkDetector")
+    @patch("vibeocr.classic.widgets.switch_dialog.env_manager.switch_paddle_backend")
     def test_run_failure_emits_completed_false(
         self, mock_switch, mock_detector_cls, qapp, tmp_path, qtbot
     ):
@@ -217,8 +215,8 @@ class TestSwitchWorkerRun:
             worker.run()
         assert blocker.args == [False, "pip 安装失败"]
 
-    @patch("vibeocr.network_detector.NetworkDetector")
-    @patch("vibeocr.widgets.switch_dialog.env_manager.switch_paddle_backend")
+    @patch("vibeocr.backend.network_detector.NetworkDetector")
+    @patch("vibeocr.classic.widgets.switch_dialog.env_manager.switch_paddle_backend")
     def test_run_exception_emits_completed_false_with_msg(
         self, mock_switch, mock_detector_cls, qapp, tmp_path, qtbot
     ):
@@ -230,8 +228,8 @@ class TestSwitchWorkerRun:
         assert success is False
         assert "boom" in msg
 
-    @patch("vibeocr.network_detector.NetworkDetector")
-    @patch("vibeocr.widgets.switch_dialog.env_manager.switch_paddle_backend")
+    @patch("vibeocr.backend.network_detector.NetworkDetector")
+    @patch("vibeocr.classic.widgets.switch_dialog.env_manager.switch_paddle_backend")
     def test_run_passes_target_and_cancel_event(
         self, mock_switch, mock_detector_cls, qapp, tmp_path, qtbot
     ):
@@ -240,15 +238,14 @@ class TestSwitchWorkerRun:
         worker = self._make_worker(tmp_path, "gpu")
         with qtbot.waitSignal(worker.completed, timeout=5000):
             worker.run()
-        _root, target, _net, kwargs = mock_switch.call_args.args[0:3] + (
-            mock_switch.call_args.kwargs,
-        )
+        _root, target, _net = mock_switch.call_args.args[0:3]
+        kwargs = mock_switch.call_args.kwargs
         assert target == "gpu"
         assert kwargs["cancel_event"] is worker._cancel_event
         assert kwargs["on_proc"] == worker._on_proc
 
-    @patch("vibeocr.network_detector.NetworkDetector")
-    @patch("vibeocr.widgets.switch_dialog.env_manager.switch_paddle_backend")
+    @patch("vibeocr.backend.network_detector.NetworkDetector")
+    @patch("vibeocr.classic.widgets.switch_dialog.env_manager.switch_paddle_backend")
     def test_request_cancel_during_run_kills_popen_proc(
         self, mock_switch, mock_detector_cls, qapp, tmp_path, qtbot
     ):
@@ -263,4 +260,3 @@ class TestSwitchWorkerRun:
         worker.request_cancel()
         assert worker.is_cancelled()
         fake_proc.kill.assert_called_once()
-

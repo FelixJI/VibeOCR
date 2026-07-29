@@ -1,7 +1,7 @@
 # tests/models/test_pdf_ocr_options.py
 """Tests for PdfGlobalSettings data model."""
 
-from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+from vibeocr.backend.models.pdf_ocr_options import PdfGlobalSettings
 
 
 class TestPdfGlobalSettingsDefaults:

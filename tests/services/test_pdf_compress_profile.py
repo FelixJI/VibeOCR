@@ -5,8 +5,8 @@ from unittest.mock import MagicMock
 
 def test_compress_uses_balanced_fast_profile(monkeypatch, tmp_path):
     """默认优化避免 garbage=4 的大型 stream 两两比较。"""
-    from vibeocr.services import pdf_service as module
-    from vibeocr.services.pdf_service import PdfService
+    from vibeocr.backend.services import pdf_service as module
+    from vibeocr.backend.services.pdf_service import PdfService
 
     source = tmp_path / "source.pdf"
     source.write_bytes(b"original")

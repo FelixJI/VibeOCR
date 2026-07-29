@@ -4,7 +4,7 @@ import time
 
 
 def test_cleanup_old_logs_deletes_old_files(tmp_path):
-    from vibeocr.services.log_service import _cleanup_old_logs
+    from vibeocr.classic.services.log_service import _cleanup_old_logs
 
     old_file = tmp_path / "vibeocr.log.3"
     old_file.write_text("old log")
@@ -29,7 +29,7 @@ def test_cleanup_old_logs_deletes_old_files(tmp_path):
 
 
 def test_cleanup_old_logs_skips_current_log(tmp_path):
-    from vibeocr.services.log_service import _cleanup_old_logs
+    from vibeocr.classic.services.log_service import _cleanup_old_logs
 
     current_file = tmp_path / "vibeocr.log"
     current_file.write_text("current log")
@@ -46,7 +46,7 @@ def test_cleanup_old_logs_skips_current_log(tmp_path):
 
 
 def test_cleanup_old_logs_empty_dir(tmp_path):
-    from vibeocr.services.log_service import _cleanup_old_logs
+    from vibeocr.classic.services.log_service import _cleanup_old_logs
 
     _cleanup_old_logs(tmp_path, max_age_days=7)
 
@@ -56,7 +56,7 @@ def test_cleanup_old_logs_empty_dir(tmp_path):
 def test_setup_logging_creates_rotating_handler():
     from logging.handlers import RotatingFileHandler
 
-    from vibeocr.services.log_service import setup_logging
+    from vibeocr.classic.services.log_service import setup_logging
 
     handler = setup_logging()
 
@@ -77,7 +77,7 @@ def test_setup_logging_creates_rotating_handler():
 
 def test_setup_logging_silences_noisy_third_party_loggers():
     """setup_logging 应将 fontTools/paddle 等噪声库降到 WARNING，避免刷屏。"""
-    from vibeocr.services.log_service import setup_logging
+    from vibeocr.classic.services.log_service import setup_logging
 
     handler = setup_logging()
     try:
@@ -96,7 +96,7 @@ def test_setup_logging_silences_noisy_third_party_loggers():
 
 
 def test_qt_log_handler_requires_explicit_ui_status(qapp):
-    from vibeocr.services.log_service import QtLogHandler
+    from vibeocr.classic.services.log_service import QtLogHandler
 
     handler = QtLogHandler()
     handler.setFormatter(logging.Formatter("%(message)s"))
@@ -119,7 +119,10 @@ def test_qt_log_handler_requires_explicit_ui_status(qapp):
 def test_setup_logging_uses_human_readable_file_formatter():
     from logging.handlers import RotatingFileHandler
 
-    from vibeocr.services.log_service import HumanReadableFormatter, setup_logging
+    from vibeocr.classic.services.log_service import (
+        HumanReadableFormatter,
+        setup_logging,
+    )
 
     setup_logging()
     root_logger = logging.getLogger()
@@ -135,11 +138,11 @@ def test_setup_logging_uses_human_readable_file_formatter():
 
 
 def test_human_readable_formatter_basic_line():
-    from vibeocr.services.log_service import HumanReadableFormatter
+    from vibeocr.classic.services.log_service import HumanReadableFormatter
 
     formatter = HumanReadableFormatter()
     record = logging.LogRecord(
-        name="vibeocr.views.main_window",
+        name="vibeocr.classic.views.main_window",
         level=logging.INFO,
         pathname=__file__,
         lineno=1,
@@ -151,15 +154,15 @@ def test_human_readable_formatter_basic_line():
     record.msecs = 123
 
     line = formatter.format(record)
-    assert line == "2026-07-22 14:32:01.123 INFO  vibeocr.views.main_window: 应用启动"
+    assert line == "2026-07-22 14:32:01.123 INFO  vibeocr.classic.views.main_window: 应用启动"
 
 
 def test_human_readable_formatter_appends_context_fields():
-    from vibeocr.services.log_service import HumanReadableFormatter
+    from vibeocr.classic.services.log_service import HumanReadableFormatter
 
     formatter = HumanReadableFormatter()
     record = logging.LogRecord(
-        name="vibeocr.workers.ocr_worker",
+        name="vibeocr.classic.workers.ocr_worker",
         level=logging.ERROR,
         pathname=__file__,
         lineno=1,
@@ -176,7 +179,7 @@ def test_human_readable_formatter_appends_context_fields():
 
     line = formatter.format(record)
     assert line.startswith(
-        "2026-07-22 14:32:02.456 ERROR vibeocr.workers.ocr_worker: OCR 失败  ["
+        "2026-07-22 14:32:02.456 ERROR vibeocr.classic.workers.ocr_worker: OCR 失败  ["
     )
     # 上下文字段全部追加在行尾的方括号内
     assert "request_id=req-1" in line
@@ -186,7 +189,7 @@ def test_human_readable_formatter_appends_context_fields():
 
 
 def test_human_readable_formatter_appends_traceback():
-    from vibeocr.services.log_service import HumanReadableFormatter
+    from vibeocr.classic.services.log_service import HumanReadableFormatter
 
     formatter = HumanReadableFormatter()
     try:

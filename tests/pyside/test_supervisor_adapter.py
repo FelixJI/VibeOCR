@@ -20,7 +20,12 @@ from typing import Any
 
 import pytest
 
-from vibeocr.protocol.v2 import (
+from vibeocr.classic.pyside.supervisor_adapter import (
+    SupervisorClientAdapter,
+    set_supervisor_adapter,
+)
+from vibeocr.runtime_client.errors import InferenceClientError
+from vibeocr.runtime_contracts import (
     CancelMode,
     ErrorCode,
     ItemOutcome,
@@ -42,11 +47,6 @@ from vibeocr.protocol.v2 import (
     StageEvent,
     SubmitRequest,
 )
-from vibeocr.pyside.supervisor_adapter import (
-    SupervisorClientAdapter,
-    set_supervisor_adapter,
-)
-from vibeocr.supervisor.errors import InferenceClientError
 
 # ---------------------------------------------------------------------------
 # Fake supervisor client (fully awaitable, no HTTP)
@@ -407,7 +407,7 @@ def test_shutdown_without_event_loop_does_not_schedule_orphan_task(
     monkeypatch.setattr(asyncio, "get_running_loop", _no_loop)
     monkeypatch.setattr(asyncio, "get_event_loop", _no_loop)
     monkeypatch.setattr(
-        "vibeocr.pyside.supervisor_adapter.get_async_runner",
+        "vibeocr.classic.pyside.supervisor_adapter.get_async_runner",
         lambda: pytest.fail("shutdown must not create a task without an owned loop"),
     )
 
@@ -431,7 +431,7 @@ def test_error_signal_on_submit_failure(qasync_loop) -> None:
 
 
 def test_get_supervisor_adapter_singleton_roundtrip(qasync_loop) -> None:
-    from vibeocr.pyside.supervisor_adapter import (
+    from vibeocr.classic.pyside.supervisor_adapter import (
         get_supervisor_adapter,
         set_supervisor_adapter,
     )

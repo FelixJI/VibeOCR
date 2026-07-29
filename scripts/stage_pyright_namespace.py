@@ -1,10 +1,8 @@
 """Stage the installed VibeOCR namespace shape for Pyright.
 
-The workspace ships one logical ``vibeocr`` package across the contracts,
-client and backend wheels. At runtime ``pkgutil.extend_path`` joins those
-physical fragments. Pyright deliberately does not execute that runtime hook
-and resolves only one regular-package root, so checking the source roots
-directly produces false missing-import errors.
+The workspace ships one PEP 420 ``vibeocr`` namespace across Protocol,
+Runtime Client, Backend, and Classic wheels. Some static-analysis entry points
+still benefit from a merged staging tree that mirrors the installed layout.
 
 This script copies the non-overlapping fragments into a temporary physical
 package. It does not suppress or downgrade any Pyright diagnostic, and it
@@ -25,8 +23,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_FRAGMENT_ROOTS = (
     REPO_ROOT / "packages" / "vibeocr-contracts-py" / "src" / "vibeocr",
     REPO_ROOT / "packages" / "vibeocr-runtime-client-py" / "src" / "vibeocr",
-    REPO_ROOT / "packages" / "vibeocr-client-py" / "src" / "vibeocr",
     REPO_ROOT / "packages" / "vibeocr-backend" / "src" / "vibeocr",
+    REPO_ROOT / "apps" / "vibeocr-pyside" / "src" / "vibeocr",
 )
 
 

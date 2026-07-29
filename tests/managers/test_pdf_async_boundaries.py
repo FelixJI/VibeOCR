@@ -7,16 +7,16 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
-from PySide6.QtCore import QThread
+from PySide6.QtCore import QCoreApplication, QEvent, QThread
 
 from tests.fakes.sync_supervisor_job_client import (
     FakeSyncSupervisorJobClient,
 )
 from tests.qt_responsiveness import assert_qt_event_loop_responsive
-from vibeocr.ipc.schemas import ModelDiff, PdfDocumentMirror, PdfPageInfoMirror
-from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
-from vibeocr.models.pdf_session import PdfSession
-from vibeocr.pyside.pdf_session_manager import PdfSessionManager
+from vibeocr.backend.ipc.schemas import ModelDiff, PdfDocumentMirror, PdfPageInfoMirror
+from vibeocr.backend.models.pdf_document import PdfDocument, PdfPageInfo
+from vibeocr.backend.models.pdf_session import PdfSession
+from vibeocr.classic.pyside.pdf_session_manager import PdfSessionManager
 
 
 def _session(path: str = "C:/fake.pdf", pages: int = 2) -> PdfSession:
@@ -59,7 +59,13 @@ def manager(qapp):
         w for w in mgr._control_workers if hasattr(w, "isFinished")
     }
     mgr.request_shutdown()
-    mgr.drain(3000)
+    assert mgr.drain(3000)
+    # drain() proves native threads are finished, but workers and the manager
+    # are released with deleteLater().  Flush DeferredDelete here so hundreds
+    # of function-scoped managers do not accumulate stale Qt wrappers and
+    # crash the next nested pytest-qt event loop on Windows.
+    mgr.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
 def test_slow_mineru_preflight_keeps_event_loop_responsive(
@@ -73,7 +79,7 @@ def test_slow_mineru_preflight_keeps_event_loop_responsive(
         release.wait(2)
         return True, "ok"
 
-    monkeypatch.setattr("vibeocr.env_manager.ensure_mineru_models", slow_prepare)
+    monkeypatch.setattr("vibeocr.backend.env_manager.ensure_mineru_models", slow_prepare)
     monkeypatch.setattr(manager, "_is_mineru_first_use", lambda _opts: True)
     manager._inference_client = object()
 
@@ -356,7 +362,7 @@ def test_unexpected_export_error_emits_terminal_after_native_finished(
 def test_ocr_business_done_keeps_pdf_write_gate_until_thread_finished(
     manager, monkeypatch
 ):
-    import vibeocr.pyside.pdf_session_manager as manager_module
+    import vibeocr.classic.pyside.pdf_session_manager as manager_module
 
     worker = MagicMock()
     manager._ocr_worker = worker
@@ -399,7 +405,7 @@ def test_preflight_late_success_is_ignored_after_shutdown(manager, qtbot, monkey
         release.wait(2)
         return True, "late"
 
-    monkeypatch.setattr("vibeocr.env_manager.ensure_mineru_models", slow_prepare)
+    monkeypatch.setattr("vibeocr.backend.env_manager.ensure_mineru_models", slow_prepare)
     monkeypatch.setattr(manager, "_is_mineru_first_use", lambda _opts: True)
     manager._inference_client = object()
     run_ocr = MagicMock()
@@ -731,7 +737,7 @@ def test_path_for_session_id_hit_and_miss(manager):
 
 
 def test_get_ocr_batch_budget_default_and_override(manager):
-    from vibeocr.core.batch_budget import BatchBudget
+    from vibeocr.backend.core.batch_budget import BatchBudget
 
     default = manager._get_ocr_batch_budget()
     assert isinstance(default, BatchBudget)
@@ -1073,7 +1079,7 @@ def test_on_ocr_all_done_signal_ignores_stale_task_id(manager):
 
 
 def test_on_ocr_all_done_signal_emits_stats_and_done(manager):
-    from vibeocr.models.pdf_session import PdfSession
+    from vibeocr.backend.models.pdf_session import PdfSession
 
     manager._task_generation = 8
     manager._ocr_running = True
@@ -1312,7 +1318,11 @@ def test_switch_session_branches(manager):
 
 def test_on_mutate_all_done_applies_diff_and_signals(manager):
     """_on_mutate_all_done: 成功应用 diff、转发 save/delete_layer 专用信号。"""
-    from vibeocr.ipc.schemas import ModelDiff, PdfDocumentMirror, PdfPageInfoMirror
+    from vibeocr.backend.ipc.schemas import (
+        ModelDiff,
+        PdfDocumentMirror,
+        PdfPageInfoMirror,
+    )
 
     worker = MagicMock()
     worker._op = "save"
@@ -1350,7 +1360,11 @@ def test_on_mutate_all_done_applies_diff_and_signals(manager):
 
 
 def test_on_mutate_all_done_delete_layer_branch(manager):
-    from vibeocr.ipc.schemas import ModelDiff, PdfDocumentMirror, PdfPageInfoMirror
+    from vibeocr.backend.ipc.schemas import (
+        ModelDiff,
+        PdfDocumentMirror,
+        PdfPageInfoMirror,
+    )
 
     worker = MagicMock()
     worker._op = "delete_text_layers"
@@ -1426,7 +1440,11 @@ def test_on_mutate_worker_finished_ignored_for_foreign_worker(manager):
 
 
 def test_on_deskew_all_done_applies_diff_and_emits(manager):
-    from vibeocr.ipc.schemas import ModelDiff, PdfDocumentMirror, PdfPageInfoMirror
+    from vibeocr.backend.ipc.schemas import (
+        ModelDiff,
+        PdfDocumentMirror,
+        PdfPageInfoMirror,
+    )
 
     worker = MagicMock()
     manager._mutate_worker = worker
@@ -1562,7 +1580,7 @@ def test_update_page_block_text_async_increments_revision(manager, monkeypatch):
 
 def test_apply_page_loaded_updates_session_model(manager):
     """_apply_page_loaded: dict mirror → 更新对应页 PageInfo。"""
-    from vibeocr.ipc.schemas import PdfPageInfoMirror
+    from vibeocr.backend.ipc.schemas import PdfPageInfoMirror
 
     session = manager.active_session
     page_mirror = PdfPageInfoMirror(
@@ -1585,7 +1603,7 @@ def test_apply_page_loaded_ignores_non_dict(manager):
 
 
 def test_apply_page_loaded_ignores_out_of_range_index(manager):
-    from vibeocr.ipc.schemas import PdfPageInfoMirror
+    from vibeocr.backend.ipc.schemas import PdfPageInfoMirror
 
     session = manager.active_session
     page_mirror = PdfPageInfoMirror(page_index=99).model_dump(mode="json")
@@ -1595,7 +1613,7 @@ def test_apply_page_loaded_ignores_out_of_range_index(manager):
 
 
 def test_on_page_loaded_emits_signals(manager):
-    from vibeocr.ipc.schemas import PdfPageInfoMirror
+    from vibeocr.backend.ipc.schemas import PdfPageInfoMirror
 
     page_mirror = PdfPageInfoMirror(page_index=0, has_text_layer=True).model_dump(
         mode="json"
@@ -1621,7 +1639,7 @@ def test_on_page_loaded_ignored_when_session_missing(manager):
 
 def test_on_doc_opened_creates_session_and_sets_active(manager):
     """_on_doc_opened: 创建占位 session + emit session_added/active_changed。"""
-    from vibeocr.ipc.schemas import PdfDocumentMirror, PdfPageInfoMirror
+    from vibeocr.backend.ipc.schemas import PdfDocumentMirror, PdfPageInfoMirror
 
     # 清掉活跃会话，使新会话成为首个 active
     manager._sessions.clear()
@@ -1649,7 +1667,7 @@ def test_on_doc_opened_creates_session_and_sets_active(manager):
 
 
 def test_on_doc_opened_does_not_change_active_when_one_exists(manager):
-    from vibeocr.ipc.schemas import PdfDocumentMirror, PdfPageInfoMirror
+    from vibeocr.backend.ipc.schemas import PdfDocumentMirror, PdfPageInfoMirror
 
     full_model = PdfDocumentMirror(
         file_path="C:/new.pdf", pages=[PdfPageInfoMirror(page_index=0)]
@@ -1664,7 +1682,7 @@ def test_on_doc_opened_does_not_change_active_when_one_exists(manager):
 
 def test_on_preview_completed_updates_text_layers_and_emits(manager):
     """_on_preview_completed: layers 非 None → 更新 page.text_layers。"""
-    from vibeocr.ipc.schemas import TextLayerInfoMirror
+    from vibeocr.backend.ipc.schemas import TextLayerInfoMirror
 
     worker = MagicMock()
     manager._preview_worker = worker
@@ -1790,7 +1808,7 @@ def test_export_all_modified_cancel_stops_early(manager, tmp_path):
 
 
 def test_export_all_modified_handles_pdf_backend_error(manager, tmp_path):
-    from vibeocr.supervisor.pdf_client import PdfBackendError
+    from vibeocr.classic.pdf_client import PdfBackendError
 
     session = manager.active_session
     session.pdf_document.is_modified = True
@@ -1834,7 +1852,7 @@ def test_close_session_removes_and_starts_close_worker(manager, monkeypatch):
 
     def fake_close_worker(session_id, file_path=""):
         started.append((session_id, file_path))
-        return None
+        return
 
     monkeypatch.setattr(manager, "_start_close_worker", fake_close_worker)
 
@@ -1927,7 +1945,7 @@ def test_request_backend_cancel_async_starts_cancel_worker(manager, monkeypatch)
             return True
 
     monkeypatch.setattr(
-        "vibeocr.pyside.pdf_session_manager.PdfIpcCancelWorker", FakeCancelWorker
+        "vibeocr.classic.pyside.pdf_session_manager.PdfIpcCancelWorker", FakeCancelWorker
     )
 
     manager._request_backend_cancel_async("sid")
@@ -2219,7 +2237,7 @@ def test_run_deskew_happy_path_rotates_and_emits(manager, monkeypatch):
     ]
     monkeypatch.setattr(manager, "_recognize_images_via_job", lambda *a, **k: results)
 
-    from vibeocr.ipc.schemas import PdfDocumentMirror
+    from vibeocr.backend.ipc.schemas import PdfDocumentMirror
     manager._client.get_model.return_value = PdfDocumentMirror(
         file_path="C:/fake.pdf", pages=[]
     )
@@ -2257,7 +2275,7 @@ def test_run_deskew_render_failure_marks_page_failed(manager, monkeypatch):
     monkeypatch.setattr(
         manager, "_recognize_images_via_job", lambda *a, **k: recognized.extend(a) or []
     )
-    from vibeocr.ipc.schemas import PdfDocumentMirror
+    from vibeocr.backend.ipc.schemas import PdfDocumentMirror
     manager._client.get_model.return_value = PdfDocumentMirror(
         file_path="C:/fake.pdf", pages=[]
     )
@@ -2285,7 +2303,7 @@ def test_run_deskew_recognize_failure_marks_all_failed(manager, monkeypatch):
         raise RuntimeError("recognize failed")
 
     monkeypatch.setattr(manager, "_recognize_images_via_job", boom)
-    from vibeocr.ipc.schemas import PdfDocumentMirror
+    from vibeocr.backend.ipc.schemas import PdfDocumentMirror
     manager._client.get_model.return_value = PdfDocumentMirror(
         file_path="C:/fake.pdf", pages=[]
     )
@@ -2315,7 +2333,7 @@ def test_run_deskew_rotate_failure_emits_not_corrected(manager, monkeypatch):
         lambda *a, **k: [SimpleNamespace(preproc_angle=90)],
     )
     manager._client.rotate.side_effect = RuntimeError("rotate broke")
-    from vibeocr.ipc.schemas import PdfDocumentMirror
+    from vibeocr.backend.ipc.schemas import PdfDocumentMirror
     manager._client.get_model.return_value = PdfDocumentMirror(
         file_path="C:/fake.pdf", pages=[]
     )
@@ -2394,7 +2412,7 @@ def test_run_ocr_happy_path_writes_layer_and_emits(manager, monkeypatch):
     """
     from types import SimpleNamespace
 
-    from vibeocr.models.ocr_result import OCRResult, TextBlock
+    from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
 
     session = manager.active_session
     runner = MagicMock()
@@ -2416,8 +2434,8 @@ def test_run_ocr_happy_path_writes_layer_and_emits(manager, monkeypatch):
     )
 
     # sidecar 文件系统操作 → monkeypatch 成 no-op
-    monkeypatch.setattr("vibeocr.pyside.pdf_session_manager.ocr_sidecar.mark_pages_saved", lambda *a, **k: None)
-    monkeypatch.setattr("vibeocr.pyside.pdf_session_manager.ocr_sidecar.mark_completed", lambda *a, **k: None)
+    monkeypatch.setattr("vibeocr.classic.pyside.pdf_session_manager.ocr_sidecar.mark_pages_saved", lambda *a, **k: None)
+    monkeypatch.setattr("vibeocr.classic.pyside.pdf_session_manager.ocr_sidecar.mark_completed", lambda *a, **k: None)
 
     page_done_emits: list = []
     runner.page_done.emit.side_effect = lambda *a: page_done_emits.append(a)
@@ -2444,7 +2462,7 @@ def test_run_ocr_empty_result_page_counted_as_fail(manager, monkeypatch):
 
     注：空结果页只更新 ocr_stats(skipped)，不计入 all_done 的 success/fail 计数。
     """
-    from vibeocr.models.ocr_result import OCRResult
+    from vibeocr.backend.models.ocr_result import OCRResult
 
     session = manager.active_session
     runner = MagicMock()
@@ -2503,7 +2521,7 @@ def test_run_ocr_write_layer_failure_triggers_final_save(manager, monkeypatch):
     """写层失败(saved=False) + 有 success → 末尾全量 save。"""
     from types import SimpleNamespace
 
-    from vibeocr.models.ocr_result import OCRResult, TextBlock
+    from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
 
     session = manager.active_session
     runner = MagicMock()
@@ -2519,9 +2537,9 @@ def test_run_ocr_write_layer_failure_triggers_final_save(manager, monkeypatch):
     manager._client.add_text_layer_batch.return_value = SimpleNamespace(
         extra={"saved": False}
     )
-    monkeypatch.setattr("vibeocr.pyside.pdf_session_manager.ocr_sidecar.mark_pages_saved", lambda *a, **k: None)
-    monkeypatch.setattr("vibeocr.pyside.pdf_session_manager.ocr_sidecar.refresh_baseline", lambda *a, **k: None)
-    monkeypatch.setattr("vibeocr.pyside.pdf_session_manager.ocr_sidecar.mark_completed", lambda *a, **k: None)
+    monkeypatch.setattr("vibeocr.classic.pyside.pdf_session_manager.ocr_sidecar.mark_pages_saved", lambda *a, **k: None)
+    monkeypatch.setattr("vibeocr.classic.pyside.pdf_session_manager.ocr_sidecar.refresh_baseline", lambda *a, **k: None)
+    monkeypatch.setattr("vibeocr.classic.pyside.pdf_session_manager.ocr_sidecar.mark_completed", lambda *a, **k: None)
 
     manager._run_ocr(runner, session.session_id, [0], None, {}, False)
 

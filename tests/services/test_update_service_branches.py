@@ -37,17 +37,17 @@ def _run(coro):
 
 class TestCompareVersionsLength:
     def test_longer_first_returns_1(self):
-        from vibeocr.services.update_service import compare_versions
+        from vibeocr.classic.services.update_service import compare_versions
 
         assert compare_versions("1.0.0", "1.0") == 1
 
     def test_shorter_first_returns_minus_1(self):
-        from vibeocr.services.update_service import compare_versions
+        from vibeocr.classic.services.update_service import compare_versions
 
         assert compare_versions("1.0", "1.0.0") == -1
 
     def test_equal_returns_0(self):
-        from vibeocr.services.update_service import compare_versions
+        from vibeocr.classic.services.update_service import compare_versions
 
         assert compare_versions("1.2.3", "1.2.3") == 0
 
@@ -60,7 +60,7 @@ class TestCompareVersionsLength:
 class TestLogHttpExchangeBranches:
     def test_start_time_none(self, monkeypatch):
         """start_time=None → elapsed_ms 保持 None（line 82->84）。"""
-        from vibeocr.services import update_service
+        from vibeocr.classic.services import update_service
 
         captured = {}
 
@@ -74,7 +74,7 @@ class TestLogHttpExchangeBranches:
 
     def test_headers_dict_exception(self, monkeypatch):
         """headers dict() 抛异常 → headers=None（line 87-88）。"""
-        from vibeocr.services import update_service
+        from vibeocr.classic.services import update_service
 
         captured = {}
 
@@ -104,13 +104,13 @@ class TestLogHttpExchangeBranches:
 
 class TestAssetMatching:
     def test_unknown_suffix_returns_false(self):
-        from vibeocr.services.update_service import _asset_matches
+        from vibeocr.classic.services.update_service import _asset_matches
 
         assert _asset_matches("foo.txt", ".tar.gz") is False
 
     def test_find_asset_fallback_when_no_classic(self):
         """无 -Classic- 命名时回退第一个匹配（line 185->186）。"""
-        from vibeocr.services.update_service import _find_asset
+        from vibeocr.classic.services.update_service import _find_asset
 
         release = {
             "assets": [
@@ -123,7 +123,7 @@ class TestAssetMatching:
 
     def test_find_asset_prefers_classic_over_fallback(self):
         """-Classic- 命名优先于回退（line 182-183）。"""
-        from vibeocr.services.update_service import _find_asset
+        from vibeocr.classic.services.update_service import _find_asset
 
         release = {
             "assets": [
@@ -140,7 +140,7 @@ class TestAssetMatching:
 
     def test_find_asset_size_no_matching_name(self):
         """_find_asset_size 找不到匹配 name → 0（line 203）。"""
-        from vibeocr.services.update_service import _find_asset_size
+        from vibeocr.classic.services.update_service import _find_asset_size
 
         # _find_asset 找不到 zip（无 assets）→ 返回 0。
         release_empty = {"assets": []}
@@ -155,7 +155,7 @@ class TestAssetMatching:
 class TestReadLocalVersionBranches:
     def test_version_falsy_falls_back(self, tmp_path, monkeypatch):
         """version.json 存在但 version 为空 → 走 __version__ 回退（line 219->223）。"""
-        from vibeocr.services import update_service
+        from vibeocr.classic.services import update_service
 
         (tmp_path / "version.json").write_text(
             json.dumps({"version": ""}), encoding="utf-8"
@@ -164,30 +164,30 @@ class TestReadLocalVersionBranches:
         fake_mod = MagicMock()
         fake_mod.__version__ = "9.9.9"
         monkeypatch.setitem(
-            __import__("sys").modules, "vibeocr", fake_mod
+            __import__("sys").modules, "vibeocr.classic", fake_mod
         )
         assert update_service.read_local_version(tmp_path / "version.json") == "9.9.9"
 
     def test_version_json_corrupt_falls_back(self, tmp_path, monkeypatch):
         """version.json 损坏 → __version__ 回退（line 221-222）。"""
-        from vibeocr.services import update_service
+        from vibeocr.classic.services import update_service
 
         (tmp_path / "version.json").write_text("not json{", encoding="utf-8")
         fake_mod = MagicMock()
         fake_mod.__version__ = "8.8.8"
         monkeypatch.setitem(
-            __import__("sys").modules, "vibeocr", fake_mod
+            __import__("sys").modules, "vibeocr.classic", fake_mod
         )
         assert update_service.read_local_version(tmp_path / "version.json") == "8.8.8"
 
     def test_no_version_json_no_dunder_returns_zero(self, tmp_path, monkeypatch):
         """无 version.json + __version__ import 失败 → 0.0.0（line 228-230）。"""
-        # 让 from vibeocr import __version__ 抛异常
+        # 让 from vibeocr.classic import __version__ 抛异常
         import sys
 
-        from vibeocr.services import update_service
+        from vibeocr.classic.services import update_service
 
-        monkeypatch.setitem(sys.modules, "vibeocr", None)
+        monkeypatch.setitem(sys.modules, "vibeocr.classic", None)
         assert (
             update_service.read_local_version(tmp_path / "missing.json") == "0.0.0"
         )
@@ -201,7 +201,7 @@ class TestReadLocalVersionBranches:
 class TestFetchReleaseException:
     def test_exception_returns_none(self, monkeypatch):
         """_fetch_release 网络异常 → None（line 253-255）。"""
-        from vibeocr.services import update_service
+        from vibeocr.classic.services import update_service
 
         async def boom(*a, **kw):
             raise httpx.ConnectError("refused")
@@ -210,13 +210,13 @@ class TestFetchReleaseException:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
         mock_client.get = boom
-        with patch("vibeocr.services.update_service.httpx.AsyncClient", return_value=mock_client):
+        with patch("vibeocr.classic.services.update_service.httpx.AsyncClient", return_value=mock_client):
             result = _run(update_service._fetch_release("http://x"))
         assert result is None
 
     def test_non_200_returns_none(self, monkeypatch):
         """非 200 状态 → None（line 251->253 未进入）。"""
-        from vibeocr.services import update_service
+        from vibeocr.classic.services import update_service
 
         resp = MagicMock()
         resp.status_code = 404
@@ -229,7 +229,7 @@ class TestFetchReleaseException:
         mock_client.__aexit__ = AsyncMock(return_value=False)
         mock_client.get = AsyncMock(return_value=resp)
         with patch(
-            "vibeocr.services.update_service.httpx.AsyncClient",
+            "vibeocr.classic.services.update_service.httpx.AsyncClient",
             return_value=mock_client,
         ):
             result = _run(update_service._fetch_release("http://x"))
@@ -242,9 +242,9 @@ class TestDetectNetworkTypeException:
         # 让 import 抛异常
         import sys
 
-        from vibeocr.services import update_service
+        from vibeocr.classic.services import update_service
 
-        monkeypatch.setitem(sys.modules, "vibeocr.network_detector", None)
+        monkeypatch.setitem(sys.modules, "vibeocr.backend.network_detector", None)
         assert update_service._detect_network_type() == "international"
 
 
@@ -256,7 +256,7 @@ class TestDetectNetworkTypeException:
 class TestCheckForUpdatesNoDownloadUrl:
     def test_remote_without_zip_returns_none_true(self, monkeypatch):
         """remote 版本更新但无 download_url → (None, True)（line 338-340）。"""
-        from vibeocr.services import update_service
+        from vibeocr.classic.services import update_service
 
         # release 有更新版本但无 .zip asset
         release = {
@@ -265,7 +265,7 @@ class TestCheckForUpdatesNoDownloadUrl:
             "body": "",
         }
         with patch(
-            "vibeocr.services.update_service._fetch_release",
+            "vibeocr.classic.services.update_service._fetch_release",
             return_value=release,
         ):
             info, fetch_ok = _run(update_service.check_for_updates("0.1.0"))
@@ -280,28 +280,28 @@ class TestCheckForUpdatesNoDownloadUrl:
 
 class TestValidSha256Text:
     def test_non_hex_first_field_returns_false(self):
-        from vibeocr.services.update_service import _valid_sha256_text
+        from vibeocr.classic.services.update_service import _valid_sha256_text
 
         # 64 字符但非 hex
         assert _valid_sha256_text("z" * 64) is False
 
     def test_short_first_field_returns_false(self):
-        from vibeocr.services.update_service import _valid_sha256_text
+        from vibeocr.classic.services.update_service import _valid_sha256_text
 
         assert _valid_sha256_text("abc") is False
 
     def test_empty_returns_false(self):
-        from vibeocr.services.update_service import _valid_sha256_text
+        from vibeocr.classic.services.update_service import _valid_sha256_text
 
         assert _valid_sha256_text("") is False
 
     def test_valid_hex_returns_true(self):
-        from vibeocr.services.update_service import _valid_sha256_text
+        from vibeocr.classic.services.update_service import _valid_sha256_text
 
         assert _valid_sha256_text("a" * 64) is True
 
     def test_valid_hex_with_filename_returns_true(self):
-        from vibeocr.services.update_service import _valid_sha256_text
+        from vibeocr.classic.services.update_service import _valid_sha256_text
 
         assert _valid_sha256_text("a" * 64 + "  file.zip") is True
 
@@ -313,14 +313,14 @@ class TestValidSha256Text:
 
 class TestSkipVersionCorruptJson:
     def test_load_corrupt_json_returns_empty(self, tmp_path):
-        from vibeocr.services.update_service import load_skip_version
+        from vibeocr.classic.services.update_service import load_skip_version
 
         path = tmp_path / "settings.json"
         path.write_text("not json{", encoding="utf-8")
         assert load_skip_version(path) == ""
 
     def test_load_oserror_returns_empty(self, tmp_path):
-        from vibeocr.services.update_service import load_skip_version
+        from vibeocr.classic.services.update_service import load_skip_version
 
         # 用目录冒充文件 → read_text 抛 IsADirectoryError（OSError 子类）
         path = tmp_path / "settings.json"
@@ -329,7 +329,7 @@ class TestSkipVersionCorruptJson:
 
     def test_save_when_existing_corrupt_resets_data(self, tmp_path):
         """save 时已存在文件损坏 → 重置 data 再写（line 729-730）。"""
-        from vibeocr.services.update_service import save_skip_version
+        from vibeocr.classic.services.update_service import save_skip_version
 
         path = tmp_path / "settings.json"
         path.write_text("not json{", encoding="utf-8")
@@ -339,7 +339,7 @@ class TestSkipVersionCorruptJson:
 
     def test_save_when_existing_read_oserror_resets(self, tmp_path):
         """save 时已存在文件 read 失败（OSError）→ 重置（line 729-730）。"""
-        from vibeocr.services.update_service import save_skip_version
+        from vibeocr.classic.services.update_service import save_skip_version
 
         path = tmp_path / "settings.json"
         path.write_text("{}", encoding="utf-8")
@@ -358,7 +358,7 @@ class TestSkipVersionCorruptJson:
 class TestDownloadUpdateGuards:
     def test_empty_download_url_returns_none_http_error(self, tmp_path):
         """download_url 为空 → (None, [http_error])（line 548-550）。"""
-        from vibeocr.services.update_service import UpdateInfo, download_update
+        from vibeocr.classic.services.update_service import UpdateInfo, download_update
 
         info = UpdateInfo(
             version="1.0",
@@ -376,7 +376,7 @@ class TestDownloadUpdateGuards:
         """cancel_event 进入前已 set → (None, [cancelled])（line 553-555）。"""
         import threading
 
-        from vibeocr.services.update_service import download_update
+        from vibeocr.classic.services.update_service import download_update
 
         info = MagicMock()
         info.download_url = "http://x/zip"
@@ -407,7 +407,7 @@ class TestDownloadZipWithShaCancelAfterSha:
             _make_client,
             _make_stream_response,
         )
-        from vibeocr.services.update_service import (
+        from vibeocr.classic.services.update_service import (
             DOWNLOAD_REASON_CANCELLED,
             _download_zip_with_sha,
         )
@@ -454,7 +454,7 @@ class TestDownloadZipWithShaCancelAfterSha:
 class TestUpdateInfoFromRelease:
     def test_from_release_classic_naming(self):
         """from_release 选出 Classic asset 并填充字段。"""
-        from vibeocr.services.update_service import UpdateInfo
+        from vibeocr.classic.services.update_service import UpdateInfo
 
         release = {
             "tag_name": "v1.2.3",
@@ -481,7 +481,7 @@ class TestUpdateInfoFromRelease:
 
     def test_from_release_empty_assets(self):
         """无 assets → 空 URL（line 138 from_release with empty）。"""
-        from vibeocr.services.update_service import UpdateInfo
+        from vibeocr.classic.services.update_service import UpdateInfo
 
         release = {"tag_name": "v1.0.0", "body": "", "assets": []}
         info = UpdateInfo.from_release(release)
@@ -499,7 +499,7 @@ class TestUpdateInfoFromRelease:
 class TestFindAssetSizeNoMatch:
     def test_returns_zero_when_no_asset_found(self):
         """_find_asset 返回空 name 时 _find_asset_size → 0（line 198-199 → 203）。"""
-        from vibeocr.services.update_service import _find_asset_size
+        from vibeocr.classic.services.update_service import _find_asset_size
 
         # 无任何 .zip asset → _find_asset 返回 ("", "") → size 查询返回 0
         release = {
@@ -524,7 +524,7 @@ class TestDownloadUpdateCacheCleanup:
         """
         import threading
 
-        from vibeocr.services.update_service import UpdateInfo, download_update
+        from vibeocr.classic.services.update_service import UpdateInfo, download_update
 
         cache_dir = tmp_path / "cache"
         cache_dir.mkdir()

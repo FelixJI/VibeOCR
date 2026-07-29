@@ -1,5 +1,5 @@
 name: Build workspace wheels
-description: Build the 6 workspace wheels into dist/wheels and verify them.
+description: Build the four independently owned workspace wheels and verify them.
 
 runs:
   using: "composite"
@@ -8,8 +8,6 @@ runs:
       run: |
         python -m build --wheel packages/vibeocr-contracts-py --outdir dist/wheels
         python -m build --wheel packages/vibeocr-runtime-client-py --outdir dist/wheels
-        python -m build --wheel packages/vibeocr-client-py --outdir dist/wheels
         python -m build --wheel packages/vibeocr-backend --outdir dist/wheels
         python -m build --wheel apps/vibeocr-pyside --outdir dist/wheels
-        python -m build --wheel . --outdir dist/wheels
         python scripts/verify_workspace_wheels.py dist/wheels

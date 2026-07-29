@@ -1,9 +1,10 @@
 """测试 DependencyManager"""
 
 import threading
+from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
-from vibeocr.managers.dependency_manager import (
+from vibeocr.classic.managers.dependency_manager import (
     DependencyCheckSignals,
     DependencyCheckTask,
     DependencyManager,
@@ -28,14 +29,14 @@ class TestDependencyCheckTask:
         assert task._project_root == tmp_path
         assert hasattr(task, "signals")
 
-    @patch("vibeocr.managers.dependency_manager.env_manager")
-    def test_task_run_ready(self, mock_env_manager, tmp_path, qapp):
+    def test_task_run_ready(self, tmp_path, qapp):
         """测试任务运行（依赖就绪）"""
-        mock_env_manager.get_environment_mode.return_value = "embedded"
-        mock_env_manager.get_embedded_python_executable.return_value = "python.exe"
-        mock_env_manager.is_embedded_environment_ready.return_value = (True, [])
-
-        task = DependencyCheckTask(tmp_path)
+        client = MagicMock()
+        client.inspect.return_value = SimpleNamespace(
+            ready=True,
+            runtime_id="digest/win-x64-cpu",
+        )
+        task = DependencyCheckTask(tmp_path, client)
 
         # 连接信号以捕获结果
         finished_mock = Mock()
@@ -46,26 +47,27 @@ class TestDependencyCheckTask:
 
         # 验证结果
         finished_mock.assert_called_once_with(True, [])
-        mock_env_manager.is_embedded_environment_ready.assert_called_once_with(tmp_path)
+        client.inspect.assert_called_once_with()
 
-    @patch("vibeocr.managers.dependency_manager.env_manager")
-    def test_task_run_not_ready(self, mock_env_manager, tmp_path, qapp):
+    def test_task_run_not_ready(self, tmp_path, qapp):
         """测试任务运行（依赖未就绪）"""
-        mock_env_manager.get_environment_mode.return_value = "embedded"
-        mock_env_manager.get_embedded_python_executable.return_value = "python.exe"
-        mock_env_manager.is_embedded_environment_ready.return_value = (
-            False,
-            ["paddlepaddle"],
+        client = MagicMock()
+        client.inspect.return_value = SimpleNamespace(
+            ready=False,
+            profile="win-x64-cpu",
+            integrity="not-installed",
         )
-
-        task = DependencyCheckTask(tmp_path)
+        task = DependencyCheckTask(tmp_path, client)
 
         finished_mock = Mock()
         task.signals.finished.connect(finished_mock)
 
         task.run()
 
-        finished_mock.assert_called_once_with(False, ["paddlepaddle"])
+        finished_mock.assert_called_once_with(
+            False,
+            ["win-x64-cpu: not-installed"],
+        )
 
 
 class TestDependencyManager:
@@ -83,7 +85,7 @@ class TestDependencyManager:
         manager = DependencyManager(project_root=tmp_path)
         assert manager._project_root == tmp_path
 
-    @patch("vibeocr.managers.dependency_manager.DependencyCheckTask")
+    @patch("vibeocr.classic.managers.dependency_manager.DependencyCheckTask")
     def test_check_dependencies(self, mock_task_class, tmp_path, qapp):
         """测试检查依赖"""
         manager = DependencyManager(project_root=tmp_path)
@@ -102,7 +104,7 @@ class TestDependencyManager:
         # 验证
         assert manager.is_checking()
         started_mock.assert_called_once()
-        mock_task_class.assert_called_once_with(tmp_path)
+        mock_task_class.assert_called_once_with(tmp_path, manager._client)
 
     def test_check_dependencies_prevents_duplicate(self, tmp_path, qapp):
         """测试防止重复检查"""
@@ -168,25 +170,16 @@ class TestDependencyManager:
         entered = threading.Event()
         release = threading.Event()
 
-        monkeypatch.setattr(
-            "vibeocr.managers.dependency_manager.env_manager.get_environment_mode",
-            lambda _root: "embedded",
-        )
-        monkeypatch.setattr(
-            "vibeocr.managers.dependency_manager.env_manager.get_embedded_python_executable",
-            lambda _root: "python.exe",
-        )
-
-        def slow_check(_root):
+        def slow_check():
             entered.set()
             release.wait(timeout=2)
-            return True, []
+            return SimpleNamespace(
+                ready=True,
+                runtime_id="digest/win-x64-cpu",
+            )
 
-        monkeypatch.setattr(
-            "vibeocr.managers.dependency_manager.env_manager.is_embedded_environment_ready",
-            slow_check,
-        )
         manager = DependencyManager(project_root=tmp_path)
+        monkeypatch.setattr(manager._client, "inspect", slow_check)
         completed = Mock()
         manager.check_completed.connect(completed)
 

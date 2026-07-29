@@ -12,18 +12,20 @@ from unittest.mock import MagicMock
 from fastapi.routing import APIRoute
 
 ROOT = Path(__file__).resolve().parents[1]
-V2 = ROOT / "packages/vibeocr-contracts-py/src/vibeocr/protocol/v2"
+V2 = ROOT / "packages/vibeocr-contracts-py/src/vibeocr/runtime_contracts"
 
 for source in (
     ROOT / "packages/vibeocr-contracts-py/src",
     ROOT / "packages/vibeocr-runtime-client-py/src",
-    ROOT / "packages/vibeocr-client-py/src",
     ROOT / "packages/vibeocr-backend/src",
 ):
     sys.path.insert(0, str(source))
 
-from vibeocr.supervisor.app import create_app  # noqa: E402
-from vibeocr.supervisor.module import SupervisorModule, SupervisorOptions  # noqa: E402
+from vibeocr.backend.supervisor.app import create_app  # noqa: E402
+from vibeocr.backend.supervisor.module import (  # noqa: E402
+    SupervisorModule,
+    SupervisorOptions,
+)
 
 HTTP_METHODS = {"GET", "PUT", "POST", "DELETE", "PATCH", "HEAD", "OPTIONS", "TRACE"}
 

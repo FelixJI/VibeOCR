@@ -5,18 +5,18 @@ These use a fake clock and fake inputs — no real GPU, no sleeps.
 
 from __future__ import annotations
 
-from vibeocr.protocol.v2 import JobPriority
-from vibeocr.supervisor.inference.budgets import (
+from vibeocr.backend.supervisor.inference.budgets import (
     AdapterCapability,
     BudgetPlanner,
     InputItem,
 )
-from vibeocr.supervisor.inference.recovery import (
+from vibeocr.backend.supervisor.inference.recovery import (
     FailureClass,
     RecoveryAction,
     RecoveryPolicy,
 )
-from vibeocr.supervisor.inference.scheduler import DeviceScheduler
+from vibeocr.backend.supervisor.inference.scheduler import DeviceScheduler
+from vibeocr.runtime_contracts import JobPriority
 
 # ---------------------------------------------------------------------------
 # DeviceScheduler

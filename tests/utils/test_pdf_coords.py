@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from vibeocr.utils.pdf_coords import bbox_to_pixel
+from vibeocr.backend.utils.pdf_coords import bbox_to_pixel
 
 
 class TestBboxToPixelPageRectShapes:

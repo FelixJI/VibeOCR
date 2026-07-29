@@ -25,8 +25,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from vibeocr.protocol.v2 import TERMINAL_JOB_STATES, JobState
-from vibeocr.supervisor.composition import build_supervisor
+from vibeocr.backend.supervisor.composition import build_supervisor
+from vibeocr.runtime_contracts import TERMINAL_JOB_STATES, JobState
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -75,8 +75,8 @@ def test_submit_recognition_returns_real_text(tmp_path: Path) -> None:
     image_bytes = _render_text_image(expected_word)
 
     ref = module.submit(
-        kind=__import__("vibeocr.protocol.v2", fromlist=["JobKind"]).JobKind.RECOGNITION,
-        priority=__import__("vibeocr.protocol.v2", fromlist=["JobPriority"]).JobPriority.INTERACTIVE,
+        kind=__import__("vibeocr.runtime_contracts", fromlist=["JobKind"]).JobKind.RECOGNITION,
+        priority=__import__("vibeocr.runtime_contracts", fromlist=["JobPriority"]).JobPriority.INTERACTIVE,
         uploads=[("test.png", "image/png", image_bytes)],
     )
 

@@ -23,7 +23,8 @@ namespace VibeOCR.Platform.Windows;
 /// to the other product's Supervisor.
 /// </para>
 /// <para>
-/// The Python <c>vibeocr.utils.frontend_exclusive_lock.FrontendExclusiveLock</c>
+/// The Python
+/// <c>vibeocr.classic.utils.frontend_exclusive_lock.FrontendExclusiveLock</c>
 /// must use the identical <see cref="MutexName"/> or mutual exclusion silently
 /// breaks.
 /// </para>
@@ -34,7 +35,7 @@ public sealed class FrontendExclusiveLock : IDisposable
     /// The shared cross-product Mutex name. Must match the Python constant
     /// <c>EXCLUSIVE_MUTEX_NAME</c> exactly.
     /// </summary>
-    public const string MutexName = @"Local\VibeOCR.Frontend.Exclusive.v1";
+    public const string MutexName = @"Local\VibeOCR.Frontend.Exclusive.v2";
 
     private readonly Mutex _mutex;
     private readonly bool _acquired;

@@ -4,7 +4,7 @@
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QWidget
 
-from vibeocr.widgets.toolbar import EdgeToolbar
+from vibeocr.classic.widgets.toolbar import EdgeToolbar
 
 
 class TestEdgeToolbar:
@@ -24,7 +24,7 @@ class TestEdgeToolbar:
         """
         from PySide6.QtGui import QColor, QImage
 
-        from vibeocr.ui import theme
+        from vibeocr.classic.ui import theme
 
         tb = EdgeToolbar()
         img = QImage(tb.size(), QImage.Format.Format_ARGB32_Premultiplied)

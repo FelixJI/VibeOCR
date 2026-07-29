@@ -7,7 +7,14 @@ from importlib import resources
 
 import pytest
 
-from vibeocr.protocol.v2 import (
+from vibeocr.runtime_client.client import (
+    MultipartAttachment,
+    RuntimeClientError,
+    RuntimeHttpClient,
+    SupervisorClient,
+)
+from vibeocr.runtime_client.mock_server import MockRuntimeServer
+from vibeocr.runtime_contracts import (
     CancelMode,
     JobCommand,
     JobCommandKind,
@@ -17,20 +24,13 @@ from vibeocr.protocol.v2 import (
     SubmitItem,
     SubmitRequest,
 )
-from vibeocr.protocol.v2.client import (
-    MultipartAttachment,
-    RuntimeClientError,
-    RuntimeHttpClient,
-    SupervisorClient,
-)
-from vibeocr.protocol.v2.errors import ErrorCode
-from vibeocr.protocol.v2.generated.operations import operation_path
-from vibeocr.protocol.v2.mock_server import MockRuntimeServer
+from vibeocr.runtime_contracts.errors import ErrorCode
+from vibeocr.runtime_contracts.generated.operations import operation_path
 
 
 def _runtime_golden() -> dict:
     raw = (
-        resources.files("vibeocr.protocol.v2.golden")
+        resources.files("vibeocr.runtime_contracts.golden")
         .joinpath("runtime-api.json")
         .read_text(encoding="utf-8")
     )

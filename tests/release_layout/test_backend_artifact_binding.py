@@ -15,13 +15,11 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 VERSION = "1.2.3"
-PROTOCOL_VERSION = "2.0.0rc1"
+PROTOCOL_VERSION = "2.0.0"
 WHEEL_DISTRIBUTIONS = {
-    "vibeocr": "vibeocr",
     "vibeocr-backend": "vibeocr_backend",
-    "vibeocr-client-py": "vibeocr_client_py",
-    "vibeocr-contracts-py": "vibeocr_contracts_py",
-    "vibeocr-pyside": "vibeocr_pyside",
+    "vibeocr-classic": "vibeocr_classic",
+    "vibeocr-runtime-contracts": "vibeocr_runtime_contracts",
     "vibeocr-runtime-client": "vibeocr_runtime_client",
 }
 
@@ -52,11 +50,13 @@ def _write_wheel_set(wheel_dir: Path) -> dict[str, Path]:
     for distribution, wheel_stem in WHEEL_DISTRIBUTIONS.items():
         members: tuple[str, ...] = ()
         if distribution == "vibeocr-backend":
-            members = ("vibeocr/supervisor/main.py",)
-        elif distribution == "vibeocr-contracts-py":
-            members = ("vibeocr/protocol/v2/golden/golden.json",)
+            members = ("vibeocr/backend/supervisor/main.py",)
+        elif distribution == "vibeocr-runtime-contracts":
+            members = ("vibeocr/runtime_contracts/golden/golden.json",)
         elif distribution == "vibeocr-runtime-client":
-            members = ("vibeocr/protocol/v2/client.py",)
+            members = ("vibeocr/runtime_client/client.py",)
+        elif distribution == "vibeocr-classic":
+            members = ("vibeocr/classic/main.py",)
         wheels[distribution] = _write_wheel(
             wheel_dir,
             distribution,
@@ -112,7 +112,7 @@ def test_binding_writes_protocol_v2_manifest(
     assert manifest["protocol_major"] == 2
     assert manifest["protocol_version"] == PROTOCOL_VERSION
     assert manifest["frontend"] == "pyside"
-    assert len(manifest["python_wheels"]) == 6
+    assert len(manifest["python_wheels"]) == 4
 
 
 def test_binding_rejects_legacy_runtime_member(tmp_path: Path) -> None:

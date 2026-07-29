@@ -11,14 +11,14 @@ content_list 逐块渲染成独立 <div class="ocr-block">，永远不走 raw_te
 ``.ocr-block``，只是视觉分组（keep 逐行 / merge 段内横排 / smart 段落）。
 """
 
-from vibeocr.models.ocr_result import OCRResult, TextBlock
-from vibeocr.models.text_block_options import (
+from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
+from vibeocr.backend.models.text_block_options import (
     LINE_MODE_KEEP,
     LINE_MODE_MERGE,
     LINE_MODE_SMART,
     TextBlockOptions,
 )
-from vibeocr.widgets.result_view_widget import _build_text_layout_html
+from vibeocr.classic.widgets.result_view_widget import _build_text_layout_html
 
 
 def _plain_text_result() -> OCRResult:
@@ -185,7 +185,7 @@ class TestTextLayoutIntegration:
     """通过 ResultViewWidget.display_text_layout 端到端验证。"""
 
     def test_display_text_layout_renders_to_webview(self, qapp, qtbot, monkeypatch):
-        from vibeocr.widgets.result_view_widget import ResultViewWidget
+        from vibeocr.classic.widgets.result_view_widget import ResultViewWidget
 
         widget = ResultViewWidget()
         web_view = type("_V", (), {"setHtml": lambda self, html, url=None: None})()
@@ -222,8 +222,10 @@ class TestEditPathInLayoutMode:
     def test_edit_block_2_updates_correct_text_block(self, qapp, monkeypatch):
         """drop_blank 过滤掉中间空白块后，编辑保留下来的「乙」（原始 index=2）
         应更新 text_blocks[2]，而非 text_blocks[0]。"""
-        from vibeocr.models.ocr_result import OCRResult, TextBlock
-        from vibeocr.views.tabs.single_recognition_tab import SingleRecognitionTab
+        from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.classic.views.tabs.single_recognition_tab import (
+            SingleRecognitionTab,
+        )
 
         tab = SingleRecognitionTab()
         result = OCRResult(

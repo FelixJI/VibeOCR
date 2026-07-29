@@ -1,6 +1,7 @@
 using System.Text.Json;
 using VibeOCR.App.ViewModels;
 using VibeOCR.Platform.Bootstrap;
+using VibeOCR.Platform.Inference;
 using Xunit;
 
 namespace VibeOCR.App.Tests;
@@ -22,24 +23,6 @@ public sealed class ShellTests
         Assert.Contains("diagnostics", ShellNavigation.Destinations);
     }
 
-    [Fact]
-    public void SupervisorStartupOnlyRequiresItsPythonRuntime()
-    {
-        var pythonReady = new PrerequisiteReport(
-        [
-            new(PrerequisiteKind.DotNetDesktopRuntime, false, null, "10.0.0", "https://example.test/dotnet"),
-            new(PrerequisiteKind.WebView2Runtime, false, null, "Evergreen", "https://example.test/webview"),
-            new(PrerequisiteKind.PythonRuntime, true, "3.13", "3.13", "repair://vibeocr/python-runtime"),
-        ]);
-        var pythonMissing = new PrerequisiteReport(
-        [
-            new(PrerequisiteKind.PythonRuntime, false, null, "3.13", "repair://vibeocr/python-runtime"),
-        ]);
-
-        Assert.True(App.CanStartSupervisor(pythonReady.Items));
-        Assert.False(App.CanStartSupervisor(pythonMissing.Items));
-    }
-
     [Theory]
     [InlineData("other")]
     [InlineData("")]
@@ -49,6 +32,38 @@ public sealed class ShellTests
     [Fact]
     public void MissingProfileValueIsRejected() =>
         Assert.Throws<ArgumentException>(() => AppLaunchOptions.Parse(["--profile"]));
+
+    [Fact]
+    public void SupervisorOptionsUseInstallerLaunchContractVerbatim()
+    {
+        var launch = new RuntimeLaunch(
+            "manifest/win-x64-cpu",
+            "win-x64-cpu",
+            @"D:\shared\runtimes\python.exe",
+            "custom.backend.supervisor",
+            @"D:\products\next",
+            @"D:\shared\models",
+            new Dictionary<string, string>
+            {
+                ["VIBEOCR_RUNTIME_ROOT"] = @"D:\shared\runtimes",
+            });
+
+        InferenceSupervisorOptions options = App.BuildSupervisorOptions(
+            launch,
+            @"D:\products\next\data\supervisor.log",
+            TimeSpan.FromSeconds(42),
+            injectSoakCrash: true);
+
+        Assert.Equal(launch.PythonExecutable, options.FileName);
+        Assert.Equal(["-m", launch.SupervisorModule], options.Arguments);
+        Assert.Equal(launch.WorkingDirectory, options.WorkingDirectory);
+        Assert.Equal(
+            launch.Environment["VIBEOCR_RUNTIME_ROOT"],
+            options.EnvironmentOverrides!["VIBEOCR_RUNTIME_ROOT"]);
+        Assert.Equal(
+            "1",
+            options.EnvironmentOverrides["VIBEOCR_SUPERVISOR_SOAK_CRASH_AFTER_READY"]);
+    }
 
     [Fact]
     public void GotoDestinationIsParsedWhenValid()
@@ -73,26 +88,6 @@ public sealed class ShellTests
     [Fact]
     public void MissingGotoValueIsRejected() =>
         Assert.Throws<ArgumentException>(() => AppLaunchOptions.Parse(["--goto"]));
-
-    [Fact]
-    public void ProductionSupervisorRootComesFromPackagedRelease()
-    {
-        string root = Path.Combine(Path.GetTempPath(), $"vibeocr-supervisor-{Guid.NewGuid():N}");
-        string supervisor = Path.Combine(root, "supervisor", "vibeocr", "supervisor");
-        Directory.CreateDirectory(supervisor);
-        try
-        {
-            PortableLayout layout = PortableLayout.Resolve(
-                Path.Combine(root, "VibeOCR.WinUI.exe"),
-                "production");
-
-            Assert.Equal(Path.Combine(root, "supervisor"), App.ResolveSupervisorRoot(layout));
-        }
-        finally
-        {
-            Directory.Delete(root, recursive: true);
-        }
-    }
 
     [Fact]
     public void DiagnosticsShowMissingRuntimeAndSupervisorNotReady()
@@ -194,6 +189,6 @@ public sealed class ShellTests
             new(PrerequisiteKind.DotNetDesktopRuntime, true, "10.0.1", "10.0.0", "https://example.test/dotnet"),
             new(PrerequisiteKind.WindowsAppRuntime, true, "2.2.0", "2.2.0", "https://example.test/windows-app-runtime"),
             new(PrerequisiteKind.WebView2Runtime, true, "140.0", "Evergreen", "https://example.test/webview"),
-            new(PrerequisiteKind.PythonRuntime, true, "3.13", "3.13", "repair://vibeocr/python-runtime"),
+            new(PrerequisiteKind.RuntimeInstaller, true, "Bundled", "Bundled", "repair://vibeocr/runtime-installer"),
         ]);
 }

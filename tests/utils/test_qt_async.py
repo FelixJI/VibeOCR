@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from vibeocr.utils.qt_async import (
+from vibeocr.classic.utils.qt_async import (
     AsyncTaskRunner,
     get_async_runner,
     run_coroutine,
@@ -192,7 +192,7 @@ class TestQasyncFailFast:
         """qasync 导入失败时应抛 RuntimeError，而非返回标准 loop"""
         from unittest.mock import MagicMock, patch
 
-        from vibeocr.utils.qt_async import create_qasync_event_loop
+        from vibeocr.classic.utils.qt_async import create_qasync_event_loop
 
         mock_app = MagicMock()
         # 模拟 qasync 不可导入
@@ -204,7 +204,7 @@ class TestQasyncFailFast:
         """qasync 可用时正常返回 loop（不抛异常）"""
         from unittest.mock import MagicMock
 
-        from vibeocr.utils.qt_async import create_qasync_event_loop
+        from vibeocr.classic.utils.qt_async import create_qasync_event_loop
 
         # qasync 在测试环境中应已安装（pyproject 必选依赖）
         mock_app = MagicMock()
@@ -293,7 +293,7 @@ class TestAsyncTaskDrainAndError:
         """async_slot 中协程抛异常应被记录，不留未检索异常"""
         import logging
 
-        from vibeocr.utils.qt_async import async_slot
+        from vibeocr.classic.utils.qt_async import async_slot
 
         @async_slot()
         async def failing():
@@ -318,7 +318,7 @@ class TestAwaitDialogFutureGuard:
         """Future 被取消后，对话框 finished 不再 set_result（不抛 InvalidStateError）"""
         from unittest.mock import MagicMock
 
-        from vibeocr.pyside.update import await_dialog
+        from vibeocr.classic.pyside.update import await_dialog
 
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)

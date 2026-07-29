@@ -10,8 +10,8 @@ from PySide6.QtCore import QRect
 from PySide6.QtGui import QCloseEvent, QColor, QGuiApplication, QPixmap
 
 from tests.qt_responsiveness import assert_qt_event_loop_responsive
-from vibeocr.utils.image_jobs import compose_screen_images
-from vibeocr.widgets.screen_capture_overlay import ScreenCaptureOverlay
+from vibeocr.classic.utils.image_jobs import compose_screen_images
+from vibeocr.classic.widgets.screen_capture_overlay import ScreenCaptureOverlay
 
 
 class _FakeScreen:
@@ -54,10 +54,10 @@ def test_multiscreen_grabs_once_and_composes_off_gui(
 
     monkeypatch.setattr(QGuiApplication, "screens", lambda: screens)
     monkeypatch.setattr(
-        "vibeocr.widgets.screen_capture_overlay.WindowDetector", None
+        "vibeocr.classic.widgets.screen_capture_overlay.WindowDetector", None
     )
     monkeypatch.setattr(
-        "vibeocr.widgets.screen_capture_overlay.compose_screen_images", slow_compose
+        "vibeocr.classic.widgets.screen_capture_overlay.compose_screen_images", slow_compose
     )
     overlay = ScreenCaptureOverlay()
     qtbot.addWidget(overlay)
@@ -94,7 +94,7 @@ def test_blocking_save_encoding_keeps_event_loop_responsive(
         {"export_image": lambda self: pixmap, "deleteLater": lambda self: None},
     )()
     monkeypatch.setattr(
-        "vibeocr.widgets.screen_capture_overlay.save_image_file", slow_save
+        "vibeocr.classic.widgets.screen_capture_overlay.save_image_file", slow_save
     )
     monkeypatch.setattr(
         "PySide6.QtWidgets.QFileDialog.getSaveFileName",
@@ -144,14 +144,14 @@ def test_close_does_not_wait_and_cancelled_clip_temp_is_removed(
         {"export_image": lambda self: pixmap, "deleteLater": lambda self: None},
     )()
     monkeypatch.setattr(
-        "vibeocr.widgets.screen_capture_overlay.sys.platform", "win32"
+        "vibeocr.classic.widgets.screen_capture_overlay.sys.platform", "win32"
     )
     monkeypatch.setattr(
-        "vibeocr.widgets.screen_capture_overlay.QApplication.clipboard",
+        "vibeocr.classic.widgets.screen_capture_overlay.QApplication.clipboard",
         lambda: clipboard,
     )
     monkeypatch.setattr(
-        "vibeocr.widgets.screen_capture_overlay.write_clipboard_png",
+        "vibeocr.classic.widgets.screen_capture_overlay.write_clipboard_png",
         cancellable_write,
     )
 
@@ -187,10 +187,10 @@ def test_confirmed_saves_survive_new_capture_and_second_save(
     paths = iter((str(first), str(second)))
     monkeypatch.setattr(QGuiApplication, "screens", lambda: [screen])
     monkeypatch.setattr(
-        "vibeocr.widgets.screen_capture_overlay.WindowDetector", None
+        "vibeocr.classic.widgets.screen_capture_overlay.WindowDetector", None
     )
     monkeypatch.setattr(
-        "vibeocr.widgets.screen_capture_overlay.save_image_file", slow_save
+        "vibeocr.classic.widgets.screen_capture_overlay.save_image_file", slow_save
     )
     monkeypatch.setattr(
         "PySide6.QtWidgets.QFileDialog.getSaveFileName",
@@ -241,7 +241,7 @@ def test_confirmed_save_failure_is_reported(qtbot, tmp_path, monkeypatch):
         {"export_image": lambda self: pixmap, "deleteLater": lambda self: None},
     )()
     monkeypatch.setattr(
-        "vibeocr.widgets.screen_capture_overlay.save_image_file", fail_save
+        "vibeocr.classic.widgets.screen_capture_overlay.save_image_file", fail_save
     )
     monkeypatch.setattr(
         "PySide6.QtWidgets.QFileDialog.getSaveFileName",
@@ -278,7 +278,7 @@ def test_save_shutdown_drains_confirmed_save_without_blocking_close(
         {"export_image": lambda self: pixmap, "deleteLater": lambda self: None},
     )()
     monkeypatch.setattr(
-        "vibeocr.widgets.screen_capture_overlay.save_image_file", slow_save
+        "vibeocr.classic.widgets.screen_capture_overlay.save_image_file", slow_save
     )
     monkeypatch.setattr(
         "PySide6.QtWidgets.QFileDialog.getSaveFileName",

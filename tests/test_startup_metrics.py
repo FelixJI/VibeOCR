@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from vibeocr.startup_metrics import (
+from vibeocr.classic.startup_metrics import (
     StartupEvent,
     StartupRecorder,
     percentile,
@@ -47,14 +47,14 @@ class TestStartupEvent:
 
 class TestStartupRecorder:
     def test_default_timestamps_are_relative_to_process_origin(self, monkeypatch):
-        import vibeocr.startup_metrics as startup_metrics
+        import vibeocr.classic.startup_metrics as startup_metrics
 
         monkeypatch.setattr(startup_metrics, "_global_recorder", None)
         set_startup_origin(time.perf_counter() - 1.0)
         try:
             record_startup(StartupEvent.PROCESS_START, 0.0)
             record_startup(StartupEvent.RUNTIME_READY)
-            from vibeocr.startup_metrics import get_recorder
+            from vibeocr.classic.startup_metrics import get_recorder
 
             elapsed = get_recorder().events[StartupEvent.RUNTIME_READY]
             assert 0.9 <= elapsed <= 1.5
@@ -181,7 +181,7 @@ class TestPercentile:
 class TestSummarizeRuns:
     def test_summarize_computes_p50_p95_per_milestone(self):
         """汇总多次运行，为每个里程碑计算 p50/p95。"""
-        from vibeocr.startup_metrics import StartupRecorder
+        from vibeocr.classic.startup_metrics import StartupRecorder
 
         runs = []
         for base in range(10):

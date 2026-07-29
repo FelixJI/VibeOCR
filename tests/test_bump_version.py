@@ -162,7 +162,12 @@ class TestVersionParsing:
         os.environ["CHANGELOG"] = ""
         spec.loader.exec_module(mod)
 
-        pyproject = Path(__file__).parent.parent / "pyproject.toml"
+        pyproject = (
+            Path(__file__).parent.parent
+            / "apps"
+            / "vibeocr-pyside"
+            / "pyproject.toml"
+        )
         result = mod.read_current_version(pyproject)
         # 三元组 + 非负整数
         assert isinstance(result, tuple) and len(result) == 3
@@ -253,10 +258,9 @@ class TestVersionBumping:
         assert mod.bump_version((1, 2, 3), "minor") == (1, 3, 0)
         assert mod.bump_version((1, 2, 3), "major") == (2, 0, 0)
 
-    def test_workspace_version_files_match_root_version(self, monkeypatch):
-        """真实 workspace 的包版本和内部精确依赖不得再次漂移"""
+    def test_classic_version_files_match_product_version(self, monkeypatch):
+        """Classic bump 只管理 Classic 自身版本，不联动独立上游版本。"""
         import importlib.util
-        import re
 
         for key in ("PYPROJECT_TOML", "INIT_PY", "MAIN_PY", "CHANGELOG"):
             monkeypatch.delenv(key, raising=False)
@@ -266,19 +270,14 @@ class TestVersionBumping:
         spec.loader.exec_module(mod)
 
         current = ".".join(map(str, mod.read_current_version(mod.PYPROJECT_TOML)))
-        for path in mod._discover_version_files():
-            content = path.read_text(encoding="utf-8")
-            if path.name == "pyproject.toml":
-                assert f'version = "{current}"' in content, path
-                internal_pins = re.findall(
-                    r'"vibeocr-[a-z0-9-]+==(\d+\.\d+\.\d+)"', content
-                )
-                assert all(version == current for version in internal_pins), path
-            else:
-                assert f'__version__ = "{current}"' in content, path
+        discovered = mod._discover_version_files()
+        assert discovered == [mod.PYPROJECT_TOML, mod.INIT_PY]
+        assert f'version = "{current}"' in mod.PYPROJECT_TOML.read_text(
+            encoding="utf-8"
+        )
 
-    def test_update_file_version_replaces_all_occurrences(self, tmp_path):
-        """项目版本与内部包精确约束中的旧版本都应被替换"""
+    def test_update_file_version_only_changes_component_declaration(self, tmp_path):
+        """独立发版组件不得顺带改写已审核的 Backend 绑定。"""
         import importlib.util
 
         spec = importlib.util.spec_from_file_location("bump_version", SCRIPT)
@@ -290,20 +289,25 @@ class TestVersionBumping:
         os.environ["CHANGELOG"] = ""
         spec.loader.exec_module(mod)
 
-        test_file = tmp_path / "test.txt"
-        test_file.write_text('version = "0.1.0"\n# still 0.1.0\n', encoding="utf-8")
+        test_file = tmp_path / "pyproject.toml"
+        test_file.write_text(
+            'version = "0.1.0"\n'
+            'dependencies = ["vibeocr-backend==0.1.0"]\n'
+            "# still 0.1.0\n",
+            encoding="utf-8",
+        )
 
         mod.update_file_version(test_file, "0.1.0", "0.2.0")
 
         content = test_file.read_text(encoding="utf-8")
         assert 'version = "0.2.0"' in content
-        assert "0.1.0" not in content
-        assert "# still 0.2.0" in content
+        assert "vibeocr-backend==0.1.0" in content
+        assert "# still 0.1.0" in content
 
-    def test_update_project_versions_discovers_workspace_members(
+    def test_update_project_versions_keeps_workspace_members_independent(
         self, tmp_path, monkeypatch
     ):
-        """workspace 子包版本、内部包约束与 __version__ 一次性同步"""
+        """过渡 workspace 中的其他组件仍拥有独立版本。"""
         import importlib.util
 
         spec = importlib.util.spec_from_file_location("bump_version", SCRIPT)
@@ -344,17 +348,16 @@ class TestVersionBumping:
 
         changed = mod.update_project_versions("0.1.0", "0.2.0")
 
-        assert set(changed) == {
-            pyproject,
-            init_py,
-            member / "pyproject.toml",
-            member_init,
-        }
-        for path in changed:
-            assert "0.1.0" not in path.read_text(encoding="utf-8")
-        assert "vibeocr-contracts-py==0.2.0" in (member / "pyproject.toml").read_text(
+        assert set(changed) == {pyproject, init_py}
+        assert 'version = "0.2.0"' in pyproject.read_text(encoding="utf-8")
+        assert '__version__ = "0.2.0"' in init_py.read_text(encoding="utf-8")
+        assert 'version = "0.1.0"' in (member / "pyproject.toml").read_text(
             encoding="utf-8"
         )
+        assert "vibeocr-contracts-py==0.1.0" in (
+            member / "pyproject.toml"
+        ).read_text(encoding="utf-8")
+        assert '__version__ = "0.1.0"' in member_init.read_text(encoding="utf-8")
 
 
 class TestChangelogGeneration:
@@ -1303,6 +1306,29 @@ class TestBumpPushConfirm:
         assert pushed.get("v") == "0.1.6", "答 y 应触发 _push_release(0.1.6)"
         assert not built.get("asked"), "已推送时不应再问本地打包"
 
+    def test_uv_lock_failure_stops_before_commit_or_tag(self, monkeypatch):
+        """依赖锁同步失败时不得继续生成 changelog、commit 或 tag。"""
+        mod = self._load_module()
+        self._stub_bump_deps(mod, monkeypatch)
+        monkeypatch.setattr(
+            mod,
+            "_sync_uv_lock",
+            lambda _version: (_ for _ in ()).throw(RuntimeError("lock failed")),
+        )
+        changelog_called: list[bool] = []
+        monkeypatch.setattr(
+            mod,
+            "update_changelog",
+            lambda *_args, **_kwargs: changelog_called.append(True),
+        )
+        monkeypatch.setattr(
+            "sys.argv",
+            ["bump_version.py", "patch", "--yes", "--no-build"],
+        )
+
+        assert mod.main() == 1
+        assert changelog_called == []
+
     def test_push_no_skips_push(self, monkeypatch):
         """推送确认答 N（默认）→ 不推送"""
         mod = self._load_module()
@@ -1415,6 +1441,31 @@ class TestOption5UnversionedWarning:
 
         assert ran.get("built") is True
 
+    def test_option_5_yes_skips_unversioned_prompt(self, monkeypatch):
+        """--build --yes 必须能在 CI/无 stdin 环境继续打包。"""
+        mod = self._load_module()
+        monkeypatch.setattr(
+            mod, "check_unversioned_commits", lambda v, cwd=None: (True, 3)
+        )
+        monkeypatch.setattr(mod, "read_current_version", lambda path: (0, 1, 6))
+        ran: dict = {}
+        monkeypatch.setattr(
+            mod,
+            "_run_build",
+            lambda v, force=False, frontend="pyside": (
+                ran.setdefault("built", True) or True
+            ),
+        )
+
+        def unexpected_input(_prompt=""):
+            raise AssertionError("--yes 不应读取交互输入")
+
+        monkeypatch.setattr("builtins.input", unexpected_input)
+        monkeypatch.setattr("sys.argv", ["bump_version.py", "--build", "--yes"])
+
+        assert mod.main() == 0
+        assert ran.get("built") is True
+
 
 class TestPyInstallerNoUpx:
     """_get_pyinstaller_cmd 应禁用 UPX（启动慢主因）"""
@@ -1454,11 +1505,11 @@ class TestPyInstallerNoUpx:
         }
 
         assert {
-            "vibeocr.startup_metrics",
-            "vibeocr.env_manager",
-            "vibeocr.views.main_window",
-            "vibeocr.supervisor.main",
-            "vibeocr.contracts.pipelines",
+            "vibeocr.classic.startup_metrics",
+            "vibeocr.backend.env_manager",
+            "vibeocr.classic.views.main_window",
+            "vibeocr.backend.supervisor.main",
+            "vibeocr.runtime_contracts.contracts.pipelines",
         }.issubset(hidden)
         assert "--collect-submodules" not in cmd
         assert len(subprocess.list2cmdline(cmd)) < 30_000
@@ -1473,9 +1524,9 @@ class TestPyInstallerNoUpx:
         stage = mod._prepare_workspace_source("0.5.0")
         cmd = mod._get_pyinstaller_cmd("0.5.0", workspace_source=stage)
 
-        assert (stage / "vibeocr/startup_metrics.py").is_file()
-        assert (stage / "vibeocr/env_manager.py").is_file()
-        assert (stage / "vibeocr/supervisor/main.py").is_file()
+        assert (stage / "vibeocr/classic/startup_metrics.py").is_file()
+        assert (stage / "vibeocr/backend/env_manager.py").is_file()
+        assert (stage / "vibeocr/backend/supervisor/main.py").is_file()
         assert not list(stage.rglob("*.pyc"))
         first_paths = cmd.index("--paths")
         assert cmd[first_paths + 1] == str(stage)

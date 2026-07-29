@@ -7,8 +7,8 @@ from unittest.mock import patch
 
 import pytest
 
-from vibeocr.utils import cpu_info
-from vibeocr.utils.cpu_info import (
+from vibeocr.backend.utils import cpu_info
+from vibeocr.backend.utils.cpu_info import (
     CPU_THREADS_CAP,
     _version_in_range,
     detect_cpu_features,
@@ -30,28 +30,28 @@ def test_get_cpu_thread_count_returns_positive_int():
 def test_get_cpu_thread_count_capped(monkeypatch):
     """逻辑核数超过上限时夹到 CPU_THREADS_CAP。"""
     monkeypatch.delenv("VIBEOCR_CPU_THREADS", raising=False)
-    with patch("vibeocr.utils.cpu_info.os.cpu_count", return_value=128):
+    with patch("vibeocr.backend.utils.cpu_info.os.cpu_count", return_value=128):
         assert get_cpu_thread_count() == CPU_THREADS_CAP
 
 
 def test_get_cpu_thread_count_respects_user_override(monkeypatch):
     """VIBEOCR_CPU_THREADS 显式覆盖优先，且不受上限限制。"""
     monkeypatch.setenv("VIBEOCR_CPU_THREADS", "24")
-    with patch("vibeocr.utils.cpu_info.os.cpu_count", return_value=4):
+    with patch("vibeocr.backend.utils.cpu_info.os.cpu_count", return_value=4):
         assert get_cpu_thread_count() == 24
 
 
 def test_get_cpu_thread_count_invalid_override_ignored(monkeypatch):
     """非整数的覆盖值被忽略，回退到探测。"""
     monkeypatch.setenv("VIBEOCR_CPU_THREADS", "abc")
-    with patch("vibeocr.utils.cpu_info.os.cpu_count", return_value=8):
+    with patch("vibeocr.backend.utils.cpu_info.os.cpu_count", return_value=8):
         assert get_cpu_thread_count() == 8
 
 
 def test_get_cpu_thread_count_fallback_on_probe_failure(monkeypatch):
     """cpu_count 返回 None 时回退到 FALLBACK_CPU_THREADS。"""
     monkeypatch.delenv("VIBEOCR_CPU_THREADS", raising=False)
-    with patch("vibeocr.utils.cpu_info.os.cpu_count", return_value=None):
+    with patch("vibeocr.backend.utils.cpu_info.os.cpu_count", return_value=None):
         assert get_cpu_thread_count() == cpu_info.FALLBACK_CPU_THREADS
 
 
@@ -68,7 +68,7 @@ def test_detect_cpu_features_returns_dict_with_expected_keys():
 
 def test_detect_cpu_features_when_flags_empty():
     """flags 探测为空时所有特性为 False。"""
-    with patch("vibeocr.utils.cpu_info._read_cpu_flags_text", return_value=""):
+    with patch("vibeocr.backend.utils.cpu_info._read_cpu_flags_text", return_value=""):
         feats = detect_cpu_features()
     assert feats == {
         "avx": False,
@@ -82,7 +82,7 @@ def test_detect_cpu_features_when_flags_empty():
 def test_detect_cpu_features_parses_linux_flags():
     """Linux flags 行正确解析各指令集（含 AVX-512 子集）。"""
     flags = "fpu vme de pe avx avx2 fma avx512f avx512cd amx_bf16"
-    with patch("vibeocr.utils.cpu_info._read_cpu_flags_text", return_value=flags):
+    with patch("vibeocr.backend.utils.cpu_info._read_cpu_flags_text", return_value=flags):
         feats = detect_cpu_features()
     assert feats["avx"] is True
     assert feats["avx2"] is True
@@ -117,7 +117,7 @@ def test_onednn_rejected_without_avx2(monkeypatch):
     monkeypatch.delenv("VIBEOCR_FORCE_ONEDNN", raising=False)
     monkeypatch.setattr(cpu_info, "_get_paddle_version", lambda: "3.4.0")
     with patch(
-        "vibeocr.utils.cpu_info.detect_cpu_features",
+        "vibeocr.backend.utils.cpu_info.detect_cpu_features",
         return_value={
             "avx": True,
             "avx2": False,
@@ -136,7 +136,7 @@ def test_onednn_rejected_for_blacklisted_paddle(monkeypatch):
     monkeypatch.delenv("VIBEOCR_FORCE_ONEDNN", raising=False)
     monkeypatch.setattr(cpu_info, "_get_paddle_version", lambda: "3.3.1")
     with patch(
-        "vibeocr.utils.cpu_info.detect_cpu_features",
+        "vibeocr.backend.utils.cpu_info.detect_cpu_features",
         return_value={
             "avx": True,
             "avx2": True,
@@ -155,7 +155,7 @@ def test_onednn_rejected_for_unvalidated_future_paddle(monkeypatch):
     monkeypatch.delenv("VIBEOCR_FORCE_ONEDNN", raising=False)
     monkeypatch.setattr(cpu_info, "_get_paddle_version", lambda: "3.4.0")
     with patch(
-        "vibeocr.utils.cpu_info.detect_cpu_features",
+        "vibeocr.backend.utils.cpu_info.detect_cpu_features",
         return_value={
             "avx": True,
             "avx2": True,
@@ -174,7 +174,7 @@ def test_onednn_rejected_when_paddle_version_unknown(monkeypatch):
     monkeypatch.delenv("VIBEOCR_FORCE_ONEDNN", raising=False)
     monkeypatch.setattr(cpu_info, "_get_paddle_version", lambda: None)
     with patch(
-        "vibeocr.utils.cpu_info.detect_cpu_features",
+        "vibeocr.backend.utils.cpu_info.detect_cpu_features",
         return_value={
             "avx": True,
             "avx2": True,
@@ -198,7 +198,7 @@ def test_onednn_allowed_only_for_validated_paddle_range(monkeypatch):
         [("3.4.0", "3.4.2")],
     )
     with patch(
-        "vibeocr.utils.cpu_info.detect_cpu_features",
+        "vibeocr.backend.utils.cpu_info.detect_cpu_features",
         return_value={
             "avx": True,
             "avx2": True,
@@ -217,7 +217,7 @@ def test_onednn_paddle_version_with_build_suffix(monkeypatch):
     monkeypatch.delenv("VIBEOCR_FORCE_ONEDNN", raising=False)
     monkeypatch.setattr(cpu_info, "_get_paddle_version", lambda: "3.3.1+cu126")
     with patch(
-        "vibeocr.utils.cpu_info.detect_cpu_features",
+        "vibeocr.backend.utils.cpu_info.detect_cpu_features",
         return_value={
             "avx": True,
             "avx2": True,
@@ -266,7 +266,7 @@ def test_version_in_range(ver, lo, hi, expected):
     ],
 )
 def test_ver_tuple_parses_core_version(ver, expected):
-    from vibeocr.utils.cpu_info import _ver_tuple
+    from vibeocr.backend.utils.cpu_info import _ver_tuple
 
     assert _ver_tuple(ver) == expected
 
@@ -290,7 +290,7 @@ def test_get_paddle_version_returns_version_when_installed():
     fake = ModuleType("paddle")
     fake.__version__ = "3.3.1"  # type: ignore[attr-defined]
     with patch.dict(sys.modules, {"paddle": fake}):
-        from vibeocr.utils.cpu_info import _get_paddle_version
+        from vibeocr.backend.utils.cpu_info import _get_paddle_version
 
         assert _get_paddle_version() == "3.3.1"
 
@@ -300,7 +300,7 @@ def test_get_paddle_version_none_when_not_installed():
     import sys
 
     with patch.dict(sys.modules, {"paddle": None}):
-        from vibeocr.utils.cpu_info import _get_paddle_version
+        from vibeocr.backend.utils.cpu_info import _get_paddle_version
 
         assert _get_paddle_version() is None
 
@@ -313,7 +313,7 @@ def test_get_paddle_version_none_when_empty_version():
     fake = ModuleType("paddle")
     fake.__version__ = ""  # type: ignore[attr-defined]
     with patch.dict(sys.modules, {"paddle": fake}):
-        from vibeocr.utils.cpu_info import _get_paddle_version
+        from vibeocr.backend.utils.cpu_info import _get_paddle_version
 
         assert _get_paddle_version() is None
 
@@ -329,7 +329,7 @@ def test_get_paddle_version_none_when_empty_version():
 )
 def test_read_windows_features_returns_known_flags():
     """Windows 上 _read_windows_features 应返回已知指令集子集（非空）"""
-    from vibeocr.utils.cpu_info import _read_windows_features
+    from vibeocr.backend.utils.cpu_info import _read_windows_features
 
     result = _read_windows_features()
     # 现代 x86 CPU 至少有 sse/sse2
@@ -343,14 +343,14 @@ def test_read_windows_features_returns_known_flags():
 )
 def test_read_windows_features_returns_empty_on_non_windows():
     """非 Windows 平台 _read_windows_features 走 except 返回空串"""
-    from vibeocr.utils.cpu_info import _read_windows_features
+    from vibeocr.backend.utils.cpu_info import _read_windows_features
 
     assert _read_windows_features() == ""
 
 
 def test_read_linux_flags_missing_proc(monkeypatch):
     """/proc/cpuinfo 不存在时返回空串"""
-    from vibeocr.utils.cpu_info import _read_linux_flags
+    from vibeocr.backend.utils.cpu_info import _read_linux_flags
 
     # Windows 上 /proc/cpuinfo 不存在，自然走 except 返回空串
     result = _read_linux_flags()
@@ -360,7 +360,7 @@ def test_read_linux_flags_missing_proc(monkeypatch):
 
 def test_get_cpu_thread_count_falls_back_when_cpu_count_raises(monkeypatch):
     """os.cpu_count() 抛异常时回退（line 55-56）。"""
-    from vibeocr.utils import cpu_info
+    from vibeocr.backend.utils import cpu_info
 
     monkeypatch.delenv("VIBEOCR_CPU_THREADS", raising=False)
 
@@ -373,7 +373,7 @@ def test_get_cpu_thread_count_falls_back_when_cpu_count_raises(monkeypatch):
 
 def test_read_cpu_features_dispatches_by_os_name(monkeypatch):
     """detect_cpu_features 按 os.name 分发；非 nt/posix 返回空（line 98-102）。"""
-    from vibeocr.utils import cpu_info
+    from vibeocr.backend.utils import cpu_info
 
     # posix 分发到 _read_linux_flags（Windows 测试主机上 /proc 不存在 → 空串）
     monkeypatch.setattr(cpu_info.os, "name", "posix")
@@ -393,7 +393,7 @@ def test_read_windows_features_all_branches_via_fake_kernel(monkeypatch):
     """
     import types as _types
 
-    from vibeocr.utils import cpu_info
+    from vibeocr.backend.utils import cpu_info
 
     supported = {1, 10, 13, 39, 40, 43}  # SSE/SSE2/SSE3/AVX/AVX2/AVX512F
 
@@ -431,7 +431,7 @@ def test_read_windows_features_falls_back_when_kernel_call_raises():
     import sys
     import types as _types
 
-    from vibeocr.utils import cpu_info
+    from vibeocr.backend.utils import cpu_info
 
     class _BrokenKernel:
         def IsProcessorFeaturePresent(self, _fid):
@@ -459,7 +459,7 @@ def test_read_windows_features_partial_support_exercises_false_branches():
     import sys
     import types as _types
 
-    from vibeocr.utils import cpu_info
+    from vibeocr.backend.utils import cpu_info
 
     supported = {1, 40}  # 仅 SSE + AVX2
 
@@ -488,7 +488,7 @@ def test_read_windows_features_partial_support_exercises_false_branches():
 
 def test_get_cpu_thread_count_non_positive_override_ignored(monkeypatch):
     """VIBEOCR_CPU_THREADS 是有效整数但 <=0 时忽略（line 48->53）。"""
-    from vibeocr.utils import cpu_info
+    from vibeocr.backend.utils import cpu_info
 
     monkeypatch.setenv("VIBEOCR_CPU_THREADS", "0")
     # 应回退到正常 cpu_count 路径，返回正值
@@ -505,7 +505,7 @@ def test_read_windows_features_no_support_returns_empty():
     import sys
     import types as _types
 
-    from vibeocr.utils import cpu_info
+    from vibeocr.backend.utils import cpu_info
 
     class _NoSupportKernel:
         def IsProcessorFeaturePresent(self, _fid):

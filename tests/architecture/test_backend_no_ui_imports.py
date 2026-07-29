@@ -2,12 +2,12 @@
 
 Per ADR §强制边界: the dependency direction is strictly UI → SupervisorClient →
 Supervisor → application → domain. No backend package may import
-``vibeocr.views`` / ``vibeocr.widgets`` / ``vibeocr.ui``.
+``vibeocr.classic``.
 
 This direction must be zero. Phase 4「去 Qt 化」已完成 ``update_service.py`` 的
 物理拆分——Qt 对话框与更新流程编排（``UpdateDialog`` / ``await_dialog`` /
-``UpdateService`` 编排器）移至 ``vibeocr.pyside.update``（Qt 平台壳层），backend
-纯逻辑留在 ``vibeocr.services.update_service``。历史唯一已知债务随之清零，
+``UpdateService`` 编排器）移至 ``vibeocr.classic.pyside.update``（Qt 平台壳层），backend
+纯逻辑留在 ``vibeocr.classic.services.update_service``。历史唯一已知债务随之清零，
 ``BACKEND_UI_KNOWN_DEBT`` 现为空集，本守卫对任何 backend→UI 泄漏零容忍。
 """
 
@@ -19,21 +19,13 @@ from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
-BACKEND_PACKAGE_DIRS: tuple[str, ...] = (
-    "services",
-    "managers",
-    "workers",
-    "core",
-    "models",
-    "application",
-    "migration",
-    "supervisor",
+FORBIDDEN_UI_PREFIXES: tuple[str, ...] = (
+    "PySide6",
+    "vibeocr.classic",
 )
 
-UI_MODULES: frozenset[str] = frozenset({"views", "widgets", "ui"})
-
 # Known legacy Qt-into-backend leak. Phase 4 (去 Qt 化) 已完成 update_service.py
-# 拆分：Qt 对话框与编排移至 vibeocr.pyside.update，backend 纯逻辑留在
+# 拆分：Qt 对话框与编排移至 vibeocr.classic.pyside.update，backend 纯逻辑留在
 # services.update_service。债务清零，集合为空；新增条目需 ADR 修正案。
 BACKEND_UI_KNOWN_DEBT: frozenset[str] = frozenset()
 
@@ -50,36 +42,35 @@ class Violation:
 
 
 def _scan() -> list[Violation]:
-    base = _REPO_ROOT / "packages" / "vibeocr-backend" / "src" / "vibeocr"
+    base = (
+        _REPO_ROOT
+        / "packages"
+        / "vibeocr-backend"
+        / "src"
+        / "vibeocr"
+        / "backend"
+    )
     hits: list[Violation] = []
-    for sub in BACKEND_PACKAGE_DIRS:
-        pkg = base / sub
-        if not pkg.is_dir():
+    for py_file in sorted(base.rglob("*.py")):
+        rel = py_file.relative_to(_REPO_ROOT)
+        try:
+            tree = ast.parse(
+                py_file.read_text(encoding="utf-8"), filename=str(py_file)
+            )
+        except SyntaxError:
             continue
-        for py_file in sorted(pkg.rglob("*.py")):
-            rel = py_file.relative_to(_REPO_ROOT)
-            try:
-                tree = ast.parse(
-                    py_file.read_text(encoding="utf-8"), filename=str(py_file)
-                )
-            except SyntaxError:
-                continue
-            for node in ast.walk(tree):
-                if isinstance(node, ast.ImportFrom):
-                    if node.module and node.module.startswith("vibeocr."):
-                        parts = node.module.split(".")
-                        if len(parts) >= 2 and parts[1] in UI_MODULES:
-                            hits.append(
-                                Violation(rel, node.lineno, ast.unparse(node))
-                            )
-                elif isinstance(node, ast.Import):
-                    for alias in node.names:
-                        if alias.name.startswith("vibeocr."):
-                            parts = alias.name.split(".")
-                            if len(parts) >= 2 and parts[1] in UI_MODULES:
-                                hits.append(
-                                    Violation(rel, node.lineno, ast.unparse(node))
-                                )
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                if node.module and node.module.startswith(FORBIDDEN_UI_PREFIXES):
+                    hits.append(
+                        Violation(rel, node.lineno, ast.unparse(node))
+                    )
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name.startswith(FORBIDDEN_UI_PREFIXES):
+                        hits.append(
+                            Violation(rel, node.lineno, ast.unparse(node))
+                        )
     return hits
 
 

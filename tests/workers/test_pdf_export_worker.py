@@ -11,9 +11,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from vibeocr.managers.pdf_session_manager import PdfSessionManager
-from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
-from vibeocr.models.pdf_session import PdfSession
+from vibeocr.backend.models.pdf_document import PdfDocument, PdfPageInfo
+from vibeocr.backend.models.pdf_session import PdfSession
+from vibeocr.classic.managers.pdf_session_manager import PdfSessionManager
 
 
 def _make_session(path, modified=True):

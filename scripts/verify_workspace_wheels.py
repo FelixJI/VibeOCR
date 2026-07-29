@@ -1,4 +1,4 @@
-"""Verify physical ownership and dependency metadata of the six release wheels."""
+"""Verify physical ownership and dependency metadata of the four release wheels."""
 
 from __future__ import annotations
 
@@ -9,14 +9,11 @@ import zipfile
 from pathlib import Path
 
 EXPECTED = {
-    "vibeocr",
     "vibeocr-backend",
-    "vibeocr-client-py",
-    "vibeocr-contracts-py",
+    "vibeocr-classic",
+    "vibeocr-runtime-contracts",
     "vibeocr-runtime-client",
-    "vibeocr-pyside",
 }
-CODE_DISTRIBUTIONS = EXPECTED - {"vibeocr"}
 
 
 def _normalize(name: str) -> str:
@@ -50,9 +47,6 @@ def verify(directory: Path) -> None:
                 "__pycache__" in name or name.startswith("vibeocr/output/")
                 for name in product_paths
             ), f"forbidden runtime artifact in {wheel.name}"
-            if distribution == "vibeocr":
-                assert not product_paths, "root compatibility wheel must be code-free"
-                continue
             for name in product_paths:
                 previous = archive_owners.setdefault(name, distribution)
                 assert previous == distribution, (
@@ -64,39 +58,39 @@ def verify(directory: Path) -> None:
     for distribution, wheel in wheels.items():
         with zipfile.ZipFile(wheel) as zf:
             versions[distribution] = str(_metadata(zf)["Version"])
-    application_distributions = {
-        "vibeocr",
-        "vibeocr-backend",
-        "vibeocr-client-py",
-        "vibeocr-pyside",
-    }
     protocol_distributions = {
-        "vibeocr-contracts-py",
+        "vibeocr-runtime-contracts",
         "vibeocr-runtime-client",
     }
-    assert len({versions[name] for name in application_distributions}) == 1, (
-        f"application wheel versions differ: {versions}"
-    )
     assert len({versions[name] for name in protocol_distributions}) == 1, (
         f"protocol wheel versions differ: {versions}"
     )
-    assert archive_owners["vibeocr/__init__.py"] == "vibeocr-contracts-py"
-    assert archive_owners["vibeocr/env_manager.py"] == "vibeocr-client-py"
-    assert archive_owners["vibeocr/dependency_profiles.json"] == "vibeocr-client-py"
-    assert archive_owners["vibeocr/supervisor/main.py"] == "vibeocr-backend"
-    assert archive_owners["vibeocr/main.py"] == "vibeocr-pyside"
-    assert archive_owners["vibeocr/ui/main_window.ui"] == "vibeocr-pyside"
+    assert "vibeocr/__init__.py" not in archive_owners
+    assert archive_owners["vibeocr/backend/env_manager.py"] == "vibeocr-backend"
     assert (
-        archive_owners["vibeocr/protocol/v2/golden/golden.json"]
-        == "vibeocr-contracts-py"
+        archive_owners["vibeocr/backend/dependency_profiles.json"]
+        == "vibeocr-backend"
     )
-    assert archive_owners["vibeocr/protocol/v2/client.py"] == "vibeocr-runtime-client"
     assert (
-        archive_owners["vibeocr/protocol/v2/mock_server.py"] == "vibeocr-runtime-client"
+        archive_owners["vibeocr/backend/supervisor/main.py"] == "vibeocr-backend"
     )
-    table_schema_path = "vibeocr/contracts/schemas/table-v1.schema.json"
-    assert archive_owners.get(table_schema_path) == "vibeocr-contracts-py", (
-        f"{table_schema_path} must be owned by vibeocr-contracts-py, "
+    assert archive_owners["vibeocr/classic/main.py"] == "vibeocr-classic"
+    assert (
+        archive_owners["vibeocr/classic/ui/main_window.ui"] == "vibeocr-classic"
+    )
+    assert (
+        archive_owners["vibeocr/runtime_contracts/golden/golden.json"]
+        == "vibeocr-runtime-contracts"
+    )
+    assert (
+        archive_owners["vibeocr/runtime_client/client.py"]
+        == "vibeocr-runtime-client"
+    )
+    table_schema_path = (
+        "vibeocr/runtime_contracts/contracts/schemas/table-v1.schema.json"
+    )
+    assert archive_owners.get(table_schema_path) == "vibeocr-runtime-contracts", (
+        f"{table_schema_path} must be owned by vibeocr-runtime-contracts, "
         f"got {archive_owners.get(table_schema_path)!r}"
     )
     assert not any(
@@ -104,22 +98,12 @@ def verify(directory: Path) -> None:
         for path in archive_owners
     ), "legacy WorkerHost/protocol-v1 paths must not ship"
 
-    with zipfile.ZipFile(wheels["vibeocr"]) as zf:
-        requires = _metadata(zf).get_all("Requires-Dist", [])
-    for internal in CODE_DISTRIBUTIONS:
-        matching = [
-            requirement
-            for requirement in requires
-            if _normalize(requirement.split()[0].split("=")[0]) == internal
-        ]
-        assert len(matching) == 1, f"root wheel dependency missing: {internal}"
-        assert f"=={versions[internal]}" in matching[0], (
-            f"root wheel must pin {internal}=={versions[internal]}: {matching[0]}"
-        )
-
     with zipfile.ZipFile(wheels["vibeocr-runtime-client"]) as zf:
         runtime_requires = _metadata(zf).get_all("Requires-Dist", [])
-    contracts_pin = f"vibeocr-contracts-py=={versions['vibeocr-contracts-py']}"
+    contracts_pin = (
+        "vibeocr-runtime-contracts"
+        f"=={versions['vibeocr-runtime-contracts']}"
+    )
     assert any(
         requirement.replace(" ", "").lower() == contracts_pin
         for requirement in runtime_requires

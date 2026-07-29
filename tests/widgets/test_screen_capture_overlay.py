@@ -3,7 +3,7 @@
 from PySide6.QtCore import QEvent, QPoint, QRect, Qt
 from PySide6.QtGui import QKeyEvent, QPixmap
 
-from vibeocr.widgets.screen_capture_overlay import ScreenCaptureOverlay
+from vibeocr.classic.widgets.screen_capture_overlay import ScreenCaptureOverlay
 
 
 class TestScreenCaptureOverlayState:
@@ -487,7 +487,9 @@ class TestTempClipFileManagement:
             assert not p.exists()
 
     def test_pixmap_to_png_returns_bytes(self, qapp):
-        from vibeocr.widgets.screen_capture_overlay import ScreenCaptureOverlay as SCO
+        from vibeocr.classic.widgets.screen_capture_overlay import (
+            ScreenCaptureOverlay as SCO,
+        )
 
         pixmap = QPixmap(8, 8)
         pixmap.fill(Qt.GlobalColor.red)

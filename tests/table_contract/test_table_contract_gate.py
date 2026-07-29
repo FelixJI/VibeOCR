@@ -12,10 +12,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from vibeocr.contracts.tables import TableModelV1
-from vibeocr.models import ocr_result_from_payload, ocr_result_to_payload
-from vibeocr.services.export_service import ExportService
-from vibeocr.tables.html_adapter import table_model_from_html
+from vibeocr.backend.models import ocr_result_from_payload, ocr_result_to_payload
+from vibeocr.backend.services.export_service import ExportService
+from vibeocr.backend.tables.html_adapter import table_model_from_html
+from vibeocr.runtime_contracts.contracts.tables import TableModelV1
 
 REPO_ROOT = Path(__file__).parents[2]
 FIXTURE_ROOT = REPO_ROOT / "tests" / "fixtures" / "table_contract" / "v1"
@@ -138,14 +138,14 @@ def _result_from_provider_fixture(fixture: dict):
     payload = fixture["source"]["provider_payload"]
     if provider.startswith("mineru-"):
         # MinerU response -> OCRResult is the service's established adapter seam.
-        from vibeocr.services.mineru_service import MinerUService
+        from vibeocr.backend.services.mineru_service import MinerUService
 
         # 与既有 MinerU service contract tests 一致：只实例化转换器，不执行
         # Singleton 的 API 进程启动副作用，保证此门禁完全离线。
         service = MinerUService.__new__(MinerUService)
         return service._build_ocr_result(payload, "fixture.pdf", data=None)
     if provider == "paddleocr-table-recognition":
-        from vibeocr.core.pipelines.pipeline_table import (
+        from vibeocr.backend.core.pipelines.pipeline_table import (
             TABLE_RECOGNITION_SPEC,
             TableRecognitionOptions,
         )
@@ -154,7 +154,7 @@ def _result_from_provider_fixture(fixture: dict):
             _FixtureService([payload]), None, TableRecognitionOptions()
         )
     if provider == "paddleocr-pp-structure":
-        from vibeocr.core.pipelines.pipeline_pp_structure import (
+        from vibeocr.backend.core.pipelines.pipeline_pp_structure import (
             PP_STRUCTURE_V3_SPEC,
             PPStructureV3Options,
         )
@@ -167,7 +167,7 @@ def _result_from_provider_fixture(fixture: dict):
             _FixtureService([response]), None, PPStructureV3Options()
         )
     if provider == "paddleocr-vl":
-        from vibeocr.core.pipelines.pipeline_paddlocr_vl import (
+        from vibeocr.backend.core.pipelines.pipeline_paddlocr_vl import (
             PADDLEOCR_VL_SPEC,
             PaddleOCRVLOptions,
         )
@@ -198,11 +198,11 @@ def test_winui_manifest_resolves_distribution_from_wheel_metadata(tmp_path: Path
     verifier = _load_verifier()
     backend = tmp_path / "backend"
     backend.mkdir()
-    wheel = backend / "vibeocr_contracts_py-1.0-py3-none-any.whl"
+    wheel = backend / "vibeocr_runtime_contracts-1.0-py3-none-any.whl"
     with zipfile.ZipFile(wheel, "w") as archive:
         archive.writestr(
-            "vibeocr_contracts_py-1.0.dist-info/METADATA",
-            "Metadata-Version: 2.1\nName: vibeocr-contracts-py\nVersion: 1.0\n",
+            "vibeocr_runtime_contracts-1.0.dist-info/METADATA",
+            "Metadata-Version: 2.1\nName: vibeocr-runtime-contracts\nVersion: 1.0\n",
         )
     manifest = {
         "python_wheels": [
@@ -216,7 +216,7 @@ def test_winui_manifest_resolves_distribution_from_wheel_metadata(tmp_path: Path
         json.dumps(manifest), encoding="utf-8"
     )
 
-    verifier._verify_product_manifest(tmp_path, {"vibeocr-contracts-py": wheel})
+    verifier._verify_product_manifest(tmp_path, {"vibeocr-runtime-contracts": wheel})
 
 
 def test_product_manifest_must_bind_every_packaged_wheel(tmp_path: Path):
@@ -224,7 +224,7 @@ def test_product_manifest_must_bind_every_packaged_wheel(tmp_path: Path):
     backend = tmp_path / "backend"
     backend.mkdir()
     wheels = {}
-    for distribution in ("vibeocr-contracts-py", "vibeocr-client-py"):
+    for distribution in ("vibeocr-runtime-contracts", "vibeocr-backend"):
         normalized = distribution.replace("-", "_")
         wheel = backend / f"{normalized}-1.0-py3-none-any.whl"
         with zipfile.ZipFile(wheel, "w") as archive:
@@ -233,7 +233,7 @@ def test_product_manifest_must_bind_every_packaged_wheel(tmp_path: Path):
                 (f"Metadata-Version: 2.1\nName: {distribution}\nVersion: 1.0\n"),
             )
         wheels[distribution] = wheel
-    contracts_wheel = wheels["vibeocr-contracts-py"]
+    contracts_wheel = wheels["vibeocr-runtime-contracts"]
     (tmp_path / "product-manifest.json").write_text(
         json.dumps(
             {

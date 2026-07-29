@@ -1,7 +1,7 @@
 # tests/models/test_text_block_options.py
 """TextBlockOptions 数据结构测试"""
 
-from vibeocr.models.text_block_options import (
+from vibeocr.backend.models.text_block_options import (
     LINE_MODE_KEEP,
     LINE_MODE_MERGE,
     LINE_MODE_SMART,

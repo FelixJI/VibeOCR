@@ -20,8 +20,8 @@ import pytest
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QWidget
 
-from vibeocr.ui.ui_main_window import Ui_MainWindowWidget
-from vibeocr.views.settings_page_controller import SettingsPageController
+from vibeocr.classic.ui.ui_main_window import Ui_MainWindowWidget
+from vibeocr.classic.views.settings_page_controller import SettingsPageController
 
 
 class _ImmediateInvalidationEmitter(QObject):
@@ -53,18 +53,18 @@ def controller(qtbot, tmp_path):
     install_cb = MagicMock(name="install_succeeded_callback")
 
     with (
-        patch("vibeocr.widgets.backend_options_widget.env_manager") as mock_em,
+        patch("vibeocr.classic.widgets.backend_options_widget.env_manager") as mock_em,
         patch(
-            "vibeocr.widgets.backend_options_widget.load_cache",
+            "vibeocr.classic.widgets.backend_options_widget.load_cache",
             return_value=None,
         ),
         patch(
-            "vibeocr.views.settings_page_controller.is_cache_valid",
+            "vibeocr.classic.views.settings_page_controller.is_cache_valid",
             return_value=(False, None),
         ),
-        patch("vibeocr.managers.config_manager.ConfigManager") as mock_cm,
+        patch("vibeocr.classic.managers.config_manager.ConfigManager") as mock_cm,
         patch(
-            "vibeocr.core.pipelines.get_preloadable_pipelines",
+            "vibeocr.backend.core.pipelines.get_preloadable_pipelines",
             return_value=[],
         ),
     ):
@@ -118,7 +118,7 @@ def test_open_reinstall_dialog_connects_install_succeeded(controller, monkeypatc
             pass
 
     monkeypatch.setattr(
-        "vibeocr.views.settings_page_controller.BackendChoiceDialog", FakeDialog
+        "vibeocr.classic.views.settings_page_controller.BackendChoiceDialog", FakeDialog
     )
 
     ctrl._open_reinstall_dialog()
@@ -150,7 +150,7 @@ def test_install_succeeded_emission_invokes_callback(controller, monkeypatch):
             pass
 
     monkeypatch.setattr(
-        "vibeocr.views.settings_page_controller.BackendChoiceDialog", FakeDialog
+        "vibeocr.classic.views.settings_page_controller.BackendChoiceDialog", FakeDialog
     )
 
     ctrl._open_reinstall_dialog()
@@ -196,7 +196,7 @@ def test_cancelled_finished_still_refreshes_env(controller, monkeypatch):
             pass
 
     monkeypatch.setattr(
-        "vibeocr.views.settings_page_controller.BackendChoiceDialog", FakeDialog
+        "vibeocr.classic.views.settings_page_controller.BackendChoiceDialog", FakeDialog
     )
 
     ctrl._open_reinstall_dialog()

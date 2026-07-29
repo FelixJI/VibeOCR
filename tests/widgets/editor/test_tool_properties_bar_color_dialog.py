@@ -10,8 +10,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QColorDialog
 
-from vibeocr.ui import theme
-from vibeocr.widgets.editor.tool_properties_bar import ToolPropertiesBar
+from vibeocr.classic.ui import theme
+from vibeocr.classic.widgets.editor.tool_properties_bar import ToolPropertiesBar
 
 
 class TestColorDialogNonNative:

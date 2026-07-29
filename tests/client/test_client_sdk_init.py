@@ -3,7 +3,7 @@
 
 
 def test_get_output_filename_known_formats():
-    from vibeocr.client import get_output_filename
+    from vibeocr.classic.client import get_output_filename
 
     assert get_output_filename("report.pdf", "markdown") == "report.md"
     assert get_output_filename("scan.png", "docx") == "scan.docx"
@@ -11,21 +11,21 @@ def test_get_output_filename_known_formats():
 
 
 def test_get_output_filename_unknown_falls_back_to_txt():
-    from vibeocr.client import get_output_filename
+    from vibeocr.classic.client import get_output_filename
 
     assert get_output_filename("file.pdf", "pdf") == "file.txt"
     assert get_output_filename("file.pdf", "") == "file.txt"
 
 
 def test_get_unique_output_path_no_conflict(tmp_path):
-    from vibeocr.client import get_unique_output_path
+    from vibeocr.classic.client import get_unique_output_path
 
     p = tmp_path / "out.md"
     assert get_unique_output_path(p) == p
 
 
 def test_get_unique_output_path_with_conflict(tmp_path):
-    from vibeocr.client import get_unique_output_path
+    from vibeocr.classic.client import get_unique_output_path
 
     (tmp_path / "out.md").write_text("old")
     result = get_unique_output_path(tmp_path / "out.md")
@@ -33,7 +33,7 @@ def test_get_unique_output_path_with_conflict(tmp_path):
 
 
 def test_get_unique_output_path_multiple_conflicts(tmp_path):
-    from vibeocr.client import get_unique_output_path
+    from vibeocr.classic.client import get_unique_output_path
 
     (tmp_path / "r.md").write_text("a")
     (tmp_path / "r_1.md").write_text("b")
@@ -44,7 +44,7 @@ def test_get_unique_output_path_multiple_conflicts(tmp_path):
 
 def test_shutdown_backend_client_is_noop():
     """shutdown_backend_client 是空操作（v2 supervisor 拥有后端）。"""
-    from vibeocr.client import shutdown_backend_client
+    from vibeocr.classic.client import shutdown_backend_client
 
     # 仅验证可调用且不抛
     shutdown_backend_client()
@@ -52,7 +52,7 @@ def test_shutdown_backend_client_is_noop():
 
 def test_sync_backend_error_is_runtime_error():
     """SyncBackendError 继承 RuntimeError（legacy→v2 兼容）。"""
-    from vibeocr.client.errors import SyncBackendError
+    from vibeocr.classic.errors import SyncBackendError
 
     err = SyncBackendError("boom")
     assert isinstance(err, RuntimeError)

@@ -7,7 +7,7 @@ contract tests 对同一 fake HTTP server 全绿"). A future WinUI mirror will
 reuse the same payload contract.
 
 The fake is a plain awaitable object implementing the
-:class:`vibeocr.supervisor.client.SupervisorClient` surface — no real socket
+:class:`vibeocr.runtime_client.client.SupervisorClient` surface — no real socket
 or subprocess. It models a supervisor that auto-completes every submitted
 job and records calls for assertions.
 """
@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from vibeocr.protocol.v2 import (
+from vibeocr.runtime_contracts import (
     CancelMode,
     ItemOutcome,
     ItemState,

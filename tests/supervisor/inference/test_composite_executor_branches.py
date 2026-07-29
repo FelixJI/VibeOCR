@@ -9,7 +9,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from vibeocr.protocol.v2 import (
+from vibeocr.backend.supervisor.inference.composite_executor import CompositeExecutor
+from vibeocr.runtime_contracts import (
     CancelMode,
     JobKind,
     JobState,
@@ -17,7 +18,6 @@ from vibeocr.protocol.v2 import (
     ResidencyStatus,
     SettingsSnapshot,
 )
-from vibeocr.supervisor.inference.composite_executor import CompositeExecutor
 
 
 @dataclass

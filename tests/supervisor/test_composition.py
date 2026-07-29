@@ -15,8 +15,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     import pytest
 
-from vibeocr.supervisor import composition
-from vibeocr.supervisor.composition import (
+from vibeocr.backend.supervisor import composition
+from vibeocr.backend.supervisor.composition import (
     _mineru_available,
     _MinerUServiceLifecycle,
     _NullExecutor,
@@ -52,7 +52,7 @@ def _record_factory(monkeypatch, *, state) -> Any:
 
 
 def test_null_executor_fails_non_terminal_job() -> None:
-    from vibeocr.protocol.v2 import JobState
+    from vibeocr.runtime_contracts import JobState
 
     rec, calls = _record_factory(None, state=JobState.QUEUED)
     _NullExecutor().execute(rec, [])
@@ -61,7 +61,7 @@ def test_null_executor_fails_non_terminal_job() -> None:
 
 
 def test_null_executor_skips_already_terminal_job() -> None:
-    from vibeocr.protocol.v2 import JobState
+    from vibeocr.runtime_contracts import JobState
 
     rec, calls = _record_factory(None, state=JobState.COMPLETED)
     _NullExecutor().execute(rec, [])
@@ -69,7 +69,7 @@ def test_null_executor_skips_already_terminal_job() -> None:
 
 
 def test_null_executor_passthrough_methods_return_defaults() -> None:
-    from vibeocr.protocol.v2 import CancelMode, ResidencyStatus, SettingsSnapshot
+    from vibeocr.runtime_contracts import CancelMode, ResidencyStatus, SettingsSnapshot
 
     ex = _NullExecutor()
     assert ex.cancel_mode_for(None) is CancelMode.COOPERATIVE
@@ -85,7 +85,7 @@ def test_null_executor_passthrough_methods_return_defaults() -> None:
 
 def test_null_executor_swallows_transition_error(monkeypatch) -> None:
     """The defensive except in execute() must not leak a transition failure."""
-    from vibeocr.protocol.v2 import JobState
+    from vibeocr.runtime_contracts import JobState
 
     class _BrokenRec:
         state = JobState.QUEUED
@@ -120,7 +120,7 @@ def test_build_supervisor_uses_null_executor_without_backends(
 def test_build_supervisor_keeps_existing_bootstrap_token(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from vibeocr.supervisor.bootstrap import BootstrapHandle
+    from vibeocr.backend.supervisor.bootstrap import BootstrapHandle
 
     monkeypatch.setattr(composition, "_paddle_available", lambda: False)
     monkeypatch.setattr(composition, "_mineru_available", lambda: False)
@@ -234,17 +234,17 @@ def test_build_supervisor_attaches_pdf_adapter_when_requested(
 
 def test_build_pdf_adapter_wraps_lazy_client(monkeypatch: pytest.MonkeyPatch) -> None:
     """``_build_pdf_adapter`` returns an adapter whose ``child_factory`` defers to PdfBackendClient."""
-    from vibeocr.supervisor.pdf.adapter import PdfProcessAdapter
+    from vibeocr.backend.supervisor.pdf.adapter import PdfProcessAdapter
 
     sentinel_client = object()
 
-    fake_client_module = types.ModuleType("vibeocr.services.pdf_backend_client")
+    fake_client_module = types.ModuleType("vibeocr.backend.services.pdf_backend_client")
     fake_client_module.PdfBackendClient = type(
         "PdfBackendClient",
         (),
         {"instance": staticmethod(lambda: sentinel_client)},
     )
-    monkeypatch.setitem(sys.modules, "vibeocr.services.pdf_backend_client", fake_client_module)
+    monkeypatch.setitem(sys.modules, "vibeocr.backend.services.pdf_backend_client", fake_client_module)
 
     adapter = composition._build_pdf_adapter()
     assert isinstance(adapter, PdfProcessAdapter)
@@ -262,9 +262,9 @@ def test_build_paddle_executor_wires_factory_and_clear_cache(
     """Cover the paddle executor builder and its inner factory + clear_cache."""
     sentinel_service = object()
 
-    fake_ocr_module = types.ModuleType("vibeocr.services.ocr_service")
+    fake_ocr_module = types.ModuleType("vibeocr.backend.services.ocr_service")
     fake_ocr_module.OCRService = lambda: sentinel_service  # type: ignore[assignment]
-    monkeypatch.setitem(sys.modules, "vibeocr.services.ocr_service", fake_ocr_module)
+    monkeypatch.setitem(sys.modules, "vibeocr.backend.services.ocr_service", fake_ocr_module)
 
     executor = composition._build_paddle_executor()
     # Calling adapter_factory() drives the lazy OCRService import + adapter wrap.
@@ -295,9 +295,9 @@ def test_paddle_clear_cache_runs_empty_cache_when_cuda_compiled(
     monkeypatch.setitem(sys.modules, "paddle.device.cuda", fake_cuda)
 
     sentinel_service = object()
-    fake_ocr_module = types.ModuleType("vibeocr.services.ocr_service")
+    fake_ocr_module = types.ModuleType("vibeocr.backend.services.ocr_service")
     fake_ocr_module.OCRService = lambda: sentinel_service  # type: ignore[assignment]
-    monkeypatch.setitem(sys.modules, "vibeocr.services.ocr_service", fake_ocr_module)
+    monkeypatch.setitem(sys.modules, "vibeocr.backend.services.ocr_service", fake_ocr_module)
 
     executor = composition._build_paddle_executor()
     executor._clear_cache()
@@ -320,9 +320,9 @@ def test_paddle_clear_cache_swallows_paddle_error(
     monkeypatch.setattr(builtins, "__import__", raise_importerror)
 
     sentinel_service = object()
-    fake_ocr_module = types.ModuleType("vibeocr.services.ocr_service")
+    fake_ocr_module = types.ModuleType("vibeocr.backend.services.ocr_service")
     fake_ocr_module.OCRService = lambda: sentinel_service  # type: ignore[assignment]
-    monkeypatch.setitem(sys.modules, "vibeocr.services.ocr_service", fake_ocr_module)
+    monkeypatch.setitem(sys.modules, "vibeocr.backend.services.ocr_service", fake_ocr_module)
 
     executor = composition._build_paddle_executor()
     # Must not raise even though the paddle import fails.
@@ -347,9 +347,9 @@ def test_paddle_clear_cache_skips_empty_cache_when_not_cuda_compiled(
     monkeypatch.setitem(sys.modules, "paddle.device", fake_device)
     monkeypatch.setitem(sys.modules, "paddle.device.cuda", fake_cuda)
 
-    fake_ocr_module = types.ModuleType("vibeocr.services.ocr_service")
+    fake_ocr_module = types.ModuleType("vibeocr.backend.services.ocr_service")
     fake_ocr_module.OCRService = lambda: object()
-    monkeypatch.setitem(sys.modules, "vibeocr.services.ocr_service", fake_ocr_module)
+    monkeypatch.setitem(sys.modules, "vibeocr.backend.services.ocr_service", fake_ocr_module)
 
     executor = composition._build_paddle_executor()
     executor._clear_cache()
@@ -362,11 +362,11 @@ def test_build_mineru_executor_wires_adapter_factory(
     """Cover the MinerU executor builder and its inner adapter_factory."""
     sentinel_service = object()
 
-    fake_mineru_module = types.ModuleType("vibeocr.services.mineru_service")
+    fake_mineru_module = types.ModuleType("vibeocr.backend.services.mineru_service")
     fake_mineru_module.MinerUService = type(
         "MinerUService", (), {"instance": staticmethod(lambda: sentinel_service)}
     )
-    monkeypatch.setitem(sys.modules, "vibeocr.services.mineru_service", fake_mineru_module)
+    monkeypatch.setitem(sys.modules, "vibeocr.backend.services.mineru_service", fake_mineru_module)
 
     executor = composition._build_mineru_executor()
     # Calling adapter_factory() drives the lazy MinerUService import + adapter wrap.
@@ -426,13 +426,13 @@ def test_build_composite_executor_mineru_only(monkeypatch: pytest.MonkeyPatch) -
 def test_mineru_lifecycle_start_invokes_singleton(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[str] = []
 
-    fake_module = types.ModuleType("vibeocr.services.mineru_service")
+    fake_module = types.ModuleType("vibeocr.backend.services.mineru_service")
     fake_module.MinerUService = type(
         "MinerUService",
         (),
         {"instance": staticmethod(lambda: calls.append("instance") or object())},
     )
-    monkeypatch.setitem(sys.modules, "vibeocr.services.mineru_service", fake_module)
+    monkeypatch.setitem(sys.modules, "vibeocr.backend.services.mineru_service", fake_module)
 
     _MinerUServiceLifecycle().start()
     assert calls == ["instance"]
@@ -445,11 +445,11 @@ def test_mineru_lifecycle_stop_invokes_shutdown(monkeypatch: pytest.MonkeyPatch)
         def shutdown(self):  # type: ignore[no-untyped-def]
             calls.append("shutdown")
 
-    fake_module = types.ModuleType("vibeocr.services.mineru_service")
+    fake_module = types.ModuleType("vibeocr.backend.services.mineru_service")
     fake_module.MinerUService = type(
         "MinerUService", (), {"instance": staticmethod(lambda: _Svc())}
     )
-    monkeypatch.setitem(sys.modules, "vibeocr.services.mineru_service", fake_module)
+    monkeypatch.setitem(sys.modules, "vibeocr.backend.services.mineru_service", fake_module)
 
     _MinerUServiceLifecycle().stop()
     assert calls == ["shutdown"]
@@ -462,11 +462,11 @@ def test_mineru_lifecycle_stop_swallows_shutdown_error(
         def shutdown(self):  # type: ignore[no-untyped-def]
             raise RuntimeError("wedged")
 
-    fake_module = types.ModuleType("vibeocr.services.mineru_service")
+    fake_module = types.ModuleType("vibeocr.backend.services.mineru_service")
     fake_module.MinerUService = type(
         "MinerUService", (), {"instance": staticmethod(lambda: _BrokenSvc())}
     )
-    monkeypatch.setitem(sys.modules, "vibeocr.services.mineru_service", fake_module)
+    monkeypatch.setitem(sys.modules, "vibeocr.backend.services.mineru_service", fake_module)
 
     # Must not raise.
     _MinerUServiceLifecycle().stop()

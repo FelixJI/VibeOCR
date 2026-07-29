@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from vibeocr.ipc.schemas import (
+from vibeocr.backend.ipc.schemas import (
     BatchAddTextLayerRequest,
     ModelDiff,
     PdfDocumentMirror,

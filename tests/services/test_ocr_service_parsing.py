@@ -16,8 +16,8 @@ from __future__ import annotations
 
 import pytest
 
-from vibeocr.models.ocr_result import OCRResult, TextBlock
-from vibeocr.services.ocr_service import OCRPreset, OCRService
+from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
+from vibeocr.backend.services.ocr_service import OCRPreset, OCRService
 
 
 def _make_service() -> OCRService:
@@ -424,7 +424,7 @@ class TestDecideEnableMkldnn:
             return (True, "safe")
 
         monkeypatch.setattr(
-            "vibeocr.utils.cpu_info.can_safely_enable_onednn", fake_probe
+            "vibeocr.backend.utils.cpu_info.can_safely_enable_onednn", fake_probe
         )
         assert OCRService._decide_enable_mkldnn("cpu") is True
         # 缓存生效：第二次不重新探测
@@ -439,7 +439,7 @@ class TestDecideEnableMkldnn:
             raise RuntimeError("probe failed")
 
         monkeypatch.setattr(
-            "vibeocr.utils.cpu_info.can_safely_enable_onednn", _raise
+            "vibeocr.backend.utils.cpu_info.can_safely_enable_onednn", _raise
         )
         assert OCRService._decide_enable_mkldnn("cpu") is False
         assert OCRService._onednn_safe_cache is False

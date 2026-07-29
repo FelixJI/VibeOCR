@@ -6,7 +6,10 @@ import threading
 
 from PySide6.QtCore import QThread, Signal
 
-from vibeocr.utils.dialog_workers import active_dialog_workers, track_dialog_worker
+from vibeocr.classic.utils.dialog_workers import (
+    active_dialog_workers,
+    track_dialog_worker,
+)
 
 
 class _WorkerWithBusinessTerminal(QThread):

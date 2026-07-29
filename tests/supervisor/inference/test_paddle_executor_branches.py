@@ -11,7 +11,17 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from vibeocr.protocol.v2 import (
+from vibeocr.backend.supervisor.inference.budgets import AdapterCapability, InputItem
+from vibeocr.backend.supervisor.inference.paddle_executor import (
+    AdapterExecutor,
+    PaddleExecutor,
+)
+from vibeocr.backend.supervisor.inference.recovery import (
+    RecoveryPolicy,
+)
+from vibeocr.backend.supervisor.jobs.registry import JobRegistry
+from vibeocr.backend.supervisor.jobs.staging import StagedInput
+from vibeocr.runtime_contracts import (
     CancelMode,
     ItemState,
     JobKind,
@@ -20,16 +30,6 @@ from vibeocr.protocol.v2 import (
     ResidencyStatus,
     SettingsSnapshot,
 )
-from vibeocr.supervisor.inference.budgets import AdapterCapability, InputItem
-from vibeocr.supervisor.inference.paddle_executor import (
-    AdapterExecutor,
-    PaddleExecutor,
-)
-from vibeocr.supervisor.inference.recovery import (
-    RecoveryPolicy,
-)
-from vibeocr.supervisor.jobs.registry import JobRegistry
-from vibeocr.supervisor.jobs.staging import StagedInput
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -48,7 +48,7 @@ def _png_bytes() -> bytes:
 
 
 def _make_job(registry: JobRegistry, items: int, *, kind=JobKind.RECOGNITION) -> Any:
-    from vibeocr.protocol.v2 import JobItem
+    from vibeocr.runtime_contracts import JobItem
 
     record = registry.create(
         kind=kind,
@@ -96,7 +96,9 @@ def test_adapter_property_calls_configure_settings_on_first_use(
 ) -> None:
     """When the adapter exposes ``configure_settings``, the executor calls it
     on first materialisation (lines 89-93)."""
-    from vibeocr.supervisor.inference.paddle_adapter import PaddlePipelineAdapter
+    from vibeocr.backend.supervisor.inference.paddle_adapter import (
+        PaddlePipelineAdapter,
+    )
 
     configure_calls: list[SettingsSnapshot] = []
 

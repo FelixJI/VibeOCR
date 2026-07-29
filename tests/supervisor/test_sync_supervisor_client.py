@@ -14,12 +14,12 @@ from unittest.mock import MagicMock
 import httpx
 import pytest
 
-from vibeocr.supervisor.sync_client import SyncSupervisorClient
+from vibeocr.runtime_client.sync_client import SyncSupervisorClient
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
-    from vibeocr.supervisor.client import SupervisorClient
+    from vibeocr.runtime_client.client import SupervisorClient
 
 
 # ---------------------------------------------------------------------------
@@ -29,8 +29,8 @@ if TYPE_CHECKING:
 
 def test_constructor_pins_loopback_via_inner_client() -> None:
     """Non-loopback base_url surfaces InferenceClientError from the inner client."""
-    from vibeocr.protocol.v2 import ErrorCode
-    from vibeocr.supervisor.errors import InferenceClientError
+    from vibeocr.runtime_client.errors import InferenceClientError
+    from vibeocr.runtime_contracts import ErrorCode
 
     with pytest.raises(InferenceClientError) as exc:
         SyncSupervisorClient(base_url="http://example.com", session_token="t")
@@ -76,7 +76,7 @@ def test_start_drives_aenter_on_background_loop(monkeypatch) -> None:
         return asyncio.new_event_loop().run_until_complete(coro)
 
     loop.run.side_effect = _drive
-    monkeypatch.setattr("vibeocr.supervisor.sync_client._get_bg_loop", lambda: loop)
+    monkeypatch.setattr("vibeocr.runtime_client.sync_client._get_bg_loop", lambda: loop)
 
     sync.start()
     assert sync._entered is True
@@ -112,7 +112,7 @@ def test_close_drives_aexit_and_resets_entered(monkeypatch) -> None:
         return asyncio.new_event_loop().run_until_complete(coro)
 
     loop.run.side_effect = _drive
-    monkeypatch.setattr("vibeocr.supervisor.sync_client._get_bg_loop", lambda: loop)
+    monkeypatch.setattr("vibeocr.runtime_client.sync_client._get_bg_loop", lambda: loop)
 
     sync.start()
     sync.close()
@@ -155,7 +155,7 @@ def test_delegates_all_business_methods(monkeypatch) -> None:
     loop = MagicMock()
     loop.run.side_effect = lambda coro: coro
 
-    monkeypatch.setattr("vibeocr.supervisor.sync_client._get_bg_loop", lambda: loop)
+    monkeypatch.setattr("vibeocr.runtime_client.sync_client._get_bg_loop", lambda: loop)
 
     # Build minimal protocol objects that .to_payload() etc. aren't called on
     # (submit/observe/command receive request objects; we just check the return
@@ -195,7 +195,7 @@ def test_submit_passes_attachments_through(monkeypatch) -> None:
     loop = MagicMock()
     loop.run.side_effect = lambda coro: coro
 
-    monkeypatch.setattr("vibeocr.supervisor.sync_client._get_bg_loop", lambda: loop)
+    monkeypatch.setattr("vibeocr.runtime_client.sync_client._get_bg_loop", lambda: loop)
 
     sentinel = object()
     inner.submit.return_value = sentinel
@@ -217,7 +217,7 @@ def test_command_default_args(monkeypatch) -> None:
     loop = MagicMock()
     loop.run.side_effect = lambda coro: coro
 
-    monkeypatch.setattr("vibeocr.supervisor.sync_client._get_bg_loop", lambda: loop)
+    monkeypatch.setattr("vibeocr.runtime_client.sync_client._get_bg_loop", lambda: loop)
 
     sentinel = object()
     inner.command.return_value = sentinel
@@ -253,8 +253,8 @@ def sync_supervisor_client(
 
 def test_sync_health_via_asgi(sync_supervisor_client: SyncSupervisorClient) -> None:
     """observe on a nonexistent job surfaces the typed error path through the wrapper."""
-    from vibeocr.protocol.v2 import JobRef
-    from vibeocr.supervisor.errors import InferenceClientError
+    from vibeocr.runtime_client.errors import InferenceClientError
+    from vibeocr.runtime_contracts import JobRef
 
     # Submit is covered in e2e; here we exercise observe on a missing job → error
     # surfaces through the sync wrapper's loop.run.

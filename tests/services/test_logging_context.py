@@ -4,7 +4,7 @@ import io
 import json
 import logging
 
-from vibeocr.logging_context import (
+from vibeocr.classic.logging_context import (
     JsonLogFormatter,
     configure_worker_stderr_logging,
     forward_worker_output_line,
@@ -137,7 +137,7 @@ def test_coerce_level_int_zero_or_negative_returns_fallback() -> None:
     """int<=0 时返回 fallback（line 118）。"""
     import logging
 
-    from vibeocr.logging_context import _coerce_level
+    from vibeocr.classic.logging_context import _coerce_level
 
     assert _coerce_level(0, logging.WARNING) == logging.WARNING
     assert _coerce_level(-5, logging.WARNING) == logging.WARNING
@@ -148,7 +148,7 @@ def test_coerce_level_unknown_type_returns_fallback() -> None:
     """非 int/str 类型返回 fallback（line 123）。"""
     import logging
 
-    from vibeocr.logging_context import _coerce_level
+    from vibeocr.classic.logging_context import _coerce_level
 
     assert _coerce_level(None, logging.WARNING) == logging.WARNING
     assert _coerce_level([1, 2], logging.WARNING) == logging.WARNING
@@ -158,7 +158,7 @@ def test_forward_worker_empty_line_returns_false() -> None:
     """空行/纯空白返回 False（line 140）。"""
     import logging
 
-    from vibeocr.logging_context import forward_worker_output_line
+    from vibeocr.classic.logging_context import forward_worker_output_line
 
     logger = logging.getLogger("test_empty")
     assert (
@@ -177,7 +177,7 @@ def test_forward_worker_empty_line_returns_false() -> None:
 
 def test_ui_status_extra_builds_dict() -> None:
     """ui_status_extra 构造 ui_status 标记 dict（line 184）。"""
-    from vibeocr.logging_context import ui_status_extra
+    from vibeocr.classic.logging_context import ui_status_extra
 
     result = ui_status_extra(tab="ocr", action="start")
     assert result["ui_status"] is True

@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import pytest
 from PySide6.QtWidgets import QApplication
 
-from vibeocr.widgets.result_view_widget import (
+from vibeocr.classic.widgets.result_view_widget import (
     BLOCK_BORDER_COLORS,
     BLOCK_TYPE_LABELS,
     _build_full_html,
@@ -186,7 +186,7 @@ class TestRenderTable:
         assert 'class="ocr-table"' in html
 
     def test_canonical_table_wins_over_stale_legacy_projection(self):
-        from vibeocr.contracts.tables import TableCellV1, TableModelV1
+        from vibeocr.runtime_contracts.contracts.tables import TableCellV1, TableModelV1
 
         table = TableModelV1(
             table_id="render-table",
@@ -633,7 +633,7 @@ class TestResultViewExportButtons:
 
     @pytest.fixture
     def widget(self, app, qtbot):
-        from vibeocr.widgets.result_view_widget import ResultViewWidget
+        from vibeocr.classic.widgets.result_view_widget import ResultViewWidget
 
         w = ResultViewWidget(utility_client=_ImmediateExportClient())
         qtbot.addWidget(w)
@@ -712,8 +712,8 @@ class TestResultViewExportButtons:
         self, widget, qtbot, monkeypatch
     ):
         """A pending aggregate rebuild must not expose the pre-edit copy payload."""
-        from vibeocr.models.ocr_result import TextBlock
-        from vibeocr.utils.export_jobs import snapshot_ocr_result
+        from vibeocr.backend.models.ocr_result import TextBlock
+        from vibeocr.classic.utils.export_jobs import snapshot_ocr_result
 
         result = self._make_result(markdown_text="old aggregate", raw_text="old aggregate")
         result.text_blocks = [TextBlock("old block", 1.0, None)]
@@ -740,7 +740,7 @@ class TestResultViewExportButtons:
         self, widget, qtbot, monkeypatch
     ):
         """Rich HTML and plain table payloads both reflect the accepted edit."""
-        from vibeocr.utils.export_jobs import snapshot_ocr_result
+        from vibeocr.classic.utils.export_jobs import snapshot_ocr_result
 
         result = self._make_result(markdown_text="old aggregate", raw_text="old aggregate")
         result.content_list = [
@@ -770,7 +770,7 @@ class TestResultViewExportButtons:
         self, widget, qtbot, monkeypatch
     ):
         from tests.qt_responsiveness import assert_qt_event_loop_responsive
-        from vibeocr.utils.export_jobs import snapshot_ocr_result
+        from vibeocr.classic.utils.export_jobs import snapshot_ocr_result
 
         result = self._make_result(markdown_text="old aggregate", raw_text="old aggregate")
         result.content_list = [
@@ -988,8 +988,8 @@ class TestResultViewExportButtons:
         修复前会先 display_result（token A）再 display_text_layout（token B），
         回调带旧 token A 触发 toast。
         """
-        from vibeocr.models.ocr_result import TextBlock
-        from vibeocr.models.text_block_options import TextBlockOptions
+        from vibeocr.backend.models.ocr_result import TextBlock
+        from vibeocr.backend.models.text_block_options import TextBlockOptions
 
         class FakePage:
             def __init__(self, widget_ref):
@@ -1089,14 +1089,14 @@ class TestResultViewExportButtons:
         """导出 Word：mock 另存为对话框，断言生成 .docx 文件。"""
         result = self._make_result(raw_text="导出测试内容")
         widget._current_result = result
-        from vibeocr.utils.export_jobs import snapshot_ocr_result
+        from vibeocr.classic.utils.export_jobs import snapshot_ocr_result
 
         widget._current_snapshot = snapshot_ocr_result(result)
 
         out = tmp_path / "out.docx"
         # mock QFileDialog.getSaveFileName 返回 (路径, 过滤)
         monkeypatch.setattr(
-            "vibeocr.widgets.result_view_widget.QFileDialog",
+            "vibeocr.classic.widgets.result_view_widget.QFileDialog",
             type(
                 "F",
                 (),
@@ -1106,7 +1106,7 @@ class TestResultViewExportButtons:
         )
         # mock QMessageBox 避免弹窗阻塞
         monkeypatch.setattr(
-            "vibeocr.widgets.result_view_widget.QMessageBox",
+            "vibeocr.classic.widgets.result_view_widget.QMessageBox",
             type(
                 "M",
                 (),
@@ -1127,13 +1127,13 @@ class TestResultViewExportButtons:
         """导出 Excel：断言生成 .xlsx 文件。"""
         result = self._make_result(raw_text="表格导出测试")
         widget._current_result = result
-        from vibeocr.utils.export_jobs import snapshot_ocr_result
+        from vibeocr.classic.utils.export_jobs import snapshot_ocr_result
 
         widget._current_snapshot = snapshot_ocr_result(result)
 
         out = tmp_path / "out.xlsx"
         monkeypatch.setattr(
-            "vibeocr.widgets.result_view_widget.QFileDialog",
+            "vibeocr.classic.widgets.result_view_widget.QFileDialog",
             type(
                 "F",
                 (),
@@ -1142,7 +1142,7 @@ class TestResultViewExportButtons:
             raising=False,
         )
         monkeypatch.setattr(
-            "vibeocr.widgets.result_view_widget.QMessageBox",
+            "vibeocr.classic.widgets.result_view_widget.QMessageBox",
             type(
                 "M",
                 (),
@@ -1163,12 +1163,12 @@ class TestResultViewExportButtons:
         """用户取消对话框（返回空路径）不报错、不生成文件。"""
         result = self._make_result(raw_text="取消测试")
         widget._current_result = result
-        from vibeocr.utils.export_jobs import snapshot_ocr_result
+        from vibeocr.classic.utils.export_jobs import snapshot_ocr_result
 
         widget._current_snapshot = snapshot_ocr_result(result)
 
         monkeypatch.setattr(
-            "vibeocr.widgets.result_view_widget.QFileDialog",
+            "vibeocr.classic.widgets.result_view_widget.QFileDialog",
             type("F", (), {"getSaveFileName": staticmethod(lambda *a, **k: ("", ""))}),
             raising=False,
         )
@@ -1185,13 +1185,13 @@ class TestResultViewExportButtons:
         """ExportService.export 返回 False 时走 warning 分支，不抛异常。"""
         result = self._make_result(raw_text="失败测试")
         widget._current_result = result
-        from vibeocr.utils.export_jobs import snapshot_ocr_result
+        from vibeocr.classic.utils.export_jobs import snapshot_ocr_result
 
         widget._current_snapshot = snapshot_ocr_result(result)
 
         out = tmp_path / "fail.docx"
         monkeypatch.setattr(
-            "vibeocr.widgets.result_view_widget.QFileDialog",
+            "vibeocr.classic.widgets.result_view_widget.QFileDialog",
             type(
                 "F",
                 (),
@@ -1200,7 +1200,7 @@ class TestResultViewExportButtons:
             raising=False,
         )
         monkeypatch.setattr(
-            "vibeocr.widgets.result_view_widget.QMessageBox",
+            "vibeocr.classic.widgets.result_view_widget.QMessageBox",
             type(
                 "M",
                 (),
@@ -1234,7 +1234,7 @@ class TestResultViewPrewarmWebEngine:
 
     @pytest.fixture
     def widget(self, app, qtbot):
-        from vibeocr.widgets.result_view_widget import ResultViewWidget
+        from vibeocr.classic.widgets.result_view_widget import ResultViewWidget
 
         w = ResultViewWidget(utility_client=_ImmediateExportClient())
         qtbot.addWidget(w)

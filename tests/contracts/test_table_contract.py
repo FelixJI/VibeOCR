@@ -8,7 +8,7 @@ import pytest
 from jsonschema import validate
 from jsonschema.exceptions import ValidationError
 
-from vibeocr.contracts.tables import (
+from vibeocr.runtime_contracts.contracts.tables import (
     MAX_TABLE_CELLS,
     CoordinateSpace,
     TableCellV1,
@@ -102,7 +102,7 @@ def test_table_model_payload_matches_packaged_json_schema():
         column_count=1,
         cells=(TableCellV1(cell_id="r0c0", row=0, column=0, text="value"),),
     )
-    schema_path = resources.files("vibeocr.contracts").joinpath(
+    schema_path = resources.files("vibeocr.runtime_contracts.contracts").joinpath(
         "schemas/table-v1.schema.json"
     )
 
@@ -152,7 +152,7 @@ def test_table_model_roundtrip_preserves_geometry_and_provenance():
 def test_table_payload_rejects_every_shape_rejected_by_schema(mutate):
     payload = deepcopy(_valid_payload())
     mutate(payload)
-    schema_path = resources.files("vibeocr.contracts").joinpath(
+    schema_path = resources.files("vibeocr.runtime_contracts.contracts").joinpath(
         "schemas/table-v1.schema.json"
     )
     schema = json.loads(schema_path.read_text())

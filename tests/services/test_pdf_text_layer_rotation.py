@@ -15,8 +15,8 @@
 import fitz
 import pytest
 
-from vibeocr.models.ocr_result import OCRResult, TextBlock
-from vibeocr.services.pdf_service import PdfService
+from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
+from vibeocr.backend.services.pdf_service import PdfService
 
 
 def _make_blank_rotated_pdf(path, src_width, src_height, rotate):

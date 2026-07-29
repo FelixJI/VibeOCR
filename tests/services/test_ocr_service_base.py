@@ -5,7 +5,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from vibeocr.services.ocr_service_base import OCRServiceBase
+from vibeocr.backend.services.ocr_service_base import OCRServiceBase
 
 
 class ConcreteOCRService(OCRServiceBase):

@@ -13,15 +13,14 @@ from unittest.mock import MagicMock
 
 ROOT = Path(__file__).resolve().parents[1]
 SNAPSHOT = (
-    ROOT / "packages/vibeocr-contracts-py/src/vibeocr/protocol/v2/openapi.snapshot.json"
+    ROOT / "packages/vibeocr-contracts-py/src/vibeocr/runtime_contracts/openapi.snapshot.json"
 )
 FORMAL_OPENAPI = (
-    ROOT / "packages/vibeocr-contracts-py/src/vibeocr/protocol/v2/openapi.yaml"
+    ROOT / "packages/vibeocr-contracts-py/src/vibeocr/runtime_contracts/openapi.yaml"
 )
 PYTHON_CLIENT_FILES = (
-    ROOT / "packages/vibeocr-runtime-client-py/src/vibeocr/protocol/v2/client.py",
-    ROOT / "packages/vibeocr-client-py/src/vibeocr/supervisor/client.py",
-    ROOT / "packages/vibeocr-client-py/src/vibeocr/supervisor/pdf_client.py",
+    ROOT / "packages/vibeocr-runtime-client-py/src/vibeocr/runtime_client/client.py",
+    ROOT / "apps/vibeocr-pyside/src/vibeocr/classic/pdf_client.py",
 )
 CSHARP_CLIENT_FILES = tuple(
     ROOT.joinpath("src/dotnet/VibeOCR.Platform/Inference").glob("*HttpClient.cs")
@@ -30,13 +29,15 @@ CSHARP_CLIENT_FILES = tuple(
 for source in (
     ROOT / "packages/vibeocr-contracts-py/src",
     ROOT / "packages/vibeocr-runtime-client-py/src",
-    ROOT / "packages/vibeocr-client-py/src",
     ROOT / "packages/vibeocr-backend/src",
 ):
     sys.path.insert(0, str(source))
 
-from vibeocr.supervisor.app import create_app  # noqa: E402
-from vibeocr.supervisor.module import SupervisorModule, SupervisorOptions  # noqa: E402
+from vibeocr.backend.supervisor.app import create_app  # noqa: E402
+from vibeocr.backend.supervisor.module import (  # noqa: E402
+    SupervisorModule,
+    SupervisorOptions,
+)
 
 
 def _operations(document: dict) -> dict[tuple[str, str], dict]:

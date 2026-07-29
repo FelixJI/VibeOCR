@@ -9,14 +9,14 @@ from pathlib import Path
 
 import pytest
 
-from vibeocr.application.contracts import (
+from vibeocr.backend.application.contracts import (
     CancelToken,
     PdfApplication,
     PdfError,
     PdfOpenRequest,
     PdfSessionDto,
 )
-from vibeocr.application.pdf_facade import PdfFacade
+from vibeocr.backend.application.pdf_facade import PdfFacade
 
 
 class _FakePdfAdapter:

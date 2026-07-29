@@ -13,9 +13,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 from PySide6.QtWidgets import QGroupBox, QListWidget, QPushButton, QWidget
 
-from vibeocr.ui.ui_main_window import Ui_MainWindowWidget
-from vibeocr.views.settings_page_controller import SettingsPageController
-from vibeocr.widgets.backend_options_widget import BackendOptionsWidget
+from vibeocr.classic.ui.ui_main_window import Ui_MainWindowWidget
+from vibeocr.classic.views.settings_page_controller import SettingsPageController
+from vibeocr.classic.widgets.backend_options_widget import BackendOptionsWidget
 
 
 @pytest.fixture
@@ -32,18 +32,18 @@ def controller(qtbot, tmp_path):
     ui.setupUi(host)
 
     with (
-        patch("vibeocr.widgets.backend_options_widget.env_manager") as mock_em,
+        patch("vibeocr.classic.widgets.backend_options_widget.env_manager") as mock_em,
         patch(
-            "vibeocr.widgets.backend_options_widget.load_cache",
+            "vibeocr.classic.widgets.backend_options_widget.load_cache",
             return_value=None,
         ),
         patch(
-            "vibeocr.views.settings_page_controller.is_cache_valid",
+            "vibeocr.classic.views.settings_page_controller.is_cache_valid",
             return_value=(False, None),
         ),
-        patch("vibeocr.managers.config_manager.ConfigManager") as mock_cm,
+        patch("vibeocr.classic.managers.config_manager.ConfigManager") as mock_cm,
         patch(
-            "vibeocr.core.pipelines.get_preloadable_pipelines",
+            "vibeocr.backend.core.pipelines.get_preloadable_pipelines",
             return_value=[],
         ),
     ):

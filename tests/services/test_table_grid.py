@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 
-from vibeocr.services.ocr_service import normalize_table_html
+from vibeocr.backend.services.ocr_service import normalize_table_html
 
 
 class TestNormalizeTableHtml:

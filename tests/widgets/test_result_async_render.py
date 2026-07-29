@@ -30,7 +30,7 @@ def _result(marker: str):
 
 
 def test_slow_complex_build_keeps_qt_responsive(qapp, qtbot, monkeypatch):
-    module = import_module("vibeocr.widgets.result_view_widget")
+    module = import_module("vibeocr.classic.widgets.result_view_widget")
 
     widget = module.ResultViewWidget()
     qtbot.addWidget(widget)
@@ -62,7 +62,7 @@ def test_slow_complex_build_keeps_qt_responsive(qapp, qtbot, monkeypatch):
 
 
 def test_rapid_display_discards_slow_old_generation(qapp, qtbot, monkeypatch):
-    module = import_module("vibeocr.widgets.result_view_widget")
+    module = import_module("vibeocr.classic.widgets.result_view_widget")
 
     widget = module.ResultViewWidget()
     qtbot.addWidget(widget)
@@ -92,7 +92,7 @@ def test_rapid_display_discards_slow_old_generation(qapp, qtbot, monkeypatch):
 
 
 def test_close_does_not_wait_and_drops_late_render(qapp, qtbot, monkeypatch):
-    module = import_module("vibeocr.widgets.result_view_widget")
+    module = import_module("vibeocr.classic.widgets.result_view_widget")
 
     widget = module.ResultViewWidget()
     qtbot.addWidget(widget)
@@ -121,7 +121,7 @@ def test_close_does_not_wait_and_drops_late_render(qapp, qtbot, monkeypatch):
 
 
 def test_image_base64_is_built_away_from_gui_thread(qapp, qtbot, monkeypatch):
-    module = import_module("vibeocr.widgets.result_view_widget")
+    module = import_module("vibeocr.classic.widgets.result_view_widget")
 
     widget = module.ResultViewWidget()
     qtbot.addWidget(widget)
@@ -150,7 +150,7 @@ def test_image_base64_is_built_away_from_gui_thread(qapp, qtbot, monkeypatch):
 
 
 def test_display_result_uses_submission_snapshot(qapp, qtbot, monkeypatch):
-    module = import_module("vibeocr.widgets.result_view_widget")
+    module = import_module("vibeocr.classic.widgets.result_view_widget")
 
     widget = module.ResultViewWidget()
     qtbot.addWidget(widget)
@@ -187,7 +187,7 @@ def test_display_result_uses_submission_snapshot(qapp, qtbot, monkeypatch):
 
 def test_display_result_detaches_only_in_worker_stable_read(qapp, qtbot, monkeypatch):
     """Large source detachment must stay off-GUI and require two equal reads."""
-    module = import_module("vibeocr.widgets.result_view_widget")
+    module = import_module("vibeocr.classic.widgets.result_view_widget")
     from PySide6.QtCore import QThread
 
     widget = module.ResultViewWidget()
@@ -215,8 +215,8 @@ def test_display_result_detaches_only_in_worker_stable_read(qapp, qtbot, monkeyp
 
 
 def test_stable_capture_never_accepts_a_mixed_source_revision(monkeypatch):
-    module = import_module("vibeocr.widgets.result_view_widget")
-    from vibeocr.utils.export_jobs import snapshot_ocr_result
+    module = import_module("vibeocr.classic.widgets.result_view_widget")
+    from vibeocr.classic.utils.export_jobs import snapshot_ocr_result
 
     mixed = snapshot_ocr_result(
         _result("mixed"), include_content_list=True, include_images=True
@@ -242,9 +242,9 @@ def test_stable_capture_never_accepts_a_mixed_source_revision(monkeypatch):
 def test_stable_compare_is_structural_and_does_not_pickle():
     import inspect
 
-    module = import_module("vibeocr.widgets.result_view_widget")
-    from vibeocr.models.ocr_result import TextBlock
-    from vibeocr.utils.export_jobs import snapshot_ocr_result
+    module = import_module("vibeocr.classic.widgets.result_view_widget")
+    from vibeocr.backend.models.ocr_result import TextBlock
+    from vibeocr.classic.utils.export_jobs import snapshot_ocr_result
 
     source = SimpleNamespace(
         raw_text="raw",
@@ -280,7 +280,7 @@ def test_stable_compare_is_structural_and_does_not_pickle():
 
 
 def test_stable_compare_rejects_unknown_always_equal_values():
-    module = import_module("vibeocr.widgets.result_view_widget")
+    module = import_module("vibeocr.classic.widgets.result_view_widget")
 
     class AlwaysEqual:
         def __init__(self, state):
@@ -296,8 +296,8 @@ def test_stable_compare_rejects_unknown_always_equal_values():
 
 
 def test_stable_compare_rejects_unknown_identity_preserved_by_deepcopy():
-    module = import_module("vibeocr.widgets.result_view_widget")
-    from vibeocr.utils.export_jobs import snapshot_ocr_result
+    module = import_module("vibeocr.classic.widgets.result_view_widget")
+    from vibeocr.classic.utils.export_jobs import snapshot_ocr_result
 
     class IdentityDeepcopy:
         def __deepcopy__(self, _memo):
@@ -318,7 +318,7 @@ def test_stable_compare_rejects_unknown_identity_preserved_by_deepcopy():
 
 
 def test_stable_compare_rejects_unknown_dict_keys_without_calling_eq():
-    module = import_module("vibeocr.widgets.result_view_widget")
+    module = import_module("vibeocr.classic.widgets.result_view_widget")
 
     class UnknownKey:
         def __hash__(self):
@@ -334,9 +334,12 @@ def test_stable_compare_rejects_unknown_dict_keys_without_calling_eq():
 
 
 def test_copy_rebuild_cancels_during_large_field_loop():
-    module = import_module("vibeocr.widgets.result_view_widget")
-    from vibeocr.models.ocr_result import TextBlock
-    from vibeocr.utils.export_jobs import ExportJobCancelled, snapshot_ocr_result
+    module = import_module("vibeocr.classic.widgets.result_view_widget")
+    from vibeocr.backend.models.ocr_result import TextBlock
+    from vibeocr.classic.utils.export_jobs import (
+        ExportJobCancelled,
+        snapshot_ocr_result,
+    )
 
     source = SimpleNamespace(
         raw_text="old",
@@ -368,9 +371,9 @@ def test_copy_rebuild_cancels_during_large_field_loop():
 def test_50k_result_submissions_stay_under_combined_gui_budget(
     qapp, qtbot, monkeypatch
 ):
-    module = import_module("vibeocr.widgets.result_view_widget")
-    from vibeocr.models.ocr_result import TextBlock
-    from vibeocr.models.text_block_options import TextBlockOptions
+    module = import_module("vibeocr.classic.widgets.result_view_widget")
+    from vibeocr.backend.models.ocr_result import TextBlock
+    from vibeocr.backend.models.text_block_options import TextBlockOptions
 
     widget = module.ResultViewWidget()
     qtbot.addWidget(widget)
@@ -401,7 +404,7 @@ def test_50k_result_submissions_stay_under_combined_gui_budget(
 
 
 def test_old_document_edit_is_rejected_after_result_switch(qapp, qtbot, monkeypatch):
-    module = import_module("vibeocr.widgets.result_view_widget")
+    module = import_module("vibeocr.classic.widgets.result_view_widget")
 
     widget = module.ResultViewWidget()
     qtbot.addWidget(widget)
@@ -427,7 +430,7 @@ def test_old_document_edit_is_rejected_after_result_switch(qapp, qtbot, monkeypa
 
 
 def test_stable_table_cell_bridge_rejects_stale_document(qapp):
-    module = import_module("vibeocr.widgets.result_view_widget")
+    module = import_module("vibeocr.classic.widgets.result_view_widget")
     bridge = module._Bridge()
     edits = []
     bridge.tableCellEdited.connect(
@@ -446,9 +449,9 @@ def test_stable_table_cell_bridge_rejects_stale_document(qapp):
 
 
 def test_snapshot_detaches_and_validates_canonical_table():
-    from vibeocr.contracts.tables import TableCellV1, TableModelV1
-    from vibeocr.models.ocr_result import OCRResult
-    from vibeocr.utils.export_jobs import snapshot_ocr_result
+    from vibeocr.backend.models.ocr_result import OCRResult
+    from vibeocr.classic.utils.export_jobs import snapshot_ocr_result
+    from vibeocr.runtime_contracts.contracts.tables import TableCellV1, TableModelV1
 
     table = TableModelV1(
         table_id="snapshot",
@@ -483,7 +486,7 @@ def test_snapshot_detaches_and_validates_canonical_table():
 def test_rendered_token_waits_for_loaded_document_confirmation(
     qapp, qtbot, monkeypatch
 ):
-    module = import_module("vibeocr.widgets.result_view_widget")
+    module = import_module("vibeocr.classic.widgets.result_view_widget")
 
     widget = module.ResultViewWidget()
     qtbot.addWidget(widget)
@@ -500,7 +503,7 @@ def test_rendered_token_waits_for_loaded_document_confirmation(
 
 
 def _layout_result(marker: str, count: int = 1):
-    from vibeocr.models.ocr_result import TextBlock
+    from vibeocr.backend.models.ocr_result import TextBlock
 
     return SimpleNamespace(
         raw_text=marker,
@@ -512,8 +515,8 @@ def _layout_result(marker: str, count: int = 1):
 
 
 def test_large_text_layout_build_keeps_qt_responsive(qapp, qtbot, monkeypatch):
-    module = import_module("vibeocr.widgets.result_view_widget")
-    from vibeocr.models.text_block_options import TextBlockOptions
+    module = import_module("vibeocr.classic.widgets.result_view_widget")
+    from vibeocr.backend.models.text_block_options import TextBlockOptions
 
     widget = module.ResultViewWidget()
     qtbot.addWidget(widget)
@@ -538,8 +541,8 @@ def test_large_text_layout_build_keeps_qt_responsive(qapp, qtbot, monkeypatch):
 
 
 def test_text_layout_uses_snapshot_and_latest_generation(qapp, qtbot, monkeypatch):
-    module = import_module("vibeocr.widgets.result_view_widget")
-    from vibeocr.models.text_block_options import TextBlockOptions
+    module = import_module("vibeocr.classic.widgets.result_view_widget")
+    from vibeocr.backend.models.text_block_options import TextBlockOptions
 
     widget = module.ResultViewWidget()
     qtbot.addWidget(widget)
@@ -574,8 +577,8 @@ def test_text_layout_uses_snapshot_and_latest_generation(qapp, qtbot, monkeypatc
 
 
 def test_close_drops_late_text_layout(qapp, qtbot, monkeypatch):
-    module = import_module("vibeocr.widgets.result_view_widget")
-    from vibeocr.models.text_block_options import TextBlockOptions
+    module = import_module("vibeocr.classic.widgets.result_view_widget")
+    from vibeocr.backend.models.text_block_options import TextBlockOptions
 
     widget = module.ResultViewWidget()
     qtbot.addWidget(widget)

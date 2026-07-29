@@ -2,7 +2,7 @@ import logging
 
 import pytest
 
-from vibeocr.utils import http_log
+from vibeocr.runtime_contracts.utils import http_log
 
 
 def test_status_summary_explains_known_and_unknown_codes() -> None:
@@ -61,7 +61,7 @@ def test_log_level_tracks_status_class(
 
 def test_human_bytes_bytes_and_gb_tiers() -> None:
     """_human_bytes 的 B 与 GB 分支（line 99-103）。"""
-    from vibeocr.utils.http_log import _human_bytes
+    from vibeocr.runtime_contracts.utils.http_log import _human_bytes
 
     assert _human_bytes(0) == "0 B"
     assert _human_bytes(512) == "512 B"
@@ -98,7 +98,7 @@ def test_format_transaction_without_sizes() -> None:
 
 def test_safe_int_handles_none_and_invalid() -> None:
     """_safe_int 对 None/非法值返回 None（line 140）。"""
-    from vibeocr.utils.http_log import _safe_int
+    from vibeocr.runtime_contracts.utils.http_log import _safe_int
 
     assert _safe_int(None) is None
     assert _safe_int("123") == 123
@@ -109,7 +109,7 @@ def test_safe_int_handles_none_and_invalid() -> None:
 
 def test_guess_response_size_from_content_and_headers() -> None:
     """guess_response_size 从 content(bytes/str) 与 headers 读取（line 178-188）。"""
-    from vibeocr.utils.http_log import guess_response_size
+    from vibeocr.runtime_contracts.utils.http_log import guess_response_size
 
     # bytes content
     assert guess_response_size(None, b"hello") == 5
@@ -125,7 +125,7 @@ def test_guess_response_size_from_content_and_headers() -> None:
 
 def test_guess_request_size_branches() -> None:
     """guess_request_size 各分支（line 192-199）。"""
-    from vibeocr.utils.http_log import guess_request_size
+    from vibeocr.runtime_contracts.utils.http_log import guess_request_size
 
     assert guess_request_size(None) is None
     assert guess_request_size(b"abc") == 3

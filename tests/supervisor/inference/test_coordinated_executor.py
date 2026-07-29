@@ -6,18 +6,21 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any
 
-from vibeocr.protocol.v2 import (
+from vibeocr.backend.supervisor.inference.budgets import (
+    AdapterCapability,
+    BudgetPlanner,
+)
+from vibeocr.backend.supervisor.inference.paddle_executor import AdapterExecutor
+from vibeocr.backend.supervisor.inference.scheduler import DeviceScheduler
+from vibeocr.backend.supervisor.jobs.registry import JobRegistry
+from vibeocr.backend.supervisor.jobs.staging import StagedInput
+from vibeocr.runtime_contracts import (
     ItemState,
     JobItem,
     JobKind,
     JobPriority,
     JobState,
 )
-from vibeocr.supervisor.inference.budgets import AdapterCapability, BudgetPlanner
-from vibeocr.supervisor.inference.paddle_executor import AdapterExecutor
-from vibeocr.supervisor.inference.scheduler import DeviceScheduler
-from vibeocr.supervisor.jobs.registry import JobRegistry
-from vibeocr.supervisor.jobs.staging import StagedInput
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -82,7 +85,7 @@ class _BatchAdapter:
         return [{"raw_text": item.display_name} for item in items]
 
     def residency_status(self):
-        from vibeocr.protocol.v2 import ResidencyStatus
+        from vibeocr.runtime_contracts import ResidencyStatus
 
         return ResidencyStatus()
 

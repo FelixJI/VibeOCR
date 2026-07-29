@@ -7,7 +7,11 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from vibeocr.protocol.v2 import (
+from vibeocr.backend.supervisor.inference.budgets import AdapterCapability
+from vibeocr.backend.supervisor.inference.paddle_executor import AdapterExecutor
+from vibeocr.backend.supervisor.jobs.staging import InputExpiredError
+from vibeocr.backend.supervisor.module import SupervisorModule, SupervisorOptions
+from vibeocr.runtime_contracts import (
     JobKind,
     JobPriority,
     JobState,
@@ -15,10 +19,6 @@ from vibeocr.protocol.v2 import (
     SubmitItem,
     SubmitRequest,
 )
-from vibeocr.supervisor.inference.budgets import AdapterCapability
-from vibeocr.supervisor.inference.paddle_executor import AdapterExecutor
-from vibeocr.supervisor.jobs.staging import InputExpiredError
-from vibeocr.supervisor.module import SupervisorModule, SupervisorOptions
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -43,7 +43,7 @@ class _ScriptedAdapter:
         )
 
     def residency_status(self):
-        from vibeocr.protocol.v2 import ResidencyStatus
+        from vibeocr.runtime_contracts import ResidencyStatus
 
         return ResidencyStatus()
 

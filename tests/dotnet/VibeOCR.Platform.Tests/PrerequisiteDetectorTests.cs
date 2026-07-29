@@ -21,13 +21,13 @@ public sealed class PrerequisiteDetectorTests
                 PrerequisiteKind.DotNetDesktopRuntime,
                 PrerequisiteKind.WindowsAppRuntime,
                 PrerequisiteKind.WebView2Runtime,
-                PrerequisiteKind.PythonRuntime,
+                PrerequisiteKind.RuntimeInstaller,
             ],
             report.Missing.Select(item => item.Kind));
     }
 
     [Fact]
-    public void AcceptsCompatibleInstalledVersionsAndExistingPythonRuntime()
+    public void AcceptsCompatibleInstalledVersions()
     {
         var detector = new PrerequisiteDetector(
             _ => new PrerequisiteSnapshot("10.0.9", "2.2.0", "140.0.3485.54", true));

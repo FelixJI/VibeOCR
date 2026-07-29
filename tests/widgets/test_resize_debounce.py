@@ -9,7 +9,7 @@ from PySide6.QtGui import QPixmap
 
 
 def test_preview_resize_events_coalesce_to_one_display_update(qapp, qtbot, monkeypatch):
-    from vibeocr.widgets.preview_widget import PreviewWidget
+    from vibeocr.classic.widgets.preview_widget import PreviewWidget
 
     widget = PreviewWidget()
     qtbot.addWidget(widget)
@@ -37,7 +37,7 @@ class _QrBackend:
 
 
 def test_qr_resize_events_coalesce_to_one_smooth_scale(qapp, qtbot, monkeypatch):
-    module = import_module("vibeocr.views.tabs.qrcode_tab")
+    module = import_module("vibeocr.classic.views.tabs.qrcode_tab")
 
     tab = module.QrcodeTab(backend=_QrBackend())
     qtbot.addWidget(tab)

@@ -10,7 +10,7 @@ import threading
 class TestShutdownCoordinator:
     def test_coordinate_calls_in_order(self):
         """coordinator 按注册顺序调用各子系统的 shutdown"""
-        from vibeocr.managers.shutdown_coordinator import ShutdownCoordinator
+        from vibeocr.classic.managers.shutdown_coordinator import ShutdownCoordinator
 
         coord = ShutdownCoordinator()
         order = []
@@ -27,7 +27,7 @@ class TestShutdownCoordinator:
 
     def test_coordinate_returns_false_on_timeout(self):
         """步骤超时后可显式允许独立后续步骤继续。"""
-        from vibeocr.managers.shutdown_coordinator import ShutdownCoordinator
+        from vibeocr.classic.managers.shutdown_coordinator import ShutdownCoordinator
 
         coord = ShutdownCoordinator()
         order = []
@@ -44,7 +44,7 @@ class TestShutdownCoordinator:
 
     def test_coordinate_continues_after_exception(self):
         """某子系统抛异常，coordinator 记录但继续后续"""
-        from vibeocr.managers.shutdown_coordinator import ShutdownCoordinator
+        from vibeocr.classic.managers.shutdown_coordinator import ShutdownCoordinator
 
         coord = ShutdownCoordinator()
         order = []
@@ -62,14 +62,14 @@ class TestShutdownCoordinator:
 
     def test_coordinate_empty_returns_true(self):
         """无注册步骤时返回 True"""
-        from vibeocr.managers.shutdown_coordinator import ShutdownCoordinator
+        from vibeocr.classic.managers.shutdown_coordinator import ShutdownCoordinator
 
         coord = ShutdownCoordinator()
         assert coord.coordinate(timeout_ms=1000) is True
 
     def test_fast_step_preserves_remaining_global_budget(self):
         """总预算按绝对截止时间扣减，不再机械均分。"""
-        from vibeocr.managers.shutdown_coordinator import ShutdownCoordinator
+        from vibeocr.classic.managers.shutdown_coordinator import ShutdownCoordinator
 
         coord = ShutdownCoordinator()
         coord.register("a", lambda: None, max_timeout_ms=20)
@@ -83,7 +83,7 @@ class TestShutdownCoordinator:
 
     def test_dependent_steps_stop_after_timeout(self):
         """资源相关步骤可禁止在前一步仍运行时继续，避免并发清理。"""
-        from vibeocr.managers.shutdown_coordinator import ShutdownCoordinator
+        from vibeocr.classic.managers.shutdown_coordinator import ShutdownCoordinator
 
         coord = ShutdownCoordinator()
         order = []
@@ -103,7 +103,7 @@ class TestShutdownCoordinator:
 
     def test_incomplete_drain_stops_dependent_cleanup(self):
         """显式 False 表示 worker 仍活，不能继续销毁其依赖资源。"""
-        from vibeocr.managers.shutdown_coordinator import ShutdownCoordinator
+        from vibeocr.classic.managers.shutdown_coordinator import ShutdownCoordinator
 
         coord = ShutdownCoordinator()
         order: list[str] = []

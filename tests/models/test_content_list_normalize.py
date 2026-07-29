@@ -1,6 +1,6 @@
 """content_list 正常化层测试"""
 
-from vibeocr.models.ocr_result import normalize_content_list
+from vibeocr.backend.models.ocr_result import normalize_content_list
 
 
 class TestNormalizeLegacyFormat:

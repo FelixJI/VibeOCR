@@ -1,0 +1,3715 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "VibeOCR Local Runtime API",
+    "version": "2.0.0",
+    "description": "Authoritative Runtime API v2. The historical openapi.snapshot.json is non-authoritative."
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:{port}",
+      "variables": {
+        "port": {
+          "default": "0"
+        }
+      }
+    }
+  ],
+  "security": [
+    {
+      "SessionToken": []
+    }
+  ],
+  "paths": {
+    "/v2/health": {
+      "get": {
+        "operationId": "getRuntimeHealth",
+        "responses": {
+          "200": {
+            "description": "Runtime health and versioned capabilities",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": []
+      }
+    },
+    "/v2/jobs": {
+      "post": {
+        "operationId": "submitJob",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/JobMultipart"
+              },
+              "encoding": {
+                "manifest": {
+                  "contentType": "application/json"
+                }
+              },
+              "examples": {
+                "singleUpload": {
+                  "summary": "One OCR upload manifest; the attachment part is named attachment-0.",
+                  "value": {
+                    "manifest": {
+                      "schema_version": 2,
+                      "request_id": "request-golden",
+                      "kind": "recognition",
+                      "priority": "interactive",
+                      "pipeline": {
+                        "pipeline_id": "OCR",
+                        "options_version": 1,
+                        "options": {}
+                      },
+                      "items": [
+                        {
+                          "client_item_key": "item-0",
+                          "ordinal": 0,
+                          "display_name": "page.png",
+                          "source": {
+                            "type": "upload.v1",
+                            "attachment": "attachment-0"
+                          }
+                        }
+                      ],
+                      "parameters": {}
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Accepted job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobRef"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v2/jobs/{job_id}/observe": {
+      "get": {
+        "operationId": "observeJob",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/JobId"
+          },
+          {
+            "name": "after_sequence",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Atomic job update",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobUpdate"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v2/jobs/command": {
+      "post": {
+        "operationId": "commandJob",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JobCommand"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Command result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v2/runtime/residency": {
+      "get": {
+        "operationId": "getRuntimeResidency",
+        "responses": {
+          "200": {
+            "description": "Runtime residency status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResidencyStatus"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v2/runtime/release": {
+      "post": {
+        "operationId": "releaseRuntime",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RuntimeReleaseRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Runtime residency status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResidencyStatus"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v2/runtime/preload": {
+      "post": {
+        "operationId": "preloadRuntime",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RuntimePreloadRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Runtime residency status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResidencyStatus"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v2/settings": {
+      "get": {
+        "operationId": "getSettings",
+        "responses": {
+          "200": {
+            "description": "Runtime settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsSnapshot"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "put": {
+        "operationId": "putSettings",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SettingsSnapshot"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated runtime settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsSnapshot"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v2/export": {
+      "post": {
+        "operationId": "exportOcr",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExportRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Export result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExportResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v2/qrcode/decode": {
+      "post": {
+        "operationId": "decodeQrCode",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QrDecodeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Decoded QR values",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QrDecodeResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v2/qrcode/generate": {
+      "post": {
+        "operationId": "generateQrCode",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QrGenerateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Generated QR image envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QrGenerateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v2/pdf/sessions/open": {
+      "post": {
+        "operationId": "openPdfSession",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "PDF operation result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PdfOpenResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v2/pdf/sessions/{session_id}/close": {
+      "post": {
+        "operationId": "closePdfSession",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SessionId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "PDF operation result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PdfClosedResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v2/pdf/sessions/{session_id}/model": {
+      "post": {
+        "operationId": "getPdfSessionModel",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SessionId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "PDF operation result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PdfDocumentResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v2/pdf/sessions/{session_id}/load": {
+      "post": {
+        "operationId": "loadPdfSession",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SessionId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ndjson"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v2/pdf/sessions/{session_id}/render": {
+      "get": {
+        "operationId": "renderPdfPage",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SessionId"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Png"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v2/pdf/sessions/{session_id}/render_thumbnail": {
+      "post": {
+        "operationId": "renderPdfThumbnail",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SessionId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenderThumbnailRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Png"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v2/pdf/sessions/{session_id}/render_preview": {
+      "post": {
+        "operationId": "renderPdfPreview",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SessionId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenderPreviewRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Png"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v2/pdf/sessions/{session_id}/detect_text_layers": {
+      "post": {
+        "operationId": "detectPdfTextLayers",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SessionId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DetectTextLayersRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "PDF operation result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PdfDetectResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v2/pdf/sessions/{session_id}/rotate": {
+      "post": {
+        "operationId": "rotatePdfPages",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SessionId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RotateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "PDF operation result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PdfMutationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v2/pdf/sessions/{session_id}/delete_pages": {
+      "post": {
+        "operationId": "deletePdfPages",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SessionId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeletePagesRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "PDF operation result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PdfMutationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v2/pdf/sessions/{session_id}/insert_blank": {
+      "post": {
+        "operationId": "insertBlankPdfPage",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SessionId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InsertBlankRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "PDF operation result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PdfMutationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v2/pdf/sessions/{session_id}/insert_from": {
+      "post": {
+        "operationId": "insertPdfPagesFromFile",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SessionId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InsertFromRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "PDF operation result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PdfMutationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v2/pdf/sessions/{session_id}/move_page": {
+      "post": {
+        "operationId": "movePdfPage",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SessionId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MovePageRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "PDF operation result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PdfMutationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v2/pdf/sessions/{session_id}/reorder": {
+      "post": {
+        "operationId": "reorderPdfPages",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SessionId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReorderRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "PDF operation result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PdfMutationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v2/pdf/sessions/{session_id}/add_text_layer": {
+      "post": {
+        "operationId": "addPdfTextLayer",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SessionId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddTextLayerRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "PDF operation result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PdfMutationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v2/pdf/sessions/{session_id}/add_text_layer_batch": {
+      "post": {
+        "operationId": "addPdfTextLayerBatch",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SessionId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchAddTextLayerRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "PDF operation result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PdfMutationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v2/pdf/sessions/{session_id}/rewrite_text_layer": {
+      "post": {
+        "operationId": "rewritePdfTextLayer",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SessionId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RewriteTextLayerRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "PDF operation result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PdfMutationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v2/pdf/sessions/{session_id}/update_block_text": {
+      "post": {
+        "operationId": "updatePdfBlockText",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SessionId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateBlockTextRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "PDF operation result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PdfMutationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v2/pdf/sessions/{session_id}/delete_text_layers": {
+      "post": {
+        "operationId": "deletePdfTextLayers",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SessionId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PageListRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ndjson"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v2/pdf/sessions/{session_id}/save": {
+      "post": {
+        "operationId": "savePdfSession",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SessionId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "PDF operation result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PdfSaveResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v2/pdf/sessions/{session_id}/save_transactional": {
+      "post": {
+        "operationId": "savePdfSessionTransactional",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SessionId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PdfPathRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "PDF operation result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PdfPathResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v2/pdf/sessions/{session_id}/cancel": {
+      "post": {
+        "operationId": "cancelPdfSession",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SessionId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "PDF operation result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PdfCancelledResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v2/pdf/sessions/{session_id}/reset_cancel": {
+      "post": {
+        "operationId": "resetPdfSessionCancellation",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SessionId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "PDF operation result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PdfResetResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "SessionToken": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    },
+    "parameters": {
+      "JobId": {
+        "name": "job_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      "SessionId": {
+        "name": "session_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      }
+    },
+    "requestBodies": {},
+    "responses": {
+      "Error": {
+        "description": "Typed runtime error",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Png": {
+        "description": "PNG image",
+        "content": {
+          "image/png": {
+            "schema": {
+              "type": "string",
+              "format": "binary"
+            },
+            "examples": {
+              "onePixelPng": {
+                "summary": "Base64 representation is stored in golden/runtime-api.json.",
+                "value": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB"
+              }
+            }
+          }
+        }
+      },
+      "Ndjson": {
+        "description": "One JSON progress event per line",
+        "content": {
+          "application/x-ndjson": {
+            "schema": {
+              "type": "string"
+            },
+            "examples": {
+              "progress": {
+                "value": "{\"phase\":\"load\",\"message\":\"loading\"}\\n"
+              }
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "AddTextLayerRequest": {
+        "properties": {
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "ocr_result": {
+            "additionalProperties": true,
+            "title": "Ocr Result",
+            "type": "object"
+          },
+          "pdf_settings": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Pdf Settings"
+          },
+          "overwrite": {
+            "default": false,
+            "title": "Overwrite",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "page",
+          "ocr_result"
+        ],
+        "type": "object",
+        "additionalProperties": false
+      },
+      "BatchAddTextLayerPage": {
+        "description": "批量加文字层的单页条目。",
+        "properties": {
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "ocr_result": {
+            "additionalProperties": true,
+            "title": "Ocr Result",
+            "type": "object"
+          }
+        },
+        "required": [
+          "page",
+          "ocr_result"
+        ],
+        "title": "BatchAddTextLayerPage",
+        "type": "object",
+        "additionalProperties": false
+      },
+      "BatchAddTextLayerRequest": {
+        "description": "批量写 OCR 文字层：一次接收一批页，后端聚合字符解析单一子集字体。\n\n避免逐页 add_text_layer 每页各解析一份子集字体（放大体积）。\n聚合逻辑复用 save_with_rewrite 已验证的\"整文档一次子集\"模式。\n\nsave=True 时，写层成功后紧跟一次 incremental save 把本批落盘\n（崩溃只丢最后一批）。返回 extra.saved 标记是否成功落盘。",
+        "properties": {
+          "pages": {
+            "items": {
+              "$ref": "#/components/schemas/BatchAddTextLayerPage"
+            },
+            "title": "Pages",
+            "type": "array"
+          },
+          "pdf_settings": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Pdf Settings"
+          },
+          "overwrite": {
+            "default": false,
+            "title": "Overwrite",
+            "type": "boolean"
+          },
+          "save": {
+            "default": false,
+            "title": "Save",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "pages"
+        ],
+        "type": "object",
+        "additionalProperties": false
+      },
+      "CommandResult": {
+        "type": "object",
+        "required": [
+          "schema_version",
+          "instance_id",
+          "command_id",
+          "kind",
+          "cancel_mode",
+          "job_ref"
+        ],
+        "properties": {
+          "schema_version": {
+            "const": 2
+          },
+          "instance_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "command_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "enum": [
+              "cancel",
+              "retry",
+              "forget"
+            ]
+          },
+          "cancel_mode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              null,
+              "queued_only",
+              "cooperative",
+              "forced"
+            ]
+          },
+          "job_ref": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/JobRef"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "DeletePagesRequest": {
+        "properties": {
+          "pages": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Pages",
+            "type": "array"
+          }
+        },
+        "required": [
+          "pages"
+        ],
+        "type": "object",
+        "additionalProperties": false
+      },
+      "DetectTextLayersRequest": {
+        "properties": {
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "page"
+        ],
+        "type": "object",
+        "additionalProperties": false
+      },
+      "DetectTextLayersResponse": {
+        "properties": {
+          "text_layers": {
+            "items": {
+              "$ref": "#/components/schemas/TextLayerInfoMirror"
+            },
+            "title": "Text Layers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "text_layers"
+        ],
+        "type": "object",
+        "additionalProperties": false
+      },
+      "Error": {
+        "type": "object",
+        "required": [
+          "schema_version",
+          "instance_id",
+          "code",
+          "message",
+          "category",
+          "retryable",
+          "detail",
+          "job_id"
+        ],
+        "properties": {
+          "schema_version": {
+            "const": 2
+          },
+          "instance_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "code": {
+            "enum": [
+              "VALIDATION_ERROR",
+              "QUOTA_EXCEEDED",
+              "UNAUTHORIZED",
+              "FORBIDDEN_LOOPBACK",
+              "JOB_NOT_FOUND",
+              "RESOURCE_NOT_FOUND",
+              "JOB_NOT_CANCELLABLE",
+              "JOB_NOT_RETRYABLE",
+              "INPUT_EXPIRED",
+              "PIN_CAPACITY_CONFLICT",
+              "SUPERVISOR_DRAINING",
+              "CANCELLED",
+              "OUT_OF_MEMORY",
+              "TRANSIENT_BACKEND",
+              "BACKEND_UNAVAILABLE",
+              "ADAPTER_PROTOCOL_VIOLATION",
+              "PROTOCOL_MISMATCH",
+              "INTERNAL_ERROR"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "category": {
+            "enum": [
+              "validation",
+              "auth",
+              "not_found",
+              "conflict",
+              "cancelled",
+              "oom",
+              "transient",
+              "backend_unavailable",
+              "internal"
+            ]
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "detail": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "job_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "ExportRequest": {
+        "type": "object",
+        "required": [
+          "output_path",
+          "format"
+        ],
+        "properties": {
+          "raw_text": {
+            "type": "string"
+          },
+          "markdown_text": {
+            "type": "string"
+          },
+          "html_text": {
+            "type": "string"
+          },
+          "raw_blocks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          },
+          "output_path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "format": {
+            "type": "string",
+            "minLength": 1
+          },
+          "overwrite": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ExportResponse": {
+        "type": "object",
+        "required": [
+          "schema_version",
+          "instance_id",
+          "output_path",
+          "bytes_written"
+        ],
+        "properties": {
+          "schema_version": {
+            "const": 2
+          },
+          "instance_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "output_path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "bytes_written": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "Health": {
+        "type": "object",
+        "required": [
+          "schema_version",
+          "instance_id",
+          "protocol_version",
+          "ready",
+          "draining",
+          "capabilities"
+        ],
+        "properties": {
+          "schema_version": {
+            "const": 2
+          },
+          "instance_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "protocol_version": {
+            "const": 2
+          },
+          "ready": {
+            "type": "boolean"
+          },
+          "draining": {
+            "type": "boolean"
+          },
+          "capabilities": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "enum": [
+                "ocr.recognition.v2",
+                "pdf.edit.v2",
+                "qrcode.v2",
+                "export.document.v1",
+                "runtime.settings.v2"
+              ]
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "InsertBlankRequest": {
+        "properties": {
+          "after_index": {
+            "title": "After Index",
+            "type": "integer"
+          },
+          "width": {
+            "default": 612.0,
+            "title": "Width",
+            "type": "number"
+          },
+          "height": {
+            "default": 792.0,
+            "title": "Height",
+            "type": "number"
+          }
+        },
+        "required": [
+          "after_index"
+        ],
+        "type": "object",
+        "additionalProperties": false
+      },
+      "InsertFromRequest": {
+        "properties": {
+          "source_path": {
+            "title": "Source Path",
+            "type": "string"
+          },
+          "after_index": {
+            "title": "After Index",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "source_path",
+          "after_index"
+        ],
+        "type": "object",
+        "additionalProperties": false
+      },
+      "ItemOutcome": {
+        "type": "object",
+        "required": [
+          "item_id",
+          "state",
+          "attempt",
+          "payload_type",
+          "payload",
+          "error_code",
+          "error_detail"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "item_id": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "succeeded",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "attempt": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "payload_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "payload": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "error_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "error_detail": {
+            "type": "object"
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "state": {
+                  "const": "succeeded"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "payload_type": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "payload": {
+                  "type": "object"
+                },
+                "error_code": {
+                  "type": "null"
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "payload_type": {
+                  "type": "null"
+                },
+                "payload": {
+                  "type": "null"
+                },
+                "error_code": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        ]
+      },
+      "JobCommand": {
+        "type": "object",
+        "required": [
+          "command_id",
+          "kind",
+          "job_id",
+          "item_ids",
+          "priority_override"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "command_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "cancel",
+              "retry",
+              "forget"
+            ]
+          },
+          "job_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "item_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "priority_override": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "interactive",
+              "background",
+              null
+            ]
+          }
+        }
+      },
+      "JobItem": {
+        "type": "object",
+        "required": [
+          "item_id",
+          "display_name",
+          "state"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "item_id": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "succeeded",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "attempt": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "client_item_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ordinal": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "source_item_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "JobMultipart": {
+        "type": "object",
+        "required": [
+          "manifest"
+        ],
+        "properties": {
+          "manifest": {
+            "$ref": "#/components/schemas/SubmitRequest"
+          }
+        },
+        "additionalProperties": true
+      },
+      "JobRef": {
+        "type": "object",
+        "required": [
+          "job_id",
+          "schema_version",
+          "instance_id",
+          "state",
+          "items"
+        ],
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "schema_version": {
+            "const": 2
+          },
+          "instance_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "enum": [
+              "accepted",
+              "queued",
+              "running",
+              "completed",
+              "completed_with_errors",
+              "cancel_requested",
+              "cancelled",
+              "failed"
+            ]
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/JobItem"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "JobSnapshot": {
+        "type": "object",
+        "required": [
+          "job_id",
+          "kind",
+          "priority",
+          "state",
+          "schema_version",
+          "created_at",
+          "items",
+          "summary"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "job_id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "recognition",
+              "pdf_ocr",
+              "mineru_parse",
+              "model_download",
+              "settings_install"
+            ]
+          },
+          "priority": {
+            "type": "string",
+            "enum": [
+              "interactive",
+              "background"
+            ]
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "accepted",
+              "queued",
+              "running",
+              "completed",
+              "completed_with_errors",
+              "cancel_requested",
+              "cancelled",
+              "failed"
+            ]
+          },
+          "schema_version": {
+            "type": "integer",
+            "const": 2
+          },
+          "instance_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "started_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "stage": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "progress_current": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "progress_total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/JobItem"
+            }
+          },
+          "summary": {
+            "$ref": "#/components/schemas/JobSummary"
+          },
+          "cancel_requested_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cancel_mode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              null,
+              "queued_only",
+              "cooperative",
+              "forced"
+            ]
+          },
+          "degraded": {
+            "type": "boolean"
+          },
+          "event_sequence": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "result_available": {
+            "type": "boolean"
+          },
+          "request_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source_job_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pipeline": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PipelineSelection"
+              }
+            ]
+          }
+        }
+      },
+      "JobSummary": {
+        "type": "object",
+        "required": [
+          "succeeded",
+          "failed",
+          "cancelled",
+          "total"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "succeeded": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "failed": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "cancelled": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "JobUpdate": {
+        "type": "object",
+        "required": [
+          "schema_version",
+          "snapshot",
+          "events",
+          "outcomes",
+          "through_sequence",
+          "more"
+        ],
+        "properties": {
+          "schema_version": {
+            "const": 2
+          },
+          "snapshot": {
+            "$ref": "#/components/schemas/JobSnapshot"
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StageEvent"
+            }
+          },
+          "outcomes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ItemOutcome"
+            }
+          },
+          "through_sequence": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "more": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ModelDiff": {
+        "description": "变更操作的回包增量。\n\n主进程收到后 apply 到 mirror:\n- replaced_pages: 整页替换(变更后的完整 PageInfoMirror)\n- structural_change: 结构性变更(删页/插页/重排)→ 主进程直接用 full_model 替换\n- full_model: 结构性变更或全量刷新时携带完整 model\n- modified_flag / structural_flag: 更新 is_modified / has_structural_change",
+        "properties": {
+          "replaced_pages": {
+            "items": {
+              "$ref": "#/components/schemas/PdfPageInfoMirror"
+            },
+            "title": "Replaced Pages",
+            "type": "array"
+          },
+          "structural_change": {
+            "default": false,
+            "title": "Structural Change",
+            "type": "boolean"
+          },
+          "full_model": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PdfDocumentMirror"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "modified_flag": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Modified Flag"
+          },
+          "structural_flag": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Structural Flag"
+          },
+          "invalidated_thumbnails": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Invalidated Thumbnails",
+            "type": "array"
+          }
+        },
+        "title": "ModelDiff",
+        "type": "object",
+        "additionalProperties": false
+      },
+      "MovePageRequest": {
+        "properties": {
+          "from_index": {
+            "title": "From Index",
+            "type": "integer"
+          },
+          "to_index": {
+            "title": "To Index",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "from_index",
+          "to_index"
+        ],
+        "type": "object",
+        "additionalProperties": false
+      },
+      "MutateResponse": {
+        "description": "通用变更操作响应(旋转/删除/插入/重排/加文字层/重写/摆正)。",
+        "properties": {
+          "diff": {
+            "$ref": "#/components/schemas/ModelDiff"
+          },
+          "extra": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Extra"
+          }
+        },
+        "required": [
+          "diff"
+        ],
+        "type": "object",
+        "additionalProperties": false
+      },
+      "OpenRequest": {
+        "properties": {
+          "path": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object",
+        "additionalProperties": false
+      },
+      "OpenResponse": {
+        "properties": {
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "model": {
+            "$ref": "#/components/schemas/PdfDocumentMirror"
+          }
+        },
+        "required": [
+          "session_id",
+          "model"
+        ],
+        "type": "object",
+        "additionalProperties": false
+      },
+      "PageListRequest": {
+        "description": "通用页列表请求(摆正/删除文字层/渲染缩略图/预览/检测文字层)。",
+        "properties": {
+          "pages": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Pages",
+            "type": "array"
+          }
+        },
+        "required": [
+          "pages"
+        ],
+        "type": "object",
+        "additionalProperties": false
+      },
+      "PdfCancelledResponse": {
+        "type": "object",
+        "required": [
+          "schema_version",
+          "instance_id",
+          "cancelled"
+        ],
+        "properties": {
+          "schema_version": {
+            "const": 2
+          },
+          "instance_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "cancelled": {
+            "const": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "PdfClosedResponse": {
+        "type": "object",
+        "required": [
+          "schema_version",
+          "instance_id",
+          "closed"
+        ],
+        "properties": {
+          "schema_version": {
+            "const": 2
+          },
+          "instance_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "closed": {
+            "const": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "PdfDetectResponse": {
+        "properties": {
+          "schema_version": {
+            "const": 2
+          },
+          "instance_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "text_layers": {
+            "items": {
+              "$ref": "#/components/schemas/TextLayerInfoMirror"
+            },
+            "title": "Text Layers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "schema_version",
+          "instance_id",
+          "text_layers"
+        ],
+        "type": "object",
+        "additionalProperties": false
+      },
+      "PdfDocumentMirror": {
+        "description": "PDF 文档状态镜像(对应 models.pdf_document.PdfDocument 的可序列化投影)。",
+        "properties": {
+          "file_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "File Path"
+          },
+          "pages": {
+            "items": {
+              "$ref": "#/components/schemas/PdfPageInfoMirror"
+            },
+            "title": "Pages",
+            "type": "array"
+          },
+          "is_modified": {
+            "default": false,
+            "title": "Is Modified",
+            "type": "boolean"
+          },
+          "has_structural_change": {
+            "default": false,
+            "title": "Has Structural Change",
+            "type": "boolean"
+          },
+          "render_dpi": {
+            "default": 300,
+            "title": "Render Dpi",
+            "type": "integer"
+          },
+          "thumbnail_dpi": {
+            "default": 96,
+            "title": "Thumbnail Dpi",
+            "type": "integer"
+          }
+        },
+        "title": "PdfDocumentMirror",
+        "type": "object",
+        "additionalProperties": false
+      },
+      "PdfDocumentResponse": {
+        "description": "PDF 文档状态镜像(对应 models.pdf_document.PdfDocument 的可序列化投影)。",
+        "properties": {
+          "schema_version": {
+            "const": 2
+          },
+          "instance_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "file_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "File Path"
+          },
+          "pages": {
+            "items": {
+              "$ref": "#/components/schemas/PdfPageInfoMirror"
+            },
+            "title": "Pages",
+            "type": "array"
+          },
+          "is_modified": {
+            "default": false,
+            "title": "Is Modified",
+            "type": "boolean"
+          },
+          "has_structural_change": {
+            "default": false,
+            "title": "Has Structural Change",
+            "type": "boolean"
+          },
+          "render_dpi": {
+            "default": 300,
+            "title": "Render Dpi",
+            "type": "integer"
+          },
+          "thumbnail_dpi": {
+            "default": 96,
+            "title": "Thumbnail Dpi",
+            "type": "integer"
+          }
+        },
+        "title": "PdfDocumentMirror",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schema_version",
+          "instance_id"
+        ]
+      },
+      "PdfMutationResponse": {
+        "description": "通用变更操作响应(旋转/删除/插入/重排/加文字层/重写/摆正)。",
+        "properties": {
+          "schema_version": {
+            "const": 2
+          },
+          "instance_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "diff": {
+            "$ref": "#/components/schemas/ModelDiff"
+          },
+          "extra": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Extra"
+          }
+        },
+        "required": [
+          "schema_version",
+          "instance_id",
+          "diff"
+        ],
+        "type": "object",
+        "additionalProperties": false
+      },
+      "PdfOpenResponse": {
+        "properties": {
+          "schema_version": {
+            "const": 2
+          },
+          "instance_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "model": {
+            "$ref": "#/components/schemas/PdfDocumentMirror"
+          }
+        },
+        "required": [
+          "schema_version",
+          "instance_id",
+          "session_id",
+          "model"
+        ],
+        "type": "object",
+        "additionalProperties": false
+      },
+      "PdfPageInfoMirror": {
+        "description": "单页状态镜像(对应 models.pdf_document.PdfPageInfo 的可序列化子集)。\n\nthumbnail: QPixmap 不跨进程,缩略图走独立渲染路由取字节。",
+        "properties": {
+          "page_index": {
+            "title": "Page Index",
+            "type": "integer"
+          },
+          "rotation": {
+            "default": 0,
+            "title": "Rotation",
+            "type": "integer"
+          },
+          "has_text_layer": {
+            "default": false,
+            "title": "Has Text Layer",
+            "type": "boolean"
+          },
+          "text_layers": {
+            "items": {
+              "$ref": "#/components/schemas/TextLayerInfoMirror"
+            },
+            "title": "Text Layers",
+            "type": "array"
+          },
+          "is_scanned": {
+            "default": false,
+            "title": "Is Scanned",
+            "type": "boolean"
+          },
+          "rect": {
+            "default": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "maxItems": 4,
+            "minItems": 4,
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "title": "Rect",
+            "type": "array"
+          },
+          "ocr_text_blocks": {
+            "items": {
+              "$ref": "#/components/schemas/TextBlockMirror"
+            },
+            "title": "Ocr Text Blocks",
+            "type": "array"
+          },
+          "ocr_preproc_angle": {
+            "default": 0,
+            "title": "Ocr Preproc Angle",
+            "type": "integer"
+          },
+          "deskewed": {
+            "default": false,
+            "title": "Deskewed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "page_index"
+        ],
+        "title": "PdfPageInfoMirror",
+        "type": "object",
+        "additionalProperties": false
+      },
+      "PdfPathRequest": {
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "PdfPathResponse": {
+        "type": "object",
+        "required": [
+          "schema_version",
+          "instance_id",
+          "path"
+        ],
+        "properties": {
+          "schema_version": {
+            "const": 2
+          },
+          "instance_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "PdfResetResponse": {
+        "type": "object",
+        "required": [
+          "schema_version",
+          "instance_id",
+          "reset"
+        ],
+        "properties": {
+          "schema_version": {
+            "const": 2
+          },
+          "instance_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reset": {
+            "const": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "PdfSaveResponse": {
+        "properties": {
+          "schema_version": {
+            "const": 2
+          },
+          "instance_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "diff": {
+            "$ref": "#/components/schemas/ModelDiff"
+          }
+        },
+        "required": [
+          "schema_version",
+          "instance_id",
+          "path",
+          "diff"
+        ],
+        "type": "object",
+        "additionalProperties": false
+      },
+      "PipelineSelection": {
+        "type": "object",
+        "required": [
+          "pipeline_id",
+          "options_version",
+          "options"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "pipeline_id": {
+            "type": "string",
+            "enum": [
+              "OCR",
+              "PP-StructureV3",
+              "MinerU",
+              "PaddleOCR-VL",
+              "TABLE_RECOGNITION",
+              "FORMULA_RECOGNITION"
+            ]
+          },
+          "options_version": {
+            "type": "integer",
+            "const": 1
+          },
+          "options": {
+            "type": "object"
+          }
+        }
+      },
+      "PipelineSpec": {
+        "type": "object",
+        "required": [
+          "name",
+          "ttl_seconds",
+          "pinned"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ttl_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "pinned": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ProgressEvent": {
+        "description": "流式进度事件(SSE / chunked 一行一个 JSON)。",
+        "properties": {
+          "phase": {
+            "$ref": "#/components/schemas/ProgressPhase"
+          },
+          "current": {
+            "default": 0,
+            "title": "Current",
+            "type": "integer"
+          },
+          "total": {
+            "default": 0,
+            "title": "Total",
+            "type": "integer"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Message"
+          },
+          "page_index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Page Index"
+          },
+          "page_payload": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Page Payload"
+          }
+        },
+        "required": [
+          "phase"
+        ],
+        "type": "object",
+        "additionalProperties": false
+      },
+      "ProgressPhase": {
+        "description": "长操作阶段标识,供主进程切换文案/确定 vs 不确定进度条。",
+        "enum": [
+          "load",
+          "render",
+          "ocr",
+          "write",
+          "detect",
+          "correct",
+          "delete",
+          "save",
+          "export",
+          "compress"
+        ],
+        "title": "ProgressPhase",
+        "type": "string"
+      },
+      "QrCodeValue": {
+        "type": "object",
+        "required": [
+          "data",
+          "type",
+          "format",
+          "is_url"
+        ],
+        "properties": {
+          "data": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "format": {
+            "type": "string"
+          },
+          "is_url": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "QrDecodeRequest": {
+        "type": "object",
+        "required": [
+          "image"
+        ],
+        "properties": {
+          "image": {
+            "type": "string",
+            "contentEncoding": "base64"
+          }
+        },
+        "additionalProperties": false
+      },
+      "QrDecodeResponse": {
+        "type": "object",
+        "required": [
+          "schema_version",
+          "instance_id",
+          "codes"
+        ],
+        "properties": {
+          "schema_version": {
+            "const": 2
+          },
+          "instance_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "codes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QrCodeValue"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "QrGenerateRequest": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "string"
+          },
+          "format": {
+            "type": "string"
+          },
+          "options": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "QrGenerateResponse": {
+        "type": "object",
+        "required": [
+          "schema_version",
+          "instance_id",
+          "image",
+          "format",
+          "media_type"
+        ],
+        "properties": {
+          "schema_version": {
+            "const": 2
+          },
+          "instance_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "image": {
+            "type": "string",
+            "contentEncoding": "base64"
+          },
+          "format": {
+            "type": "string"
+          },
+          "media_type": {
+            "enum": [
+              "image/png",
+              "image/svg+xml"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "RenderPreviewRequest": {
+        "properties": {
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "dpi": {
+            "default": 150,
+            "title": "Dpi",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "page"
+        ],
+        "type": "object",
+        "additionalProperties": false
+      },
+      "RenderThumbnailRequest": {
+        "properties": {
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "size": {
+            "default": 160,
+            "title": "Size",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "page"
+        ],
+        "type": "object",
+        "additionalProperties": false
+      },
+      "ReorderRequest": {
+        "properties": {
+          "new_order": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "New Order",
+            "type": "array"
+          }
+        },
+        "required": [
+          "new_order"
+        ],
+        "type": "object",
+        "additionalProperties": false
+      },
+      "ResidencyEntry": {
+        "type": "object",
+        "required": [
+          "pipeline",
+          "kind",
+          "active_leases",
+          "remaining_ttl_seconds",
+          "estimated_vram_mb",
+          "eviction_reason"
+        ],
+        "properties": {
+          "pipeline": {
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "soft_ttl",
+              "pinned",
+              "idle",
+              "evicted"
+            ]
+          },
+          "active_leases": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "remaining_ttl_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "estimated_vram_mb": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "eviction_reason": {
+            "enum": [
+              "none",
+              "ttl_expired",
+              "vram_pressure",
+              "explicit_release",
+              "supervisor_shutdown"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "ResidencyStatus": {
+        "type": "object",
+        "required": [
+          "schema_version",
+          "default_ttl_seconds",
+          "entries",
+          "pipelines",
+          "vram_total_mb",
+          "vram_used_mb"
+        ],
+        "properties": {
+          "schema_version": {
+            "const": 2
+          },
+          "default_ttl_seconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ResidencyEntry"
+            }
+          },
+          "pipelines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PipelineSpec"
+            }
+          },
+          "vram_total_mb": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "vram_used_mb": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "RewriteTextLayerRequest": {
+        "properties": {
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "text_blocks": {
+            "items": {
+              "$ref": "#/components/schemas/TextBlockMirror"
+            },
+            "title": "Text Blocks",
+            "type": "array"
+          },
+          "preproc_angle": {
+            "default": 0,
+            "title": "Preproc Angle",
+            "type": "integer"
+          },
+          "pdf_settings": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Pdf Settings"
+          }
+        },
+        "required": [
+          "page",
+          "text_blocks"
+        ],
+        "type": "object",
+        "additionalProperties": false
+      },
+      "RotateRequest": {
+        "properties": {
+          "pages": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Pages",
+            "type": "array"
+          },
+          "angle": {
+            "title": "Angle",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "pages",
+          "angle"
+        ],
+        "type": "object",
+        "additionalProperties": false
+      },
+      "RuntimePreloadRequest": {
+        "type": "object",
+        "required": [
+          "pipelines"
+        ],
+        "properties": {
+          "pipelines": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "RuntimeReleaseRequest": {
+        "type": "object",
+        "required": [],
+        "properties": {
+          "pipeline": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "SaveRequest": {
+        "properties": {
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Path"
+          },
+          "pdf_settings": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Pdf Settings"
+          },
+          "rewrite_text_layers": {
+            "default": true,
+            "title": "Rewrite Text Layers",
+            "type": "boolean"
+          }
+        },
+        "type": "object",
+        "additionalProperties": false
+      },
+      "SaveResponse": {
+        "properties": {
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "diff": {
+            "$ref": "#/components/schemas/ModelDiff"
+          }
+        },
+        "required": [
+          "path",
+          "diff"
+        ],
+        "type": "object",
+        "additionalProperties": false
+      },
+      "SettingsResidency": {
+        "type": "object",
+        "required": [
+          "default_ttl_seconds",
+          "pipelines"
+        ],
+        "properties": {
+          "default_ttl_seconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "pipelines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PipelineSpec"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "SettingsSnapshot": {
+        "type": "object",
+        "required": [
+          "schema_version",
+          "residency",
+          "extra"
+        ],
+        "properties": {
+          "schema_version": {
+            "const": 2
+          },
+          "residency": {
+            "$ref": "#/components/schemas/SettingsResidency"
+          },
+          "extra": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "StageEvent": {
+        "type": "object",
+        "required": [
+          "sequence",
+          "stage",
+          "item_id",
+          "timestamp",
+          "detail"
+        ],
+        "properties": {
+          "sequence": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "stage": {
+            "type": "string"
+          },
+          "item_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "detail": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "SubmitItem": {
+        "type": "object",
+        "required": [
+          "client_item_key",
+          "ordinal",
+          "display_name",
+          "source"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "client_item_key": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ordinal": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "source": {
+            "oneOf": [
+              {
+                "type": "object",
+                "required": [
+                  "type",
+                  "attachment"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "upload.v1"
+                  },
+                  "attachment": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type",
+                  "session_id",
+                  "session_revision",
+                  "page_index"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "pdf_page.v1"
+                  },
+                  "session_id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "session_revision": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "page_index": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "SubmitRequest": {
+        "type": "object",
+        "required": [
+          "schema_version",
+          "request_id",
+          "kind",
+          "priority",
+          "pipeline",
+          "items",
+          "parameters"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "schema_version": {
+            "type": "integer",
+            "const": 2
+          },
+          "request_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "recognition",
+              "pdf_ocr",
+              "mineru_parse"
+            ]
+          },
+          "priority": {
+            "type": "string",
+            "enum": [
+              "interactive",
+              "background"
+            ]
+          },
+          "pipeline": {
+            "$ref": "#/components/schemas/PipelineSelection"
+          },
+          "items": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/SubmitItem"
+            }
+          },
+          "parameters": {
+            "type": "object"
+          }
+        }
+      },
+      "TextBlockMirror": {
+        "description": "单个 OCR 文本块(对应 models.ocr_result.TextBlock 的可序列化投影)。\n\nocr_text_blocks 在 PdfPageInfo 里是 list[TextBlock],跨进程序列化时\n只保留写入 PDF / 预览所需的字段。",
+        "properties": {
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "score": {
+            "title": "Score",
+            "type": "number"
+          },
+          "bbox": {
+            "anyOf": [
+              {
+                "maxItems": 4,
+                "minItems": 4,
+                "prefixItems": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Bbox"
+          },
+          "polygon": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Polygon"
+          },
+          "page_idx": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Page Idx"
+          },
+          "is_manually_edited": {
+            "default": false,
+            "title": "Is Manually Edited",
+            "type": "boolean"
+          },
+          "label": {
+            "default": "text",
+            "title": "Label",
+            "type": "string"
+          },
+          "order": {
+            "default": -1,
+            "title": "Order",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "text",
+          "score"
+        ],
+        "title": "TextBlockMirror",
+        "type": "object",
+        "additionalProperties": false
+      },
+      "TextLayerInfoMirror": {
+        "description": "单个文字层信息(对应 models.pdf_document.TextLayerInfo)。",
+        "properties": {
+          "index": {
+            "title": "Index",
+            "type": "integer"
+          },
+          "text_preview": {
+            "title": "Text Preview",
+            "type": "string"
+          },
+          "char_count": {
+            "title": "Char Count",
+            "type": "integer"
+          },
+          "bbox": {
+            "maxItems": 4,
+            "minItems": 4,
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "title": "Bbox",
+            "type": "array"
+          },
+          "color_id": {
+            "title": "Color Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "index",
+          "text_preview",
+          "char_count",
+          "bbox",
+          "color_id"
+        ],
+        "title": "TextLayerInfoMirror",
+        "type": "object",
+        "additionalProperties": false
+      },
+      "UpdateBlockTextRequest": {
+        "description": "双击编辑文字块(仅更新内存模型,不落盘)。",
+        "properties": {
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "block_index": {
+            "title": "Block Index",
+            "type": "integer"
+          },
+          "new_text": {
+            "title": "New Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "page",
+          "block_index",
+          "new_text"
+        ],
+        "type": "object",
+        "additionalProperties": false
+      }
+    }
+  }
+}

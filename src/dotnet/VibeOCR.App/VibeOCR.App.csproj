@@ -1,5 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
+    <Version>0.1.0-preview.1</Version>
     <OutputType>WinExe</OutputType>
     <RootNamespace>VibeOCR.App</RootNamespace>
     <AssemblyName>VibeOCR.WinUI</AssemblyName>

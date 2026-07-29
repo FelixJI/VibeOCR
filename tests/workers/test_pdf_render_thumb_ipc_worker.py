@@ -18,7 +18,7 @@ import pytest
 from PIL import Image
 from PySide6.QtCore import Qt
 
-from vibeocr.workers.pdf_render_thumb_ipc_worker import ThumbnailIpcWorker
+from vibeocr.classic.workers.pdf_render_thumb_ipc_worker import ThumbnailIpcWorker
 
 
 def _png_bytes(color=(255, 0, 0)) -> bytes:
@@ -201,7 +201,7 @@ class TestWaitThreadNoTerminate:
         """_wait_thread 应返回 bool（是否在超时内完成）。"""
         from PySide6.QtCore import QThread
 
-        from vibeocr.managers.pdf_session_manager import _wait_thread
+        from vibeocr.classic.managers.pdf_session_manager import _wait_thread
 
         # 一个已完成的 QThread（什么都不做）
         class _DoneThread(QThread):
@@ -218,7 +218,7 @@ class TestWaitThreadNoTerminate:
         """_wait_thread 超时后不得调用 worker.terminate()。"""
         from PySide6.QtCore import QThread
 
-        from vibeocr.managers.pdf_session_manager import _wait_thread
+        from vibeocr.classic.managers.pdf_session_manager import _wait_thread
 
         class _BlockingThread(QThread):
             def run(self):

@@ -4,8 +4,8 @@ import hashlib
 import json
 from pathlib import Path
 
-from vibeocr.models.ocr_result import OCRResult
-from vibeocr.services.export_service import ExportService
+from vibeocr.backend.models.ocr_result import OCRResult
+from vibeocr.backend.services.export_service import ExportService
 
 
 def test_python_export_facade_matches_single_recognition_fixture(tmp_path: Path) -> None:

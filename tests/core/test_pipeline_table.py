@@ -1,7 +1,7 @@
 import sys
 from types import ModuleType
 
-from vibeocr.core.pipelines.pipeline_table import (
+from vibeocr.backend.core.pipelines.pipeline_table import (
     TABLE_RECOGNITION_SPEC,
     TableRecognitionOptions,
     _recognize_table,
@@ -80,7 +80,7 @@ class TestCheckTableDeps:
 
     def test_all_present_passes(self, monkeypatch):
         """is_extra_available('ocr') 返回 True 时不抛错。"""
-        from vibeocr.core.pipelines import pipeline_table
+        from vibeocr.backend.core.pipelines import pipeline_table
 
         pdx_deps = _install_fake_paddlex_deps(monkeypatch)
         monkeypatch.setattr(pdx_deps, "is_extra_available", lambda extra: True)
@@ -90,7 +90,7 @@ class TestCheckTableDeps:
 
     def test_missing_raises_with_package_names(self, monkeypatch):
         """is_extra_available 返回 False 时抛错，且消息含具体缺失发行版名。"""
-        from vibeocr.core.pipelines import pipeline_table
+        from vibeocr.backend.core.pipelines import pipeline_table
 
         pdx_deps = _install_fake_paddlex_deps(monkeypatch)
         ocr_deps = list(pdx_deps.EXTRAS.get("ocr", []))
@@ -112,7 +112,7 @@ class TestCheckTableDeps:
 
     def test_multiple_missing_all_listed(self, monkeypatch):
         """多个包缺失时全部列在错误消息里。"""
-        from vibeocr.core.pipelines import pipeline_table
+        from vibeocr.backend.core.pipelines import pipeline_table
 
         pdx_deps = _install_fake_paddlex_deps(monkeypatch)
         # 让 ocr extra 前 3 个包不可用
@@ -141,8 +141,8 @@ class TestCheckTableDeps:
         # 让 from paddlex.utils.deps import ... 抛 ImportError
         import builtins
 
-        from vibeocr.core.pipelines import pipeline_table
-        from vibeocr.services.env_config import OCR_CHECK_LEAF_MODULES
+        from vibeocr.backend.core.pipelines import pipeline_table
+        from vibeocr.backend.services.env_config import OCR_CHECK_LEAF_MODULES
 
         real_import = builtins.__import__
 
@@ -285,7 +285,7 @@ class TestBackfillEmptyTableCells:
 
     def test_backfills_text_into_empty_cell(self):
         """空单元格（<td></td>）中心落有 OCR 文本 → 回填进该单元格。"""
-        from vibeocr.core.pipelines.pipeline_table import (
+        from vibeocr.backend.core.pipelines.pipeline_table import (
             _backfill_empty_table_cells,
         )
 
@@ -309,7 +309,7 @@ class TestBackfillEmptyTableCells:
 
     def test_absorbs_conflicting_text_in_filled_cell(self):
         """已填单元格吸收额外 OCR，保留文字且不再生成独立文本框。"""
-        from vibeocr.core.pipelines.pipeline_table import (
+        from vibeocr.backend.core.pipelines.pipeline_table import (
             _backfill_empty_table_cells,
         )
 
@@ -325,7 +325,7 @@ class TestBackfillEmptyTableCells:
 
     def test_filled_cells_absorb_unmatched_ocr(self):
         """没有空单元格时仍吸收表内 OCR，避免独立文本框重复。"""
-        from vibeocr.core.pipelines.pipeline_table import (
+        from vibeocr.backend.core.pipelines.pipeline_table import (
             _backfill_empty_table_cells,
         )
 
@@ -340,7 +340,7 @@ class TestBackfillEmptyTableCells:
 
     def test_none_cell_box_list_returns_unchanged(self):
         """无 cell_box_list 时安全降级：不回填、不崩。"""
-        from vibeocr.core.pipelines.pipeline_table import (
+        from vibeocr.backend.core.pipelines.pipeline_table import (
             _backfill_empty_table_cells,
         )
 
@@ -352,7 +352,7 @@ class TestBackfillEmptyTableCells:
 
     def test_none_center_ocr_skipped(self):
         """OCR 项无 center（缺 poly）时不参与回填，不崩。"""
-        from vibeocr.core.pipelines.pipeline_table import (
+        from vibeocr.backend.core.pipelines.pipeline_table import (
             _backfill_empty_table_cells,
         )
 
@@ -367,7 +367,7 @@ class TestBackfillEmptyTableCells:
 
     def test_multiple_empty_cells_distribute_by_geometry(self):
         """多个空单元格时，OCR 按几何落点分配到对应单元格（不靠位置序号）。"""
-        from vibeocr.core.pipelines.pipeline_table import (
+        from vibeocr.backend.core.pipelines.pipeline_table import (
             _backfill_empty_table_cells,
         )
 
@@ -393,7 +393,7 @@ class TestBackfillEmptyTableCells:
         assert left_pos < right_pos
 
     def test_unordered_cell_boxes_are_matched_in_visual_order(self):
-        from vibeocr.core.pipelines.pipeline_table import (
+        from vibeocr.backend.core.pipelines.pipeline_table import (
             _backfill_empty_table_cells,
         )
 
@@ -412,7 +412,7 @@ class TestBackfillEmptyTableCells:
         assert consumed == {0}
 
     def test_same_row_y_jitter_does_not_override_left_to_right_order(self):
-        from vibeocr.core.pipelines.pipeline_table import (
+        from vibeocr.backend.core.pipelines.pipeline_table import (
             _backfill_empty_table_cells,
         )
 
@@ -430,7 +430,7 @@ class TestBackfillEmptyTableCells:
         assert "<td>左字</td><td></td>" in new_html
 
     def test_middle_column_rowspan_maps_boxes_to_logical_cells(self):
-        from vibeocr.core.pipelines.pipeline_table import (
+        from vibeocr.backend.core.pipelines.pipeline_table import (
             _backfill_empty_table_cells,
         )
 
@@ -464,7 +464,7 @@ class TestBackfillEmptyTableCells:
         assert consumed == {0, 1, 2}
 
     def test_combined_colspan_rowspan_maps_by_logical_grid(self):
-        from vibeocr.core.pipelines.pipeline_table import (
+        from vibeocr.backend.core.pipelines.pipeline_table import (
             _backfill_empty_table_cells,
         )
 
@@ -497,7 +497,7 @@ class TestBackfillEmptyTableCells:
         assert consumed == {0, 1}
 
     def test_missing_box_skips_unprovable_mapping(self, caplog):
-        from vibeocr.core.pipelines.pipeline_table import (
+        from vibeocr.backend.core.pipelines.pipeline_table import (
             _backfill_empty_table_cells,
         )
 
@@ -515,7 +515,7 @@ class TestBackfillEmptyTableCells:
         assert "无法从 cell_box_list 证明" in caplog.text
 
     def test_extra_valid_box_skips_entire_table_mapping(self):
-        from vibeocr.core.pipelines.pipeline_table import (
+        from vibeocr.backend.core.pipelines.pipeline_table import (
             _backfill_empty_table_cells,
         )
 
@@ -541,7 +541,7 @@ class TestBackfillEmptyTableCells:
         assert warnings == ["table-extra:cell-all:cell-box-count-mismatch"]
 
     def test_oversized_rowspan_is_rejected_before_grid_expansion(self):
-        from vibeocr.core.pipelines.pipeline_table import (
+        from vibeocr.backend.core.pipelines.pipeline_table import (
             _backfill_empty_table_cells,
         )
 
@@ -563,7 +563,7 @@ class TestBackfillEmptyTableCells:
         assert warnings == ["table-limit:cell-0:span-limit-exceeded"]
 
     def test_oversized_span_coverage_is_rejected_before_grid_expansion(self):
-        from vibeocr.core.pipelines.pipeline_table import (
+        from vibeocr.backend.core.pipelines.pipeline_table import (
             _backfill_empty_table_cells,
         )
 
@@ -585,7 +585,7 @@ class TestBackfillEmptyTableCells:
         assert warnings == ["table-coverage:cell-0:span-limit-exceeded"]
 
     def test_overlapping_cell_boxes_choose_smallest_containing_box(self):
-        from vibeocr.core.pipelines.pipeline_table import (
+        from vibeocr.backend.core.pipelines.pipeline_table import (
             _backfill_empty_table_cells,
         )
 
@@ -603,7 +603,7 @@ class TestBackfillEmptyTableCells:
         assert "<td></td><td>右字</td>" in new_html
 
     def test_invalid_cell_box_does_not_displace_valid_geometry(self):
-        from vibeocr.core.pipelines.pipeline_table import (
+        from vibeocr.backend.core.pipelines.pipeline_table import (
             _backfill_empty_table_cells,
         )
 
@@ -928,42 +928,42 @@ def test_recognize_table_html_projection_preserves_rowspan():
 
 class TestTablePureHelpers:
     def test_point_in_box_inside(self):
-        from vibeocr.core.pipelines.pipeline_table import _point_in_box
+        from vibeocr.backend.core.pipelines.pipeline_table import _point_in_box
 
         assert _point_in_box(5, 5, (0, 0, 10, 10)) is True
 
     def test_point_in_box_on_boundary(self):
-        from vibeocr.core.pipelines.pipeline_table import _point_in_box
+        from vibeocr.backend.core.pipelines.pipeline_table import _point_in_box
 
         assert _point_in_box(0, 0, (0, 0, 10, 10)) is True
         assert _point_in_box(10, 10, (0, 0, 10, 10)) is True
 
     def test_point_in_box_outside(self):
-        from vibeocr.core.pipelines.pipeline_table import _point_in_box
+        from vibeocr.backend.core.pipelines.pipeline_table import _point_in_box
 
         assert _point_in_box(11, 5, (0, 0, 10, 10)) is False
         assert _point_in_box(5, -1, (0, 0, 10, 10)) is False
 
     def test_parse_cell_box_valid(self):
-        from vibeocr.core.pipelines.pipeline_table import _parse_cell_box
+        from vibeocr.backend.core.pipelines.pipeline_table import _parse_cell_box
 
         assert _parse_cell_box([1, 2, 3, 4]) == (1.0, 2.0, 3.0, 4.0)
 
     def test_parse_cell_box_degenerate_returns_none(self):
         """退化框（x0>=x2 或 y0>=y3）返回 None。"""
-        from vibeocr.core.pipelines.pipeline_table import _parse_cell_box
+        from vibeocr.backend.core.pipelines.pipeline_table import _parse_cell_box
 
         assert _parse_cell_box([5, 2, 3, 4]) is None  # x0 > x2
         assert _parse_cell_box([1, 5, 3, 4]) is None  # y0 > y3
 
     def test_parse_cell_box_non_finite_returns_none(self):
-        from vibeocr.core.pipelines.pipeline_table import _parse_cell_box
+        from vibeocr.backend.core.pipelines.pipeline_table import _parse_cell_box
 
         assert _parse_cell_box([1, 2, float("inf"), 4]) is None
         assert _parse_cell_box([1, 2, 3, float("nan")]) is None
 
     def test_parse_cell_box_invalid_type_returns_none(self):
-        from vibeocr.core.pipelines.pipeline_table import _parse_cell_box
+        from vibeocr.backend.core.pipelines.pipeline_table import _parse_cell_box
 
         assert _parse_cell_box(None) is None
         assert _parse_cell_box("not-a-box") is None
@@ -971,7 +971,7 @@ class TestTablePureHelpers:
         assert _parse_cell_box([True, 2, 3, 4]) is None  # bool 不算 Real
 
     def test_parse_cell_box_with_tolist(self):
-        from vibeocr.core.pipelines.pipeline_table import _parse_cell_box
+        from vibeocr.backend.core.pipelines.pipeline_table import _parse_cell_box
 
         class _FakeArray:
             def tolist(self):
@@ -980,7 +980,7 @@ class TestTablePureHelpers:
         assert _parse_cell_box(_FakeArray()) == (1.0, 2.0, 3.0, 4.0)
 
     def test_normalize_match_text(self):
-        from vibeocr.core.pipelines.pipeline_table import _normalize_match_text
+        from vibeocr.backend.core.pipelines.pipeline_table import _normalize_match_text
 
         assert _normalize_match_text("Hello World") == "helloworld"
         assert _normalize_match_text("  a\tb\n") == "ab"

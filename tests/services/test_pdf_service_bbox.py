@@ -3,7 +3,7 @@
 
 import fitz
 
-from vibeocr.services.pdf_service import PdfService
+from vibeocr.backend.services.pdf_service import PdfService
 
 # 标准信纸尺寸 page_rect: 612×792 points
 _PAGE_RECT = fitz.Rect(0, 0, 612, 792)

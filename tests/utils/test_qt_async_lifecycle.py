@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import threading
 
-from vibeocr.utils.qt_async import (
+from vibeocr.classic.utils.qt_async import (
     DelayedAsyncTask,
     are_tracked_native_jobs_drained,
     tracked_to_thread,

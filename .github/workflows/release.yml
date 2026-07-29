@@ -60,7 +60,7 @@ permissions:
   contents: write  # softprops/action-gh-release 创建 Release 需要
 
 env:
-  PYTHONPATH: "${{ github.workspace }}/packages/vibeocr-contracts-py/src;${{ github.workspace }}/packages/vibeocr-client-py/src;${{ github.workspace }}/packages/vibeocr-backend/src;${{ github.workspace }}/apps/vibeocr-pyside/src"
+  PYTHONPATH: "${{ github.workspace }}/packages/vibeocr-contracts-py/src;${{ github.workspace }}/packages/vibeocr-runtime-client-py/src;${{ github.workspace }}/packages/vibeocr-backend/src;${{ github.workspace }}/apps/vibeocr-pyside/src"
   # 控制本次发版生成哪些安装包。取值：
   #   pyside6  仅 PySide6 Classic（PyInstaller 打 main.py，VibeOCR-Classic-*.zip）
   #   winui    仅 WinUI Next（dotnet publish，VibeOCR-Next-*.zip，开发预览）
@@ -106,10 +106,10 @@ jobs:
         run: |
           version="$(
             sed -n 's/^version = "\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)"/\1/p' \
-              pyproject.toml | head -n 1
+              apps/vibeocr-pyside/pyproject.toml | head -n 1
           )"
           if [[ -z "$version" ]]; then
-            echo "::error::无法从 pyproject.toml 解析当前版本"
+            echo "::error::无法从 Classic pyproject.toml 解析当前版本"
             exit 1
           fi
 
@@ -184,7 +184,7 @@ jobs:
         run: |
           actual_version="$(
             sed -n 's/^version = "\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)"/\1/p' \
-              pyproject.toml | head -n 1
+              apps/vibeocr-pyside/pyproject.toml | head -n 1
           )"
           if [[ "$actual_version" != "$EXPECTED_VERSION" ]]; then
             echo "::error::质量门前后版本不一致：expected=$EXPECTED_VERSION actual=$actual_version"
@@ -203,7 +203,7 @@ jobs:
 
           next_version="$(
             sed -n 's/^version = "\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)"/\1/p' \
-              pyproject.toml | head -n 1
+              apps/vibeocr-pyside/pyproject.toml | head -n 1
           )"
           git rev-parse --verify "refs/tags/v${next_version}^{commit}"
           echo "version=$next_version" >> "$GITHUB_OUTPUT"

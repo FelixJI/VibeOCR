@@ -3,7 +3,7 @@
 import pytest
 from PySide6.QtWidgets import QApplication, QLabel
 
-from vibeocr.widgets.collapsible_group_box import CollapsibleGroupBox
+from vibeocr.classic.widgets.collapsible_group_box import CollapsibleGroupBox
 
 
 @pytest.fixture

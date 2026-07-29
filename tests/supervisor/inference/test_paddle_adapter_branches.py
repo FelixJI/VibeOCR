@@ -14,9 +14,9 @@ from typing import Any
 import pytest
 from PIL import Image
 
-from vibeocr.protocol.v2 import PipelineSpec, SettingsSnapshot
-from vibeocr.supervisor.inference.budgets import InputItem
-from vibeocr.supervisor.inference.paddle_adapter import PaddlePipelineAdapter
+from vibeocr.backend.supervisor.inference.budgets import InputItem
+from vibeocr.backend.supervisor.inference.paddle_adapter import PaddlePipelineAdapter
+from vibeocr.runtime_contracts import PipelineSpec, SettingsSnapshot
 
 
 def _png_bytes(mode: str = "RGB", color: tuple = (255, 0, 0)) -> bytes:
@@ -77,13 +77,13 @@ def test_capability_real_batch_detection_swallows_registry_error(
     import sys
     import types
 
-    fake_pipelines = types.ModuleType("vibeocr.core.pipelines")
+    fake_pipelines = types.ModuleType("vibeocr.backend.core.pipelines")
 
     def raising_get_registry():  # type: ignore[no-untyped-def]
         raise RuntimeError("registry broken")
 
     fake_pipelines.get_registry = raising_get_registry  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "vibeocr.core.pipelines", fake_pipelines)
+    monkeypatch.setitem(sys.modules, "vibeocr.backend.core.pipelines", fake_pipelines)
 
     adapter = PaddlePipelineAdapter(service=_FakeService(), pipeline_name="OCR")
     assert adapter._pipeline_supports_real_batch("OCR") is False
@@ -106,13 +106,13 @@ def test_capability_real_batch_detection_returns_true_when_registry_has_batch(
         def get(self, name):  # type: ignore[no-untyped-def]
             return _Spec()
 
-    fake_pipelines = types.ModuleType("vibeocr.core.pipelines")
+    fake_pipelines = types.ModuleType("vibeocr.backend.core.pipelines")
     fake_pipelines.get_registry = lambda: _Reg()  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "vibeocr.core.pipelines", fake_pipelines)
+    monkeypatch.setitem(sys.modules, "vibeocr.backend.core.pipelines", fake_pipelines)
 
     adapter = PaddlePipelineAdapter(service=_FakeService(), pipeline_name="OCR")
     # The cache must be bypassed: use a fresh pipeline name.
-    cap = adapter.capabilities(__import__("vibeocr.protocol.v2", fromlist=["PipelineSelection"]).PipelineSelection("OCR"))
+    cap = adapter.capabilities(__import__("vibeocr.runtime_contracts", fromlist=["PipelineSelection"]).PipelineSelection("OCR"))
     assert cap.real_batch is True
 
 
@@ -132,7 +132,7 @@ def test_preload_logs_failure_when_service_raises(
     with (
         caplog.at_level(
             logging.ERROR,
-            logger="vibeocr.supervisor.inference.paddle_adapter",
+            logger="vibeocr.backend.supervisor.inference.paddle_adapter",
         ),
         pytest.raises(RuntimeError, match="preload failed"),
     ):
@@ -299,7 +299,7 @@ def test_residency_status_marks_pinned_and_soft_ttl_entries() -> None:
     adapter = PaddlePipelineAdapter(service=service, pipeline_name="OCR")
     status = adapter.residency_status()
     by_name = {e.pipeline: e for e in status.entries}
-    from vibeocr.protocol.v2 import ResidencyKind
+    from vibeocr.runtime_contracts import ResidencyKind
 
     assert by_name["OCR"].kind is ResidencyKind.PINNED
     assert by_name["OCR"].active_leases == 1

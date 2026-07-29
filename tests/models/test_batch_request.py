@@ -2,7 +2,7 @@
 
 import time
 
-from vibeocr.models.batch_request import (
+from vibeocr.backend.models.batch_request import (
     BatchProgress,
     BatchRequest,
     BatchRequestStatus,

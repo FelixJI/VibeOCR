@@ -14,7 +14,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from vibeocr.core.pipelines.pipeline_ocr import (
+from vibeocr.backend.core.pipelines.pipeline_ocr import (
     _build_ocr_result,
     _consume_generator_safely,
     _extract_bbox,
@@ -24,7 +24,7 @@ from vibeocr.core.pipelines.pipeline_ocr import (
     _recognize_ocr,
     _recognize_ocr_batch,
 )
-from vibeocr.models.ocr_options import OCROptions
+from vibeocr.backend.models.ocr_options import OCROptions
 
 
 class TestExtractBbox:

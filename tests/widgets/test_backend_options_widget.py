@@ -114,7 +114,7 @@ def _make_widget(
     GPU 探测由后台 _GpuDetectWorker 完成；测试用 _StubGpuDetectWorker 替换，
     构造后显式 emit finished_info 同步触发回填，避免依赖真线程时序。
     """
-    from vibeocr.widgets import backend_options_widget as bow
+    from vibeocr.classic.widgets import backend_options_widget as bow
 
     # 直接替换模块级引用（widget 内 from ... import 拿到的就是模块属性）
     orig_em = bow.env_manager
@@ -316,7 +316,7 @@ def test_close_drops_late_gpu_detection_result(_cleanup, qtbot, tmp_path):
 def test_cancelled_gpu_worker_does_not_emit_result(
     _cleanup, tmp_path, monkeypatch
 ):
-    from vibeocr.widgets import backend_options_widget as bow
+    from vibeocr.classic.widgets import backend_options_widget as bow
 
     def detect(cancel_event):
         cancel_event.set()
@@ -338,7 +338,7 @@ def test_cancelled_gpu_worker_does_not_emit_result(
 def test_gpu_worker_is_kept_until_finished_then_released(
     _cleanup, qtbot, tmp_path
 ):
-    from vibeocr.widgets import backend_options_widget as bow
+    from vibeocr.classic.widgets import backend_options_widget as bow
 
     widget = _make_widget(
         tmp_path,
@@ -365,7 +365,7 @@ def test_gpu_worker_is_kept_until_finished_then_released(
 def test_running_qthread_outlives_widget_and_releases_after_finished(
     _cleanup, qtbot, tmp_path
 ):
-    from vibeocr.widgets import backend_options_widget as bow
+    from vibeocr.classic.widgets import backend_options_widget as bow
 
     widget = _make_widget(
         tmp_path,

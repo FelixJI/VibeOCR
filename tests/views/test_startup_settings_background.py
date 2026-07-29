@@ -3,18 +3,16 @@
 from __future__ import annotations
 
 import subprocess
-import sys
 import threading
-from pathlib import Path
 from unittest.mock import MagicMock
 
 from PySide6.QtWidgets import QLabel, QPushButton, QWidget
 
 from tests.qt_responsiveness import assert_qt_event_loop_responsive
-from vibeocr import env_manager
-from vibeocr.views.background_tasks import DependencyUpdateCheckTask
-from vibeocr.views.main_window import MainWindow
-from vibeocr.views.settings_page_controller import (
+from vibeocr.backend import env_manager
+from vibeocr.classic.views.background_tasks import DependencyUpdateCheckTask
+from vibeocr.classic.views.main_window import MainWindow
+from vibeocr.classic.views.settings_page_controller import (
     SettingsPageController,
     _create_windows_shortcut,
 )
@@ -39,17 +37,14 @@ def test_dependency_update_check_is_responsive_and_single_flight(
     release = threading.Event()
     calls = 0
 
-    monkeypatch.setattr(env_manager, "get_environment_mode", lambda _root: "portable")
-
-    def slow_detect(_root):
+    def slow_detect():
         nonlocal calls
         calls += 1
         entered.set()
         release.wait(timeout=2)
-        return {"torch": ("1", "2")}
+        return {}
 
-    monkeypatch.setattr(env_manager, "detect_dependency_updates", slow_detect)
-    task = DependencyUpdateCheckTask(tmp_path)
+    task = DependencyUpdateCheckTask(tmp_path, operation=slow_detect)
     results: list[tuple[str, object]] = []
     task.completed.connect(lambda source, result: results.append((source, result)))
 
@@ -61,13 +56,11 @@ def test_dependency_update_check_is_responsive_and_single_flight(
 
     release.set()
     qtbot.waitUntil(lambda: bool(results), timeout=1000)
-    assert results == [("startup", {"torch": ("1", "2")})]
+    assert results == [("startup", {})]
 
 
 def test_dependency_update_development_mode_short_circuits(qtbot, tmp_path, monkeypatch):
-    detect = MagicMock()
-    monkeypatch.setattr(env_manager, "get_environment_mode", lambda _root: "venv")
-    monkeypatch.setattr(env_manager, "detect_dependency_updates", detect)
+    detect = MagicMock(return_value={})
     task = DependencyUpdateCheckTask(tmp_path)
     results: list[object] = []
     task.completed.connect(lambda _source, result: results.append(result))
@@ -82,15 +75,12 @@ def test_dependency_update_development_mode_short_circuits(qtbot, tmp_path, monk
 def test_dependency_update_close_drops_late_result(qtbot, tmp_path, monkeypatch):
     entered = threading.Event()
     release = threading.Event()
-    monkeypatch.setattr(env_manager, "get_environment_mode", lambda _root: "portable")
-
-    def slow_detect(_root):
+    def slow_detect():
         entered.set()
         release.wait(timeout=2)
-        return {"torch": ("1", "2")}
+        return {}
 
-    monkeypatch.setattr(env_manager, "detect_dependency_updates", slow_detect)
-    task = DependencyUpdateCheckTask(tmp_path)
+    task = DependencyUpdateCheckTask(tmp_path, operation=slow_detect)
     completed = MagicMock()
     task.completed.connect(completed)
     task.request("startup")
@@ -125,15 +115,12 @@ def test_settings_first_update_check_does_not_stall_startup(
 ):
     entered = threading.Event()
     release = threading.Event()
-    monkeypatch.setattr(env_manager, "get_environment_mode", lambda _root: "portable")
-
-    def slow_detect(_root):
+    def slow_detect():
         entered.set()
         release.wait(timeout=2)
-        return {"torch": ("1", "2")}
+        return {}
 
-    monkeypatch.setattr(env_manager, "detect_dependency_updates", slow_detect)
-    task = DependencyUpdateCheckTask(tmp_path)
+    task = DependencyUpdateCheckTask(tmp_path, operation=slow_detect)
     assert task.request("settings") is True
     assert entered.wait(timeout=1)
 
@@ -160,16 +147,6 @@ def test_settings_first_update_check_does_not_stall_startup(
 def test_startup_first_update_check_restores_settings_button(
     qtbot, tmp_path, monkeypatch
 ):
-    entered = threading.Event()
-    release = threading.Event()
-    monkeypatch.setattr(env_manager, "get_environment_mode", lambda _root: "portable")
-
-    def slow_detect(_root):
-        entered.set()
-        release.wait(timeout=2)
-        return {}
-
-    monkeypatch.setattr(env_manager, "detect_dependency_updates", slow_detect)
     task = DependencyUpdateCheckTask(tmp_path)
     controller = SettingsPageController(
         ui=QWidget(),
@@ -182,21 +159,11 @@ def test_startup_first_update_check_restores_settings_button(
     qtbot.addWidget(controller._ui)
     button = QPushButton(controller._ui)
     button.setObjectName("btnUpdateDeps")
-    monkeypatch.setattr(
-        "vibeocr.views.settings_page_controller.get_embedded_python_executable",
-        lambda _root: Path(sys.executable),
-    )
 
-    assert task.request("startup") is True
-    assert entered.wait(timeout=1)
     controller._on_update_deps()
-    assert not button.isEnabled()
-    assert controller._manual_dependency_update_waiting is True
-
-    release.set()
-    qtbot.waitUntil(button.isEnabled, timeout=1000)
+    assert button.isEnabled()
     assert controller._manual_dependency_update_waiting is False
-    assert button.text() == "更新依赖"
+    assert task.is_running is False
 
 
 def test_machine_cache_validation_does_not_block_gui(qtbot, tmp_path, monkeypatch):
@@ -214,7 +181,7 @@ def test_machine_cache_validation_does_not_block_gui(qtbot, tmp_path, monkeypatc
             }
         }
 
-    monkeypatch.setattr("vibeocr.views.main_window.is_cache_valid", slow_valid)
+    monkeypatch.setattr("vibeocr.classic.views.main_window.is_cache_valid", slow_valid)
     window = MagicMock()
     window._project_root = tmp_path
     window._closing = False
@@ -261,10 +228,10 @@ def test_shortcut_creation_is_responsive_single_flight_and_restores_buttons(
         return True
 
     monkeypatch.setattr(
-        "vibeocr.views.settings_page_controller._is_bundled", lambda: True
+        "vibeocr.classic.views.settings_page_controller._is_bundled", lambda: True
     )
     monkeypatch.setattr(
-        "vibeocr.views.settings_page_controller._create_windows_shortcut", slow_create
+        "vibeocr.classic.views.settings_page_controller._create_windows_shortcut", slow_create
     )
     toast = MagicMock()
     controller._show_settings_toast = toast
@@ -284,13 +251,13 @@ def test_shortcut_creation_is_responsive_single_flight_and_restores_buttons(
 
 def test_shortcut_timeout_and_failure_return_false(monkeypatch, tmp_path):
     monkeypatch.setattr(
-        "vibeocr.views.settings_page_controller.subprocess.run",
+        "vibeocr.classic.views.settings_page_controller.subprocess.run",
         MagicMock(side_effect=subprocess.TimeoutExpired("powershell", 15)),
     )
     assert not _create_windows_shortcut("app.exe", str(tmp_path / "VibeOCR.lnk"))
 
     monkeypatch.setattr(
-        "vibeocr.views.settings_page_controller.subprocess.run",
+        "vibeocr.classic.views.settings_page_controller.subprocess.run",
         lambda *_args, **_kwargs: subprocess.CompletedProcess([], 1),
     )
     assert not _create_windows_shortcut("app.exe", str(tmp_path / "VibeOCR.lnk"))

@@ -6,7 +6,20 @@ import json
 
 import pytest
 
-from vibeocr.protocol.v2 import (
+from vibeocr.runtime_client.client import SupervisorClient
+from vibeocr.runtime_client.contracts import (
+    JobSnapshot as CSnapshot,
+)
+from vibeocr.runtime_client.contracts import (
+    parse_job_snapshot,
+)
+from vibeocr.runtime_client.job_handle import JobHandle
+from vibeocr.runtime_client.process import (
+    ReadyEnvelope,
+    SupervisorLaunchError,
+    generate_token,
+)
+from vibeocr.runtime_contracts import (
     CancelMode,
     JobCommand,
     JobCommandKind,
@@ -19,19 +32,9 @@ from vibeocr.protocol.v2 import (
     JobUpdate,
     StageEvent,
 )
-from vibeocr.protocol.v2.generated.capabilities import OCR_RECOGNITION_V2, PDF_EDIT_V2
-from vibeocr.supervisor.client import SupervisorClient
-from vibeocr.supervisor.contracts import (
-    JobSnapshot as CSnapshot,
-)
-from vibeocr.supervisor.contracts import (
-    parse_job_snapshot,
-)
-from vibeocr.supervisor.job_handle import JobHandle
-from vibeocr.supervisor.process import (
-    ReadyEnvelope,
-    SupervisorLaunchError,
-    generate_token,
+from vibeocr.runtime_contracts.generated.capabilities import (
+    OCR_RECOGNITION_V2,
+    PDF_EDIT_V2,
 )
 
 # ---------------------------------------------------------------------------
@@ -80,7 +83,7 @@ def test_generate_token_is_unique() -> None:
 def test_contracts_reexport_aliases_match_v2() -> None:
     # The client contracts module re-exports the v2 DTOs.
     assert CancelMode is not None
-    from vibeocr.protocol.v2 import CancelMode as V2CancelMode
+    from vibeocr.runtime_contracts import CancelMode as V2CancelMode
 
     assert CancelMode is V2CancelMode
     assert CSnapshot is JobSnapshot
@@ -214,7 +217,7 @@ async def test_job_handle_cancel_delegates_to_client() -> None:
 
 
 def test_supervisor_process_not_launched_accessors_raise() -> None:
-    from vibeocr.supervisor.process import SupervisorProcess
+    from vibeocr.runtime_client.process import SupervisorProcess
 
     proc = SupervisorProcess(python_exe="python")
     with pytest.raises(SupervisorLaunchError):
@@ -233,7 +236,7 @@ def test_supervisor_process_launches_module_from_frozen_bundle(
     """打包态的外部 Python 必须能从 PyInstaller ``_MEIPASS`` 导入模块。"""
     import sys
 
-    from vibeocr.supervisor.process import SupervisorProcess
+    from vibeocr.runtime_client.process import SupervisorProcess
 
     bundle_root = tmp_path / "_internal"
     package = bundle_root / "fake_supervisor"
@@ -279,7 +282,7 @@ def test_supervisor_process_binds_job_object_and_closes_it(monkeypatch) -> None:
     from io import StringIO
     from unittest.mock import Mock
 
-    import vibeocr.supervisor.process as process_module
+    import vibeocr.runtime_client.process as process_module
 
     guard = Mock()
     monkeypatch.setattr(process_module, "JobObjectGuard", lambda: guard)
@@ -319,7 +322,7 @@ def test_supervisor_process_decodes_utf8_logs_independent_of_windows_locale(
     from io import BytesIO, TextIOWrapper
     from unittest.mock import Mock
 
-    import vibeocr.supervisor.process as process_module
+    import vibeocr.runtime_client.process as process_module
 
     payload = "Supervisor 预加载完成\n".encode()
     popen = Mock(pid=4321)
@@ -361,14 +364,14 @@ def test_supervisor_process_forwards_child_output_to_application_log(caplog) -> 
     import logging
     from io import StringIO
 
-    import vibeocr.supervisor.process as process_module
+    import vibeocr.runtime_client.process as process_module
 
     proc = process_module.SupervisorProcess(python_exe="python")
     child_line = (
         "[Supervisor][Recognize] pipeline=OCR items=1 result=success elapsed_ms=12.3\n"
     )
 
-    with caplog.at_level(logging.INFO, logger="vibeocr.supervisor.process"):
+    with caplog.at_level(logging.INFO, logger="vibeocr.runtime_client.process"):
         proc._drain_stream(StringIO(child_line))
 
     assert proc.log_lines == [child_line.rstrip()]
@@ -379,14 +382,14 @@ def test_supervisor_process_discards_http_access_log_noise(caplog) -> None:
     import logging
     from io import StringIO
 
-    import vibeocr.supervisor.process as process_module
+    import vibeocr.runtime_client.process as process_module
 
     proc = process_module.SupervisorProcess(python_exe="python")
     access_line = (
         'INFO:     127.0.0.1:57001 - "GET /v2/runtime/residency HTTP/1.1" 200 OK\n'
     )
 
-    with caplog.at_level(logging.DEBUG, logger="vibeocr.supervisor.process"):
+    with caplog.at_level(logging.DEBUG, logger="vibeocr.runtime_client.process"):
         proc._drain_stream(StringIO(access_line))
 
     assert proc.log_lines == []
@@ -399,7 +402,7 @@ def test_supervisor_process_launch_failure_releases_process_and_job(
     from io import StringIO
     from unittest.mock import Mock
 
-    import vibeocr.supervisor.process as process_module
+    import vibeocr.runtime_client.process as process_module
 
     guard = Mock()
     monkeypatch.setattr(process_module, "JobObjectGuard", lambda: guard)
@@ -429,7 +432,7 @@ def test_drain_stream_parses_uvicorn_access_line(caplog):
     """_drain_stream 解析 uvicorn access 日志并调用 log_http_response（line 220-230）。"""
     import logging
 
-    from vibeocr.supervisor.process import SupervisorProcess
+    from vibeocr.runtime_client.process import SupervisorProcess
 
     proc = SupervisorProcess.__new__(SupervisorProcess)
     proc._log_lines = []
@@ -451,7 +454,7 @@ def test_drain_stream_parses_http_request_line(caplog):
     """_drain_stream 解析 HTTP 请求行（line 232-243）。"""
     import logging
 
-    from vibeocr.supervisor.process import SupervisorProcess
+    from vibeocr.runtime_client.process import SupervisorProcess
 
     proc = SupervisorProcess.__new__(SupervisorProcess)
     proc._log_lines = []
@@ -467,7 +470,7 @@ def test_drain_stream_parses_http_request_line(caplog):
 
 def test_drain_stream_empty_lines_appended():
     """空行也进 _log_lines（line 244-246）。"""
-    from vibeocr.supervisor.process import SupervisorProcess
+    from vibeocr.runtime_client.process import SupervisorProcess
 
     proc = SupervisorProcess.__new__(SupervisorProcess)
     proc._log_lines = []

@@ -7,14 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from vibeocr.protocol.v2 import ErrorCode, JobKind, JobPriority, JobState
-from vibeocr.protocol.v2.generated.capabilities import OCR_RECOGNITION_V2
-from vibeocr.supervisor.auth import (
+from vibeocr.backend.supervisor.auth import (
     check_bearer_token,
     check_loopback,
     is_bootstrap_path,
 )
-from vibeocr.supervisor.bootstrap import (
+from vibeocr.backend.supervisor.bootstrap import (
     BootstrapHandle,
     ReadyEnvelope,
     bind_loopback_socket,
@@ -23,8 +21,10 @@ from vibeocr.supervisor.bootstrap import (
     new_instance_id,
     token_from_environment,
 )
-from vibeocr.supervisor.jobs.registry import JobRegistry
-from vibeocr.supervisor.jobs.retention import RetentionPolicy
+from vibeocr.backend.supervisor.jobs.registry import JobRegistry
+from vibeocr.backend.supervisor.jobs.retention import RetentionPolicy
+from vibeocr.runtime_contracts import ErrorCode, JobKind, JobPriority, JobState
+from vibeocr.runtime_contracts.generated.capabilities import OCR_RECOGNITION_V2
 
 INSTANCE = "sup-test"
 
@@ -156,7 +156,7 @@ def test_emit_ready_writes_single_json_line(tmp_path: Path) -> None:
 def test_supervisor_uvicorn_config_disables_access_log() -> None:
     from types import SimpleNamespace
 
-    import vibeocr.supervisor.main as main_module
+    import vibeocr.backend.supervisor.main as main_module
 
     captured: dict[str, object] = {}
 
@@ -180,7 +180,7 @@ def test_t6_self_test_result_records_actual_supervisor_source(
 ) -> None:
     import sys
 
-    import vibeocr.supervisor.main as main_module
+    import vibeocr.backend.supervisor.main as main_module
 
     result = tmp_path / "supervisor-result.json"
     monkeypatch.setenv("VIBEOCR_SELF_TEST_SMOKE", "t6")
@@ -201,7 +201,7 @@ def test_t6_self_test_result_records_actual_supervisor_source(
 def test_production_supervisor_does_not_write_self_test_result(
     monkeypatch, tmp_path: Path
 ) -> None:
-    import vibeocr.supervisor.main as main_module
+    import vibeocr.backend.supervisor.main as main_module
 
     result = tmp_path / "supervisor-result.json"
     monkeypatch.delenv("VIBEOCR_SELF_TEST_SMOKE", raising=False)

@@ -13,12 +13,12 @@ import fitz
 import httpx
 import pytest
 
-from vibeocr.managers.pdf_session_manager import PdfSessionManager
-from vibeocr.models.ocr_result import OCRResult, TextBlock
-from vibeocr.services.pdf_service import PdfService
-from vibeocr.supervisor.app import create_app
-from vibeocr.supervisor.composition import build_supervisor
-from vibeocr.supervisor.pdf_client import SyncPdfSupervisorClient
+from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
+from vibeocr.backend.services.pdf_service import PdfService
+from vibeocr.backend.supervisor.app import create_app
+from vibeocr.backend.supervisor.composition import build_supervisor
+from vibeocr.classic.managers.pdf_session_manager import PdfSessionManager
+from vibeocr.classic.pdf_client import SyncPdfSupervisorClient
 
 
 def _make_scanned_pdf(path, width=612, height=792):
@@ -170,7 +170,7 @@ class TestEditFlowE2E:
         )
         # 刷新本地 mirror
         full = manager.backend_client.get_model(session.session_id)
-        from vibeocr.ipc.model_bridge import mirror_to_doc
+        from vibeocr.backend.ipc.model_bridge import mirror_to_doc
         session.pdf_document = mirror_to_doc(full)
 
         # 双击改字(IPC)
@@ -228,7 +228,7 @@ class TestEditFlowE2E:
             session.session_id, 0, ocr_dict, None, False
         )
         full = manager.backend_client.get_model(session.session_id)
-        from vibeocr.ipc.model_bridge import mirror_to_doc
+        from vibeocr.backend.ipc.model_bridge import mirror_to_doc
         session.pdf_document = mirror_to_doc(full)
 
         # 只改第二块
@@ -327,7 +327,7 @@ class TestCrossReaderSearchability:
 
     def test_fallback_when_no_system_font(self, tmp_path, monkeypatch):
         """无系统字体时回退 china-s，文字层仍可被 fitz 提取（不阻断流程）。"""
-        from vibeocr.services.pdf_service import _CJK_RESOLVER
+        from vibeocr.backend.services.pdf_service import _CJK_RESOLVER
 
         # 强制 resolver 探测失败
         monkeypatch.setattr(

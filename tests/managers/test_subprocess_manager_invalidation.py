@@ -6,7 +6,7 @@ import threading
 import time
 from unittest.mock import Mock
 
-from vibeocr.managers.subprocess_manager import SubprocessManager
+from vibeocr.classic.managers.subprocess_manager import SubprocessManager
 
 
 def test_invalidate_supervisor_returns_before_slow_shutdown(
@@ -26,7 +26,7 @@ def test_invalidate_supervisor_returns_before_slow_shutdown(
 
     manager._thread_pool.waitForDone = slow_wait
     monkeypatch.setattr(
-        "vibeocr.pyside.supervisor_adapter.get_supervisor_adapter",
+        "vibeocr.classic.pyside.supervisor_adapter.get_supervisor_adapter",
         lambda: adapter,
     )
 
@@ -53,7 +53,7 @@ def test_failed_invalidation_keeps_process_owned_for_retry(
     manager._is_ready = True
     manager._supervisor_process = process
     monkeypatch.setattr(
-        "vibeocr.pyside.supervisor_adapter.get_supervisor_adapter",
+        "vibeocr.classic.pyside.supervisor_adapter.get_supervisor_adapter",
         lambda: adapter,
     )
     outcomes: list[tuple[bool, str]] = []

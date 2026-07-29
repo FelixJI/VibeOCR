@@ -21,8 +21,8 @@ import pytest
 if TYPE_CHECKING:
     from pathlib import Path
 
-from vibeocr.protocol.v2 import TERMINAL_JOB_STATES, JobState
-from vibeocr.supervisor.composition import build_supervisor
+from vibeocr.backend.supervisor.composition import build_supervisor
+from vibeocr.runtime_contracts import TERMINAL_JOB_STATES, JobState
 
 # ---------------------------------------------------------------------------
 # Availability checks (shared with integration test)
@@ -75,7 +75,7 @@ class TestPaddleBenchmarkMatrix:
         module, _handle = build_supervisor(use_real_paddle=True, stager_root=tmp_path / "staging")
 
         # Warm up the model with a single image first.
-        from vibeocr.protocol.v2 import JobKind, JobPriority
+        from vibeocr.runtime_contracts import JobKind, JobPriority
 
         warmup = _render_text_image("WARMUP")
         ref = module.submit(
@@ -89,7 +89,7 @@ class TestPaddleBenchmarkMatrix:
         images = [_render_text_image(f"IMAGE_{i:02d}") for i in range(batch_size)]
         uploads = [(f"img_{i}.png", "image/png", img) for i, img in enumerate(images)]
 
-        from vibeocr.protocol.v2 import JobKind, JobPriority
+        from vibeocr.runtime_contracts import JobKind, JobPriority
 
         start = time.monotonic()
         batch_ref = module.submit(
@@ -115,7 +115,7 @@ class TestPaddleBenchmarkMatrix:
         module, _handle = build_supervisor(use_real_paddle=True, stager_root=tmp_path / "staging")
         img = _render_text_image("LATENCY TEST")
 
-        from vibeocr.protocol.v2 import JobKind, JobPriority
+        from vibeocr.runtime_contracts import JobKind, JobPriority
 
         # Cold (first inference — model load).
         cold_start = time.monotonic()
@@ -146,7 +146,7 @@ class TestFaultInjection:
 
     def test_cancel_queued_job(self, tmp_path: Path) -> None:
         """A queued job that is cancelled before execution reaches CANCELLED."""
-        from vibeocr.protocol.v2 import CancelMode, JobKind, JobPriority
+        from vibeocr.runtime_contracts import CancelMode, JobKind, JobPriority
 
         module, _ = build_supervisor(executor=_HangingExecutor(), stager_root=tmp_path / "staging")
         ref = module.submit(
@@ -160,7 +160,7 @@ class TestFaultInjection:
 
     def test_oom_recovery_shrinks_batch(self) -> None:
         """RecoveryPolicy: OOM halves the microbatch with bounded retries."""
-        from vibeocr.supervisor.inference.recovery import (
+        from vibeocr.backend.supervisor.inference.recovery import (
             FailureClass,
             RecoveryAction,
             RecoveryPolicy,
@@ -180,7 +180,7 @@ class TestFaultInjection:
 
     def test_bad_input_isolation(self) -> None:
         """RecoveryPolicy: bad input uses bisect isolation."""
-        from vibeocr.supervisor.inference.recovery import (
+        from vibeocr.backend.supervisor.inference.recovery import (
             FailureClass,
             RecoveryAction,
             RecoveryPolicy,
@@ -192,7 +192,7 @@ class TestFaultInjection:
 
     def test_transient_backoff_budget(self) -> None:
         """Transient errors use exponential backoff under a total time budget."""
-        from vibeocr.supervisor.inference.recovery import (
+        from vibeocr.backend.supervisor.inference.recovery import (
             FailureClass,
             RecoveryAction,
             RecoveryPolicy,
@@ -210,8 +210,8 @@ class TestFaultInjection:
 
     def test_supervisor_drain_rejects_new_jobs(self, tmp_path: Path) -> None:
         """A draining supervisor rejects new job submissions."""
-        from vibeocr.protocol.v2 import JobKind, JobPriority
-        from vibeocr.supervisor.module import ShutdownRequested
+        from vibeocr.backend.supervisor.module import ShutdownRequested
+        from vibeocr.runtime_contracts import JobKind, JobPriority
 
         module, _ = build_supervisor(executor=_HangingExecutor(), stager_root=tmp_path / "staging")
         module.begin_drain()
@@ -226,7 +226,7 @@ class TestFaultInjection:
         """shutdown_now releases all staging directories."""
         module, _ = build_supervisor(executor=_HangingExecutor(), stager_root=tmp_path / "staging")
         # Create a staging dir by submitting a job.
-        from vibeocr.protocol.v2 import JobKind, JobPriority
+        from vibeocr.runtime_contracts import JobKind, JobPriority
 
         _ = module.submit(
             kind=JobKind.RECOGNITION,
@@ -249,7 +249,7 @@ class _HangingExecutor:
     """Executor that enters running but never completes (for cancel tests)."""
 
     def execute(self, record, staged) -> None:  # type: ignore[no-untyped-def]
-        from vibeocr.protocol.v2 import JobState
+        from vibeocr.runtime_contracts import JobState
 
         if record.state is JobState.QUEUED:
             record.transition(JobState.RUNNING)
@@ -257,16 +257,16 @@ class _HangingExecutor:
         # Never transition to terminal — hangs forever (test cancels it).
 
     def cancel_mode_for(self, record) -> str:  # type: ignore[no-untyped-def]
-        from vibeocr.protocol.v2 import CancelMode
+        from vibeocr.runtime_contracts import CancelMode
 
         return CancelMode.COOPERATIVE
 
     def residency_status(self):
-        from vibeocr.protocol.v2 import ResidencyStatus
+        from vibeocr.runtime_contracts import ResidencyStatus
 
         return ResidencyStatus()
 
     def release_idle(self, pipeline=None):
-        from vibeocr.protocol.v2 import ResidencyStatus
+        from vibeocr.runtime_contracts import ResidencyStatus
 
         return ResidencyStatus()

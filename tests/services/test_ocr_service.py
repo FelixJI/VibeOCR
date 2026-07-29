@@ -7,8 +7,8 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from vibeocr.models.ocr_result import OCRResult
-from vibeocr.services.ocr_service import OCROptions, OCRPipeline, OCRService
+from vibeocr.backend.models.ocr_result import OCRResult
+from vibeocr.backend.services.ocr_service import OCROptions, OCRPipeline, OCRService
 
 # 检查 paddleocr 是否安装（运行时是否可用取决于环境配置）
 try:
@@ -46,7 +46,7 @@ except ImportError:
 def test_legacy_document_entrypoints_delegate_to_registry(
     monkeypatch, method_name, pipeline_name
 ):
-    import vibeocr.core.pipelines as pipelines
+    import vibeocr.backend.core.pipelines as pipelines
 
     sentinel = OCRResult(raw_text="delegated")
     calls = []
@@ -242,7 +242,7 @@ class TestHtmlTableToMarkdown:
     """测试 _html_table_to_markdown 辅助函数"""
 
     def test_simple_table(self):
-        from vibeocr.services.ocr_service import _html_table_to_markdown
+        from vibeocr.backend.services.ocr_service import _html_table_to_markdown
 
         html = "<table><tr><td>Name</td><td>Age</td></tr><tr><td>Alice</td><td>30</td></tr></table>"
         md = _html_table_to_markdown(html)
@@ -251,7 +251,7 @@ class TestHtmlTableToMarkdown:
         assert "| Alice | 30 |" in md
 
     def test_th_header(self):
-        from vibeocr.services.ocr_service import _html_table_to_markdown
+        from vibeocr.backend.services.ocr_service import _html_table_to_markdown
 
         html = "<table><tr><th>Col1</th><th>Col2</th></tr><tr><td>A</td><td>B</td></tr></table>"
         md = _html_table_to_markdown(html)
@@ -259,20 +259,20 @@ class TestHtmlTableToMarkdown:
         assert "| A | B |" in md
 
     def test_pipe_escaping(self):
-        from vibeocr.services.ocr_service import _html_table_to_markdown
+        from vibeocr.backend.services.ocr_service import _html_table_to_markdown
 
         html = "<table><tr><td>A|B</td></tr></table>"
         md = _html_table_to_markdown(html)
         assert "| A\\|B |" in md
 
     def test_empty_html(self):
-        from vibeocr.services.ocr_service import _html_table_to_markdown
+        from vibeocr.backend.services.ocr_service import _html_table_to_markdown
 
         assert _html_table_to_markdown("<table></table>") == ""
         assert _html_table_to_markdown("") == ""
 
     def test_uneven_columns_padded(self):
-        from vibeocr.services.ocr_service import _html_table_to_markdown
+        from vibeocr.backend.services.ocr_service import _html_table_to_markdown
 
         html = (
             "<table><tr><td>A</td><td>B</td><td>C</td></tr><tr><td>D</td></tr></table>"
@@ -287,7 +287,7 @@ class TestHtmlTableToMarkdown:
         压成 ``行1行2``，丢失多行结构。修复后复用 ``_cell_text``（``<br>→\\n``），
         再把 ``\\n`` 转回 ``<br>`` 以符合 GFM 表格单元格语义。
         """
-        from vibeocr.services.ocr_service import _html_table_to_markdown
+        from vibeocr.backend.services.ocr_service import _html_table_to_markdown
 
         html = "<table><tr><td>行1<br>行2</td><td>正常</td></tr></table>"
         md = _html_table_to_markdown(html)
@@ -299,7 +299,7 @@ class TestHtmlTableToMarkdown:
 
         复用 ``_cell_text`` 会 unescape；旧实现只剥标签不解码实体。
         """
-        from vibeocr.services.ocr_service import _html_table_to_markdown
+        from vibeocr.backend.services.ocr_service import _html_table_to_markdown
 
         html = "<table><tr><td>A&amp;B</td></tr></table>"
         md = _html_table_to_markdown(html)
@@ -311,7 +311,7 @@ class TestCacheManagerIntegration:
 
     def test_ocr_service_has_cache_manager(self):
         """OCRService 实例持有 PipelineCacheManager。"""
-        from vibeocr.services.pipeline_cache_manager import PipelineCacheManager
+        from vibeocr.backend.services.pipeline_cache_manager import PipelineCacheManager
 
         OCRService._reset()
         svc = OCRService()

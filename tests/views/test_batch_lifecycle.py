@@ -5,7 +5,7 @@ from __future__ import annotations
 import threading
 from unittest.mock import MagicMock
 
-from vibeocr.views.batch_recognition_tab import (
+from vibeocr.classic.views.batch_recognition_tab import (
     _ACTIVE_BATCH_WORKERS,
     BatchRecognitionTab,
     BatchRecognitionWorker,
@@ -62,7 +62,7 @@ def _make_tab(
     qtbot, monkeypatch, service, paths: list[str], *, register: bool = True
 ) -> BatchRecognitionTab:
     monkeypatch.setattr(
-        "vibeocr.pipeline_status.is_pipeline_ever_succeeded",
+        "vibeocr.backend.pipeline_status.is_pipeline_ever_succeeded",
         lambda *args, **kwargs: True,
     )
     tab = BatchRecognitionTab(backend=MagicMock())

@@ -1,6 +1,6 @@
 """Markdown 渲染集成测试"""
 
-from vibeocr.utils.markdown_converter import markdown_to_html
+from vibeocr.backend.utils.markdown_converter import markdown_to_html
 
 
 class TestMarkdownRenderingIntegration:

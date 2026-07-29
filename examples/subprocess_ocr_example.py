@@ -41,7 +41,7 @@ def example_basic_usage():
     print("示例 1: 基本使用")
     print("=" * 60)
 
-    from vibeocr.services import OCRService
+    from vibeocr.backend.services import OCRService
 
     # 创建服务实例（单例）
     service = OCRService()
@@ -66,7 +66,7 @@ def example_custom_configuration():
     print("=" * 60)
 
     try:
-        from vibeocr.services.ocr_service_subprocess import OCRServiceSubprocess
+        from vibeocr.backend.services.ocr_service_subprocess import OCRServiceSubprocess
 
         # 创建自定义配置的服务
         service = OCRServiceSubprocess(
@@ -100,7 +100,7 @@ def example_batch_processing():
     print("示例 3: 批量处理多个图像")
     print("=" * 60)
 
-    from vibeocr.services import OCRService
+    from vibeocr.backend.services import OCRService
 
     service = OCRService()
 
@@ -128,7 +128,7 @@ def example_environment_info():
     print("=" * 60)
 
     try:
-        from vibeocr.env_manager import (
+        from vibeocr.backend.env_manager import (
             get_embedded_python,
             get_embedded_python_info,
             is_embedded_python_ready,
@@ -165,7 +165,7 @@ def example_error_handling():
     print("示例 5: 错误处理和降级")
     print("=" * 60)
 
-    from vibeocr.services import OCRService
+    from vibeocr.backend.services import OCRService
 
     service = OCRService()
 

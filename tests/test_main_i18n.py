@@ -5,7 +5,7 @@
 在应用启动时加载 PySide6 附带的 qtbase_zh_CN.qm，使这些对话框文案中文化。
 """
 
-from vibeocr.main import _install_qt_translations
+from vibeocr.classic.main import _install_qt_translations
 
 
 class TestInstallQtTranslations:

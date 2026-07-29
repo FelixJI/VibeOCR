@@ -5,13 +5,13 @@ import sys
 
 import pytest
 
-from vibeocr.core.pipelines import OCRPipeline
-from vibeocr.models.ocr_options import OCROptions
+from vibeocr.backend.core.pipelines import OCRPipeline
+from vibeocr.backend.models.ocr_options import OCROptions
 
 # PySide6 可能在 CI 中不可用，需要跳过
 pyside6 = pytest.importorskip("PySide6")
 
-from vibeocr.widgets.preprocess_options_widget import (  # noqa: E402
+from vibeocr.classic.widgets.preprocess_options_widget import (  # noqa: E402
     PreprocessOptionsWidget,
 )
 

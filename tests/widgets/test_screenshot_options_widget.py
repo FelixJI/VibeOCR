@@ -12,9 +12,9 @@
 import pytest
 from PySide6.QtWidgets import QComboBox
 
-from vibeocr.core.pipelines import OCRPipeline
-from vibeocr.utils.ocr_preferences import OCRPreferences
-from vibeocr.widgets.screenshot_options_widget import ScreenshotOptionsWidget
+from vibeocr.backend.core.pipelines import OCRPipeline
+from vibeocr.classic.utils.ocr_preferences import OCRPreferences
+from vibeocr.classic.widgets.screenshot_options_widget import ScreenshotOptionsWidget
 
 # 支持预处理参数的管道（应有块）
 _PIPELINES_WITH_PREPROCESS = {
@@ -32,7 +32,7 @@ def widget(qtbot, tmp_path, monkeypatch):
 
     强制 GPU 缓存未就绪，避免构造时自动门控干扰断言。
     """
-    import vibeocr.env_manager as em
+    import vibeocr.backend.env_manager as em
 
     monkeypatch.setattr(em, "_runtime_gpu_capability_cache", None)
     OCRPreferences.reset_instance()
@@ -115,8 +115,8 @@ class TestPersistence:
 
     def test_load_populates_from_persisted(self, tmp_path, monkeypatch):
         """构造后各块回填 screenshot 源已存的参数"""
-        import vibeocr.env_manager as em
-        from vibeocr.models.ocr_options import OCROptions
+        import vibeocr.backend.env_manager as em
+        from vibeocr.backend.models.ocr_options import OCROptions
 
         monkeypatch.setattr(em, "_runtime_gpu_capability_cache", None)
         OCRPreferences.reset_instance()

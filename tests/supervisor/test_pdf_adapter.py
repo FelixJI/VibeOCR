@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
-from vibeocr.ipc.schemas import OpenResponse, PdfDocumentMirror
-from vibeocr.supervisor.pdf.adapter import PdfProcessAdapter
+from vibeocr.backend.ipc.schemas import OpenResponse, PdfDocumentMirror
+from vibeocr.backend.supervisor.pdf.adapter import PdfProcessAdapter
 
 if TYPE_CHECKING:
     from pathlib import Path

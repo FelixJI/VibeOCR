@@ -52,17 +52,21 @@ for _stream in (sys.stdout, sys.stderr):
 # ---------------------------------------------------------------------------
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 PYPROJECT_TOML = Path(
-    os.environ.get("PYPROJECT_TOML", str(PROJECT_ROOT / "pyproject.toml"))
+    os.environ.get(
+        "PYPROJECT_TOML",
+        str(PROJECT_ROOT / "apps" / "vibeocr-pyside" / "pyproject.toml"),
+    )
 )
 INIT_PY = Path(
     os.environ.get(
         "INIT_PY",
         str(
             PROJECT_ROOT
-            / "packages"
-            / "vibeocr-contracts-py"
+            / "apps"
+            / "vibeocr-pyside"
             / "src"
             / "vibeocr"
+            / "classic"
             / "__init__.py"
         ),
     )
@@ -70,7 +74,15 @@ INIT_PY = Path(
 MAIN_PY = Path(
     os.environ.get(
         "MAIN_PY",
-        str(PROJECT_ROOT / "apps" / "vibeocr-pyside" / "src" / "vibeocr" / "main.py"),
+        str(
+            PROJECT_ROOT
+            / "apps"
+            / "vibeocr-pyside"
+            / "src"
+            / "vibeocr"
+            / "classic"
+            / "main.py"
+        ),
     )
 )
 CHANGELOG = Path(os.environ.get("CHANGELOG", str(PROJECT_ROOT / "CHANGELOG.md")))
@@ -85,12 +97,12 @@ DEFAULT_FRONTEND = "pyside"
 # ---------------------------------------------------------------------------
 # sys.path 注入四个 workspace source root：CI 只装 build-shell.lock，不安装
 # vibeocr 包本身（避免拉 GB 级 paddle/torch）。但 _package_zip 需要 import
-# vibeocr.build_manifest 生成/校验产物清单。本地 editable 安装时无需此举，加上
+# vibeocr.classic.build_manifest 生成/校验产物清单。本地 editable 安装时无需此举，加上
 # 是幂等的——与 tests/conftest.py 的处理方式一致。必须在任何 from vibeocr...
 # 之前执行。
 _SOURCE_DIRS = (
     PROJECT_ROOT / "packages" / "vibeocr-contracts-py" / "src",
-    PROJECT_ROOT / "packages" / "vibeocr-client-py" / "src",
+    PROJECT_ROOT / "packages" / "vibeocr-runtime-client-py" / "src",
     PROJECT_ROOT / "packages" / "vibeocr-backend" / "src",
     PROJECT_ROOT / "apps" / "vibeocr-pyside" / "src",
 )
@@ -150,7 +162,7 @@ EXCLUDED_PACKAGES = [
     "pandas.libs",
     "lxml",
     # 注意：pydantic / pydantic_core 不能排除。PDF 模块进程化后，主进程
-    # vibeocr.ipc.schemas 在启动时顶层 import pydantic（main → main_window →
+    # vibeocr.backend.ipc.schemas 在启动时顶层 import pydantic（main → main_window →
     # pdf_tab → pdf_session_manager → model_bridge → schemas），排除会导致
     # ModuleNotFoundError。子进程(便携 Python)侧自带，不影响。
     "chardet",
@@ -288,7 +300,7 @@ PACKAGE_DATA = [
     # 由 env_manager.get_bundled_changelog_path() 解析。
     ("CHANGELOG.md", "."),
     # vibeocr 源码需以原始 .py 形式随主 exe 分发：打包态下 OCR Worker 子进程
-    # 用便携式 Python（python/python.exe）跑 `python -m vibeocr.workers.ocr_worker`，
+    # 用便携式 Python（python/python.exe）跑 `python -m vibeocr.classic.workers.ocr_worker`，
     # 而便携式 Python 是独立解释器，无法读取主 exe 内部的 PYZ 归档（collect_submodules
     # 收集的字节码只进 PYZ）。通过 PYTHONPATH 指向 _MEIPASS（见 ocr_worker_process
     # 的 _get_worker_env）让它能 import 这份平铺源码。
@@ -297,8 +309,9 @@ PACKAGE_DATA = [
     # 主 exe 走 PyInstaller bootstrap（PYZ 优先），便携 Python 走 PYTHONPATH 的
     # 平铺 .py，互不干扰。
     ("packages/vibeocr-contracts-py/src/vibeocr", "vibeocr"),
-    ("packages/vibeocr-client-py/src/vibeocr", "vibeocr"),
+    ("packages/vibeocr-runtime-client-py/src/vibeocr", "vibeocr"),
     ("packages/vibeocr-backend/src/vibeocr", "vibeocr"),
+    ("apps/vibeocr-pyside/src/vibeocr", "vibeocr"),
     # update_replacer.py：主程序 --self-update 兜底模式需要 import 它（updater.exe
     # 坏时主程序自身充当替换器）。打入 .（_internal/ 根），由 main.py 的
     # _resolve_replacer_module_dir 通过 sys._MEIPASS 定位后注入 sys.path。
@@ -315,7 +328,7 @@ PACKAGE_DATA = [
 # 以下均为"主进程延迟 import"（import 在函数体内，PyInstaller 静态分析虽
 # 多数能追踪到，但若处于 try/except 或条件分支中有漏报风险），显式声明
 # 保险：触发相应功能时不会 ModuleNotFoundError。
-#   - pydantic：vibeocr.ipc.schemas 顶层依赖（PDF 进程化后主进程必用）。
+#   - pydantic：vibeocr.backend.ipc.schemas 顶层依赖（PDF 进程化后主进程必用）。
 #   - openpyxl / docx：导出 Excel / Word（export_service）。
 #   - fontTools：CJK 字体回退解析（utils/cjk_font_resolver）。
 #   - pyzbar：二维码解码（qrcode_decode_service，venv 未装但代码引用）。
@@ -383,17 +396,24 @@ def bump_version(current: tuple[int, int, int], bump_type: str) -> tuple[int, in
 
 
 def update_file_version(file_path: Path, old_version: str, new_version: str) -> bool:
-    """替换文件中所有旧版本号字符串
+    """只更新组件自身的版本声明，不改写依赖版本。
 
-    Args:
-        file_path: 目标文件路径
-        old_version: 旧版本号字符串 (如 "0.1.0")
-        new_version: 新版本号字符串 (如 "0.2.0")
-    Returns:
-        文件内容是否发生变化。
+    四仓拆分后 Classic、Backend 与 Protocol 独立发版。全局字符串替换会把
+    ``vibeocr-backend==0.6.3`` 之类的已审核绑定误改成一个尚未发布的版本，
+    因此这里只允许改写顶层 ``version =`` 或 ``__version__ =`` 声明。
     """
     text = file_path.read_text(encoding="utf-8")
-    updated = text.replace(old_version, new_version)
+    declaration = re.compile(
+        rf'(?m)^(?P<prefix>(?:version|__version__)\s*=\s*["\'])'
+        rf"{re.escape(old_version)}"
+        r'(?P<suffix>["\']\s*(?:#.*)?)$'
+    )
+    updated = declaration.sub(
+        lambda match: (
+            f"{match.group('prefix')}{new_version}{match.group('suffix')}"
+        ),
+        text,
+    )
     if updated == text:
         return False
     file_path.write_text(updated, encoding="utf-8")
@@ -401,40 +421,19 @@ def update_file_version(file_path: Path, old_version: str, new_version: str) -> 
 
 
 def _discover_version_files() -> list[Path]:
-    """发现根项目及 uv workspace 成员的版本文件。
+    """返回当前产品发版 cohort 的版本文件。
 
-    workspace 成员从根 ``pyproject.toml`` 的 ``tool.uv.workspace.members``
-    读取，避免新增应用/包时还要手工维护 bump 脚本。每个成员纳入自身
-    ``pyproject.toml`` 以及 ``src/*/__init__.py``。
+    ``PYPROJECT_TOML``/``INIT_PY`` 默认指向 Classic；其他仓库拥有独立
+    版本与发版流水线，不能因同处一个过渡 workspace 而被联动升级。
     """
     files = [PYPROJECT_TOML]
     if INIT_PY.is_file():
         files.append(INIT_PY)
-
-    try:
-        import tomllib
-
-        data = tomllib.loads(PYPROJECT_TOML.read_text(encoding="utf-8"))
-        members = (
-            data.get("tool", {}).get("uv", {}).get("workspace", {}).get("members", [])
-        )
-    except (OSError, ValueError):
-        members = []
-
-    root = PYPROJECT_TOML.parent
-    for pattern in members:
-        for member_dir in sorted(root.glob(pattern)):
-            member_pyproject = member_dir / "pyproject.toml"
-            if member_pyproject.is_file():
-                files.append(member_pyproject)
-            files.extend(sorted(member_dir.glob("src/*/__init__.py")))
-
-    # 多个 workspace glob 可能命中同一路径，保持顺序去重。
     return list(dict.fromkeys(files))
 
 
 def update_project_versions(old_version: str, new_version: str) -> list[Path]:
-    """更新根项目和全部 workspace 成员中的版本引用。
+    """更新当前产品 cohort 的版本声明。
 
     返回实际发生变化的文件，供主流程输出并纳入 release commit。
     """
@@ -954,13 +953,14 @@ def _sync_uv_lock(version: str) -> bool:
     刷新。历史发版（v0.1.1/v0.1.2）均漏了这一步，导致 lock 滞后于实际版本。
 
     本函数在版本号文件更新后、git 提交前调用，确保 uv.lock 与版本号同源、
-    同提交。uv 不可用时降级为警告（不阻断发版，但会提示手动处理）。
+    同提交。仓库存在 ``uv.lock`` 时，同步失败必须阻断提交/tag；否则会发布
+    与声明不一致且无法复现的依赖图。
 
     Args:
         version: 新版本号字符串（仅用于日志）
 
     Returns:
-        uv.lock 是否已更新（False 表示 uv 不可用或无变化）
+        uv.lock 是否发生内容变化。仓库没有 uv.lock 时返回 False。
     """
     lock_path = UV_LOCK
     if not lock_path.exists():
@@ -978,17 +978,15 @@ def _sync_uv_lock(version: str) -> bool:
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
     except FileNotFoundError:
-        print("  警告: 未找到 uv 命令，uv.lock 未同步（请手动运行 `uv lock`）")
-        return False
+        raise RuntimeError("未找到 uv 命令，无法同步 uv.lock") from None
     except subprocess.TimeoutExpired:
-        print("  警告: uv lock 超时，uv.lock 未同步")
-        return False
+        raise RuntimeError("uv lock 超时，已阻断发版") from None
 
     if result.returncode != 0:
-        print(f"  警告: uv lock 失败（退出码 {result.returncode}）")
-        if result.stderr:
-            print(f"    {result.stderr.strip()[:200]}")
-        return False
+        detail = f": {result.stderr.strip()[:200]}" if result.stderr else ""
+        raise RuntimeError(
+            f"uv lock 失败（退出码 {result.returncode}）{detail}"
+        )
 
     # 检查 git 是否检测到变化（uv lock 也可能因依赖变动产生其它改动）
     diff = subprocess.run(
@@ -1068,7 +1066,16 @@ def _generate_version_json(version: str, dist_dir: Path) -> None:
         backend_pyproject
         if (
             backend_pyproject.exists()
-            and PYPROJECT_TOML.resolve() == (PROJECT_ROOT / "pyproject.toml").resolve()
+            and PYPROJECT_TOML.resolve()
+            in {
+                (PROJECT_ROOT / "pyproject.toml").resolve(),
+                (
+                    PROJECT_ROOT
+                    / "apps"
+                    / "vibeocr-pyside"
+                    / "pyproject.toml"
+                ).resolve(),
+            }
         )
         else PYPROJECT_TOML
     )
@@ -1409,7 +1416,7 @@ def _package_zip(dist_dir: Path, version: str) -> Path | None:
     manifest 记录每个文件的相对路径、字节数和 SHA-256，用于校验发布包完整性
     和防止运行产物（output/ 等）泄漏。打包后立即调用 verify_archive 自检。
     """
-    from vibeocr.build_manifest import create_manifest, verify_archive
+    from vibeocr.classic.build_manifest import create_manifest, verify_archive
 
     zip_name = f"VibeOCR-v{version}-win64"
     zip_path = DIST_BASE_DIR / f"{zip_name}.zip"
@@ -1549,7 +1556,7 @@ def _get_pyinstaller_cmd(
         "--paths",
         str(PROJECT_ROOT / "packages" / "vibeocr-contracts-py" / "src"),
         "--paths",
-        str(PROJECT_ROOT / "packages" / "vibeocr-client-py" / "src"),
+        str(PROJECT_ROOT / "packages" / "vibeocr-runtime-client-py" / "src"),
         "--paths",
         str(PROJECT_ROOT / "packages" / "vibeocr-backend" / "src"),
         "--paths",
@@ -2025,13 +2032,13 @@ def main() -> int:
         if has_unversioned:
             print(
                 f"警告: 当前版本 {current_str} 之后有 {n} 个未发版提交，"
-                "打包内容将超出版本号标注。仍要打包？[y/N]: ",
-                end="",
-                flush=True,
+                "打包内容将超出版本号标注。",
             )
-            if input().strip().lower() not in ("y", "yes"):
-                print("已取消打包")
-                return 0
+            if not args.yes:
+                print("仍要打包？[y/N]: ", end="", flush=True)
+                if input().strip().lower() not in ("y", "yes"):
+                    print("已取消打包")
+                    return 0
 
         return 0 if _run_build(current_str, force=args.force, frontend=args.frontend) else 1
 
@@ -2074,7 +2081,7 @@ def main() -> int:
     new_str = ".".join(map(str, new_version))
     print(f"版本升级: {current_str} → {new_str}")
 
-    # 更新根项目和 uv workspace 全部成员的版本声明/内部包精确约束。
+    # 只更新当前产品 cohort；独立 Backend/Protocol 绑定保持原值。
     changed_version_files = update_project_versions(current_str, new_str)
     for version_file in changed_version_files:
         print(f"  已更新 {version_file}")
@@ -2082,7 +2089,11 @@ def main() -> int:
     # 注意：main.py 通过 __version__ 引用版本号（无字面量），无需在此更新。
 
     # 同步 uv.lock（pyproject 版本号已变，锁文件需刷新避免滞后漂移）
-    _sync_uv_lock(new_str)
+    try:
+        _sync_uv_lock(new_str)
+    except RuntimeError as exc:
+        print(f"错误: {exc}")
+        return 1
 
     # 更新 CHANGELOG（生成条目，弹编辑器审阅，纳入 release 提交）
     commits = get_commits_since_last_tag(current_str)

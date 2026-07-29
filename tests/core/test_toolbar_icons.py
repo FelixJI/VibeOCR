@@ -4,7 +4,7 @@
 import pytest
 from PySide6.QtGui import QIcon
 
-from vibeocr.ui.toolbar_icons import ICON_NAMES, toolbar_icon
+from vibeocr.classic.ui.toolbar_icons import ICON_NAMES, toolbar_icon
 
 
 class TestToolbarIcon:

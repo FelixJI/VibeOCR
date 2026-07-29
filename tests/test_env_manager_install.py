@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from vibeocr.env_manager import (
+from vibeocr.backend.env_manager import (
     _check_imports,
     _install_paddle_stack,
     _load_dep_specs,
@@ -29,7 +29,7 @@ def _popen_side_effect(mock_run):
     subprocess.run。本 helper 让旧的 mock_run（返回带 .returncode/.stdout/.stderr
     的对象）继续可用，无需逐个重写测试 mock。
 
-    用法：patch("vibeocr.env_manager.subprocess.Popen",
+    用法：patch("vibeocr.backend.env_manager.subprocess.Popen",
               side_effect=_popen_side_effect(mock_run))
     """
 
@@ -87,17 +87,17 @@ class TestInstallStandalonePython:
         """安装应下载 .tar.gz、用 tarfile 解压，且不再写 ._pth 或下载 get-pip.py"""
         # install_embedded_python 先检查 get_environment_mode，需返回非 venv
         with (
-            patch("vibeocr.env_manager.get_environment_mode", return_value="none"),
+            patch("vibeocr.backend.env_manager.get_environment_mode", return_value="none"),
             patch(
-                "vibeocr.env_manager.download_file_with_progress",
+                "vibeocr.backend.env_manager.download_file_with_progress",
                 return_value=True,
             ) as mock_dl,
             patch("tarfile.open", wraps=tarfile.open) as _mock_tar,
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=tmp_path / "python" / "python.exe",
             ),
-            patch("vibeocr.env_manager.subprocess.run"),
+            patch("vibeocr.backend.env_manager.subprocess.run"),
         ):
             # 让下载函数把 tar 写到期望路径
             def _fake_dl(url, dest, *a, **kw):
@@ -126,16 +126,16 @@ class TestInstallStandalonePython:
     def test_no_get_pip_download(self, tmp_path):
         """不应再下载 get-pip.py（build-standalone 自带 pip）"""
         with (
-            patch("vibeocr.env_manager.get_environment_mode", return_value="none"),
+            patch("vibeocr.backend.env_manager.get_environment_mode", return_value="none"),
             patch(
-                "vibeocr.env_manager.download_file_with_progress",
+                "vibeocr.backend.env_manager.download_file_with_progress",
                 return_value=True,
             ) as mock_dl,
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=tmp_path / "python" / "python.exe",
             ),
-            patch("vibeocr.env_manager.subprocess.run"),
+            patch("vibeocr.backend.env_manager.subprocess.run"),
         ):
 
             def _fake_dl(url, dest, *a, **kw):
@@ -153,12 +153,12 @@ class TestInstallStandalonePython:
     def test_download_failure_returns_false(self, tmp_path):
         """所有下载源都失败时应返回 False"""
         with (
-            patch("vibeocr.env_manager.get_environment_mode", return_value="none"),
+            patch("vibeocr.backend.env_manager.get_environment_mode", return_value="none"),
             patch(
-                "vibeocr.env_manager.download_file_with_progress", return_value=False
+                "vibeocr.backend.env_manager.download_file_with_progress", return_value=False
             ),
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=tmp_path / "python" / "python.exe",
             ),
         ):
@@ -182,17 +182,17 @@ class TestInstallStandalonePython:
             rmtree_called.append(str(path))
 
         with (
-            patch("vibeocr.env_manager.get_environment_mode", return_value="none"),
+            patch("vibeocr.backend.env_manager.get_environment_mode", return_value="none"),
             # python.exe 检测：不存在（半成品）
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=tmp_path / "python" / "python.exe",
             ),
             patch(
-                "vibeocr.env_manager.download_file_with_progress", return_value=True
+                "vibeocr.backend.env_manager.download_file_with_progress", return_value=True
             ) as mock_dl,
-            patch("vibeocr.env_manager.shutil.rmtree", side_effect=fake_rmtree),
-            patch("vibeocr.env_manager.subprocess.run"),
+            patch("vibeocr.backend.env_manager.shutil.rmtree", side_effect=fake_rmtree),
+            patch("vibeocr.backend.env_manager.subprocess.run"),
         ):
             def _fake_dl(url, dest, *a, **kw):
                 dest.write_bytes(self._make_standalone_tar_bytes())
@@ -227,15 +227,15 @@ class TestInstallSpecs:
 
         with (
             patch(
-                "vibeocr.env_manager.get_pip_source",
+                "vibeocr.backend.env_manager.get_pip_source",
                 return_value="https://pypi.org/simple",
             ),
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=python_exe,
             ),
             patch(
-                "vibeocr.env_manager.subprocess.Popen",
+                "vibeocr.backend.env_manager.subprocess.Popen",
                 side_effect=_popen_side_effect(mock_run),
             ),
         ):
@@ -267,15 +267,15 @@ class TestInstallSpecs:
 
         with (
             patch(
-                "vibeocr.env_manager.get_pip_source",
+                "vibeocr.backend.env_manager.get_pip_source",
                 return_value="https://pypi.org/simple",
             ),
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=python_exe,
             ),
             patch(
-                "vibeocr.env_manager.subprocess.Popen",
+                "vibeocr.backend.env_manager.subprocess.Popen",
                 side_effect=_popen_side_effect(mock_run),
             ),
         ):
@@ -308,15 +308,15 @@ class TestInstallSpecs:
 
         with (
             patch(
-                "vibeocr.env_manager.get_pip_source",
+                "vibeocr.backend.env_manager.get_pip_source",
                 return_value="https://pypi.org/simple",
             ),
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=python_exe,
             ),
             patch(
-                "vibeocr.env_manager.subprocess.Popen",
+                "vibeocr.backend.env_manager.subprocess.Popen",
                 side_effect=_popen_side_effect(mock_run),
             ),
         ):
@@ -339,7 +339,7 @@ class TestEnsureMineruModels:
         """所有测试都 mock subprocess.Popen 返回假进程，真实 JobObjectGuard 会
         拿假 pid 调用原生 OpenProcess/AssignProcessToJobObject 导致崩溃，
         故统一替换为 MagicMock。"""
-        with patch("vibeocr.env_manager.JobObjectGuard") as guard:
+        with patch("vibeocr.backend.env_manager.JobObjectGuard") as guard:
             yield guard
 
     def test_calls_models_download(self, tmp_path):
@@ -356,13 +356,13 @@ class TestEnsureMineruModels:
 
         with (
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=python_exe,
             ),
             patch(
-                "vibeocr.env_manager.subprocess.Popen", return_value=mock_popen_factory()
+                "vibeocr.backend.env_manager.subprocess.Popen", return_value=mock_popen_factory()
             ) as mock_popen,
-            patch("vibeocr.env_manager.detect_network_source", return_value="domestic"),
+            patch("vibeocr.backend.env_manager.detect_network_source", return_value="domestic"),
         ):
             ok, _msg = ensure_mineru_models(tmp_path)
 
@@ -400,13 +400,13 @@ class TestEnsureMineruModels:
         messages: list[str] = []
         with (
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=python_exe,
             ),
             patch(
-                "vibeocr.env_manager.subprocess.Popen", return_value=mock_popen_factory()
+                "vibeocr.backend.env_manager.subprocess.Popen", return_value=mock_popen_factory()
             ),
-            patch("vibeocr.env_manager.detect_network_source", return_value="domestic"),
+            patch("vibeocr.backend.env_manager.detect_network_source", return_value="domestic"),
         ):
             ok, _msg = ensure_mineru_models(
                 tmp_path, progress_callback=lambda s, m: messages.append(m)
@@ -432,13 +432,13 @@ class TestEnsureMineruModels:
 
         with (
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=python_exe,
             ),
             patch(
-                "vibeocr.env_manager.subprocess.Popen", return_value=mock_popen_factory()
+                "vibeocr.backend.env_manager.subprocess.Popen", return_value=mock_popen_factory()
             ),
-            patch("vibeocr.env_manager.detect_network_source", return_value="domestic"),
+            patch("vibeocr.backend.env_manager.detect_network_source", return_value="domestic"),
         ):
             ok, msg = ensure_mineru_models(tmp_path)
 
@@ -447,7 +447,7 @@ class TestEnsureMineruModels:
 
     def test_returns_false_when_no_python(self, tmp_path):
         with patch(
-            "vibeocr.env_manager.get_embedded_python_executable",
+            "vibeocr.backend.env_manager.get_embedded_python_executable",
             return_value=tmp_path / "nonexistent.exe",
         ):
             ok, _msg = ensure_mineru_models(tmp_path)
@@ -473,14 +473,14 @@ class TestEnsureMineruModels:
 
         with (
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=python_exe,
             ),
             patch(
-                "vibeocr.env_manager.subprocess.Popen",
+                "vibeocr.backend.env_manager.subprocess.Popen",
                 return_value=mock_popen_factory(),
             ),
-            patch("vibeocr.env_manager.detect_network_source", return_value="domestic"),
+            patch("vibeocr.backend.env_manager.detect_network_source", return_value="domestic"),
         ):
             ok, _msg = ensure_mineru_models(tmp_path)
 
@@ -503,11 +503,11 @@ class TestEnsureMineruModels:
 
         with (
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=python_exe,
             ),
-            patch("vibeocr.env_manager.subprocess.Popen", return_value=proc),
-            patch("vibeocr.env_manager.detect_network_source", return_value="domestic"),
+            patch("vibeocr.backend.env_manager.subprocess.Popen", return_value=proc),
+            patch("vibeocr.backend.env_manager.detect_network_source", return_value="domestic"),
         ):
             ok, msg = ensure_mineru_models(tmp_path, timeout=1)
 
@@ -531,7 +531,7 @@ class TestInstallMissingLeafTrigger:
         python_exe.touch()
 
         # 构造 import_detailed：顶层全 usable，但 leaf（scipy）usable=False
-        from vibeocr.services.env_config import (
+        from vibeocr.backend.services.env_config import (
             OCR_CHECK_LEAF_MODULES,
             OCR_CHECK_MODULES,
         )
@@ -552,19 +552,19 @@ class TestInstallMissingLeafTrigger:
 
         with (
             patch(
-                "vibeocr.env_manager.get_pip_source",
+                "vibeocr.backend.env_manager.get_pip_source",
                 return_value="https://pypi.org/simple",
             ),
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=python_exe,
             ),
             patch(
-                "vibeocr.env_manager._check_imports_detailed",
+                "vibeocr.backend.env_manager._check_imports_detailed",
                 return_value=detailed,
             ),
-            patch("vibeocr.env_manager._install_paddle_stack", side_effect=fake_stack),
-            patch("vibeocr.env_manager.detect_gpu", return_value=(False, None)),
+            patch("vibeocr.backend.env_manager._install_paddle_stack", side_effect=fake_stack),
+            patch("vibeocr.backend.env_manager.detect_gpu", return_value=(False, None)),
         ):
             ok, _msg = install_missing_dependencies(
                 tmp_path, progress_callback=lambda s, m: None
@@ -583,7 +583,7 @@ class TestInstallMissingLeafTrigger:
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
 
-        from vibeocr.services.env_config import (
+        from vibeocr.backend.services.env_config import (
             OCR_CHECK_LEAF_MODULES,
             OCR_CHECK_MODULES,
         )
@@ -602,19 +602,19 @@ class TestInstallMissingLeafTrigger:
 
         with (
             patch(
-                "vibeocr.env_manager.get_pip_source",
+                "vibeocr.backend.env_manager.get_pip_source",
                 return_value="https://pypi.org/simple",
             ),
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=python_exe,
             ),
             patch(
-                "vibeocr.env_manager._check_imports_detailed",
+                "vibeocr.backend.env_manager._check_imports_detailed",
                 return_value=detailed,
             ),
-            patch("vibeocr.env_manager._install_paddle_stack", side_effect=fake_stack),
-            patch("vibeocr.env_manager.detect_gpu", return_value=(False, None)),
+            patch("vibeocr.backend.env_manager._install_paddle_stack", side_effect=fake_stack),
+            patch("vibeocr.backend.env_manager.detect_gpu", return_value=(False, None)),
         ):
             install_missing_dependencies(
                 tmp_path, progress_callback=lambda s, m: None
@@ -646,14 +646,14 @@ class TestInstallSingleDependency:
 
         with (
             patch(
-                "vibeocr.env_manager.get_pip_source",
+                "vibeocr.backend.env_manager.get_pip_source",
                 return_value="https://pypi.org/simple",
             ),
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=python_exe,
             ),
-            patch("vibeocr.env_manager._install_paddle_stack", side_effect=fake_stack),
+            patch("vibeocr.backend.env_manager._install_paddle_stack", side_effect=fake_stack),
         ):
             ok, _msg = install_single_dependency(tmp_path, "scipy")
 
@@ -681,14 +681,14 @@ class TestInstallSingleDependency:
 
         with (
             patch(
-                "vibeocr.env_manager.get_pip_source",
+                "vibeocr.backend.env_manager.get_pip_source",
                 return_value="https://pypi.org/simple",
             ),
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=python_exe,
             ),
-            patch("vibeocr.env_manager._install_paddle_stack", side_effect=fake_stack),
+            patch("vibeocr.backend.env_manager._install_paddle_stack", side_effect=fake_stack),
         ):
             ok, _msg = install_single_dependency(tmp_path, "paddleocr")
 
@@ -704,7 +704,7 @@ class TestInstallSingleDependency:
     def test_returns_false_when_python_missing(self, tmp_path):
         """Python 运行时不存在时返回失败"""
         with patch(
-            "vibeocr.env_manager.get_embedded_python_executable",
+            "vibeocr.backend.env_manager.get_embedded_python_executable",
             return_value=tmp_path / "nonexistent.exe",
         ):
             ok, msg = install_single_dependency(tmp_path, "scipy")
@@ -728,14 +728,14 @@ class TestInstallDependenciesBatch:
 
         with (
             patch(
-                "vibeocr.env_manager.get_pip_source",
+                "vibeocr.backend.env_manager.get_pip_source",
                 return_value="https://pypi.org/simple",
             ),
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=python_exe,
             ),
-            patch("vibeocr.env_manager._install_paddle_stack", side_effect=fake_stack),
+            patch("vibeocr.backend.env_manager._install_paddle_stack", side_effect=fake_stack),
         ):
             ok, _msg = install_dependencies_batch(
                 tmp_path, ["scipy", "einops", "scipy"]
@@ -756,7 +756,7 @@ class TestInstallDependenciesBatch:
     def test_empty_packages_short_circuits(self, tmp_path):
         """空列表直接返回成功，不调 _install_paddle_stack"""
         with patch(
-            "vibeocr.env_manager._install_paddle_stack"
+            "vibeocr.backend.env_manager._install_paddle_stack"
         ) as mock_stack:
             ok, _msg = install_dependencies_batch(tmp_path, [])
         assert ok is True
@@ -765,7 +765,7 @@ class TestInstallDependenciesBatch:
     def test_returns_false_when_python_missing(self, tmp_path):
         """Python 运行时不存在时返回失败"""
         with patch(
-            "vibeocr.env_manager.get_embedded_python_executable",
+            "vibeocr.backend.env_manager.get_embedded_python_executable",
             return_value=tmp_path / "nonexistent.exe",
         ):
             ok, msg = install_dependencies_batch(tmp_path, ["scipy"])
@@ -780,7 +780,7 @@ class TestGetDirectDependencies:
         """从 metadata.requires 解析直接依赖名，过滤 extra marker"""
         import json
 
-        from vibeocr.env_manager import get_direct_dependencies
+        from vibeocr.backend.env_manager import get_direct_dependencies
 
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
@@ -794,7 +794,7 @@ class TestGetDirectDependencies:
             )
             return r
 
-        with patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run):
+        with patch("vibeocr.backend.env_manager.subprocess.run", side_effect=mock_run):
             deps = get_direct_dependencies(python_exe, "mineru")
 
         # extra == "full" 的 pandas 应被过滤；保留 numpy/scipy
@@ -804,7 +804,7 @@ class TestGetDirectDependencies:
 
     def test_returns_empty_when_not_installed(self, tmp_path):
         """包未安装（requires 返回 None）时返回空列表"""
-        from vibeocr.env_manager import get_direct_dependencies
+        from vibeocr.backend.env_manager import get_direct_dependencies
 
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
@@ -815,7 +815,7 @@ class TestGetDirectDependencies:
             r.stdout = "[]"
             return r
 
-        with patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run):
+        with patch("vibeocr.backend.env_manager.subprocess.run", side_effect=mock_run):
             deps = get_direct_dependencies(python_exe, "nonexistent")
         assert deps == []
 
@@ -826,7 +826,7 @@ class TestLoadDepSpecs:
     def test_loads_from_real_pyproject_returns_actual_versions(self):
         """从真实 pyproject.toml 加载时，应返回实际版本（非陈旧 fallback）"""
         # 重置模块级缓存，强制重新加载
-        import vibeocr.env_manager as em
+        import vibeocr.backend.env_manager as em
 
         em._dep_specs_cache = None
 
@@ -852,25 +852,25 @@ class TestLoadDepSpecs:
     def test_uses_packaged_profile_when_repository_files_missing(self, tmp_path):
         """普通 wheel 安装无仓库文件时，应读取随 client wheel 分发的 profile。"""
         # 重置缓存
-        import vibeocr.env_manager as em
+        import vibeocr.backend.env_manager as em
 
         em._dep_specs_cache = None
 
-        with patch("vibeocr.env_manager.get_project_root", return_value=tmp_path):
+        with patch("vibeocr.backend.env_manager.get_project_root", return_value=tmp_path):
             specs = _load_dep_specs()
         assert specs["paddleocr"] == "paddleocr[doc-parser]>=3.7.0"
         assert specs["paddlepaddle-gpu"] == "paddlepaddle-gpu>=3.3.1"
 
     def test_raises_when_packaged_profile_is_empty(self, tmp_path):
         """仓库文件与随包 profile 都不可用时才报告损坏。"""
-        import vibeocr.env_manager as em
+        import vibeocr.backend.env_manager as em
 
         em._dep_specs_cache = None
 
         with (
-            patch("vibeocr.env_manager.get_project_root", return_value=tmp_path),
+            patch("vibeocr.backend.env_manager.get_project_root", return_value=tmp_path),
             patch(
-                "vibeocr.env_manager._load_packaged_dependency_profiles",
+                "vibeocr.backend.env_manager._load_packaged_dependency_profiles",
                 return_value={},
             ),
             pytest.raises(RuntimeError, match="随包分发"),
@@ -879,7 +879,7 @@ class TestLoadDepSpecs:
 
     def test_uses_cache_on_second_call(self):
         """第二次调用应命中缓存，不重新解析"""
-        import vibeocr.env_manager as em
+        import vibeocr.backend.env_manager as em
 
         em._dep_specs_cache = None
         _load_dep_specs()
@@ -914,7 +914,7 @@ class TestLoadDepSpecsVersionJsonFormat:
         """
         import json
 
-        import vibeocr.env_manager as em
+        import vibeocr.backend.env_manager as em
 
         em._dep_specs_cache = None
         payload: dict = {"version": "1.0.0", "dep_versions": dep_versions}
@@ -925,7 +925,7 @@ class TestLoadDepSpecsVersionJsonFormat:
             encoding="utf-8",
         )
         try:
-            with patch("vibeocr.env_manager.get_project_root", return_value=tmp_path):
+            with patch("vibeocr.backend.env_manager.get_project_root", return_value=tmp_path):
                 return _load_dep_specs()
         finally:
             em._dep_specs_cache = None
@@ -1037,7 +1037,7 @@ class TestUninstallRemovedDeps:
 
     def test_empty_list_returns_success(self, tmp_path):
         """空 removed_names 应立即返回成功，不调用 pip。"""
-        from vibeocr.env_manager import uninstall_removed_deps
+        from vibeocr.backend.env_manager import uninstall_removed_deps
 
         ok, msg = uninstall_removed_deps(tmp_path, [])
         assert ok
@@ -1045,11 +1045,11 @@ class TestUninstallRemovedDeps:
 
     def test_returns_failure_when_python_missing(self, tmp_path):
         """嵌入式 Python 不存在时应失败。"""
-        from vibeocr.env_manager import uninstall_removed_deps
+        from vibeocr.backend.env_manager import uninstall_removed_deps
 
         # tmp_path 下无 python/python.exe
         with patch(
-            "vibeocr.env_manager.get_embedded_python_executable",
+            "vibeocr.backend.env_manager.get_embedded_python_executable",
             return_value=tmp_path / "python" / "python.exe",
         ):
             ok, msg = uninstall_removed_deps(tmp_path, ["mineru"])
@@ -1058,7 +1058,7 @@ class TestUninstallRemovedDeps:
 
     def test_uninstall_calls_pip_for_each_pkg(self, tmp_path):
         """对每个包应调用 pip uninstall -y。"""
-        from vibeocr.env_manager import uninstall_removed_deps
+        from vibeocr.backend.env_manager import uninstall_removed_deps
 
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
@@ -1075,15 +1075,15 @@ class TestUninstallRemovedDeps:
 
         with (
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=python_exe,
             ),
             patch(
-                "vibeocr.env_manager._check_imports", return_value={"mineru": False}
+                "vibeocr.backend.env_manager._check_imports", return_value={"mineru": False}
             ),
-            patch("vibeocr.env_manager.update_cache_field"),
+            patch("vibeocr.backend.env_manager.update_cache_field"),
             patch(
-                "vibeocr.env_manager.subprocess.Popen",
+                "vibeocr.backend.env_manager.subprocess.Popen",
                 side_effect=_popen_side_effect(mock_run),
             ),
         ):
@@ -1099,7 +1099,7 @@ class TestUninstallRemovedDeps:
 
     def test_package_not_installed_treated_as_success(self, tmp_path):
         """pip 返回非零但提示"未安装"时视为成功（目标已达成）。"""
-        from vibeocr.env_manager import uninstall_removed_deps
+        from vibeocr.backend.env_manager import uninstall_removed_deps
 
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
@@ -1113,15 +1113,15 @@ class TestUninstallRemovedDeps:
 
         with (
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=python_exe,
             ),
             patch(
-                "vibeocr.env_manager._check_imports", return_value={}
+                "vibeocr.backend.env_manager._check_imports", return_value={}
             ),
-            patch("vibeocr.env_manager.update_cache_field"),
+            patch("vibeocr.backend.env_manager.update_cache_field"),
             patch(
-                "vibeocr.env_manager.subprocess.Popen",
+                "vibeocr.backend.env_manager.subprocess.Popen",
                 side_effect=_popen_side_effect(mock_run),
             ),
         ):
@@ -1168,7 +1168,7 @@ class TestInstallPaddleStackAlias:
         calls, mock_run = self._mock_pip_success()
 
         with patch(
-            "vibeocr.env_manager.subprocess.Popen",
+            "vibeocr.backend.env_manager.subprocess.Popen",
             side_effect=_popen_side_effect(mock_run),
         ):
             ok, msg = _install_paddle_stack(
@@ -1201,7 +1201,7 @@ class TestInstallPaddleStackAlias:
         calls, mock_run = self._mock_pip_success()
 
         with patch(
-            "vibeocr.env_manager.subprocess.Popen",
+            "vibeocr.backend.env_manager.subprocess.Popen",
             side_effect=_popen_side_effect(mock_run),
         ):
             ok, _ = _install_paddle_stack(
@@ -1235,7 +1235,7 @@ class TestCheckImportsPrimitive:
             r.stderr = ""
             return r
 
-        with patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run):
+        with patch("vibeocr.backend.env_manager.subprocess.run", side_effect=mock_run):
             result = _check_imports(python_exe)
 
         # key 应是包名（paddlepaddle），不是模块名（paddle）
@@ -1258,7 +1258,7 @@ class TestCheckImportsPrimitive:
             r.stderr = ""
             return r
 
-        with patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run):
+        with patch("vibeocr.backend.env_manager.subprocess.run", side_effect=mock_run):
             result = _check_imports(python_exe)
 
         assert result["paddlepaddle"] is False
@@ -1268,11 +1268,11 @@ class TestCheckImportsPrimitive:
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
 
-        with patch("vibeocr.env_manager.subprocess.run") as mock_run:
+        with patch("vibeocr.backend.env_manager.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stderr="")
             result = _check_imports(python_exe)
 
-        from vibeocr.services.env_config import (
+        from vibeocr.backend.services.env_config import (
             OCR_CHECK_LEAF_MODULES,
             OCR_CHECK_MODULES,
         )
@@ -1295,10 +1295,10 @@ class TestCheckImportsPrimitive:
             r.stderr = ""
             return r
 
-        with patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run):
+        with patch("vibeocr.backend.env_manager.subprocess.run", side_effect=mock_run):
             _check_imports(python_exe)
 
-        from vibeocr.services.env_config import OCR_CHECK_TIMEOUTS
+        from vibeocr.backend.services.env_config import OCR_CHECK_TIMEOUTS
 
         # OCR_CHECK_TIMEOUTS 应存在且 paddle / paddleocr 的 timeout 显著大于默认
         assert "paddle" in OCR_CHECK_TIMEOUTS
@@ -1347,9 +1347,9 @@ class TestProbeModuleDoubleLayer:
             r.stdout = "3.4.0" if "metadata" in code else ""
             return r
 
-        from vibeocr.env_manager import _probe_module
+        from vibeocr.backend.env_manager import _probe_module
 
-        with patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run):
+        with patch("vibeocr.backend.env_manager.subprocess.run", side_effect=mock_run):
             installed, usable, missing = _probe_module(python_exe, "mineru", "mineru")
 
         assert installed is True
@@ -1379,9 +1379,9 @@ class TestProbeModuleDoubleLayer:
                 r.stdout = ""
             return r
 
-        from vibeocr.env_manager import _probe_module
+        from vibeocr.backend.env_manager import _probe_module
 
-        with patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run):
+        with patch("vibeocr.backend.env_manager.subprocess.run", side_effect=mock_run):
             installed, usable, missing = _probe_module(python_exe, "mineru", "mineru")
 
         assert installed is True, "发行版存在应判 installed=True"
@@ -1407,11 +1407,11 @@ class TestProbeModuleDoubleLayer:
                 r.stdout = ""
             return r
 
-        from vibeocr.env_manager import _probe_module
+        from vibeocr.backend.env_manager import _probe_module
 
         with (
-            patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run),
-            caplog.at_level(logging.WARNING, logger="vibeocr.env_manager"),
+            patch("vibeocr.backend.env_manager.subprocess.run", side_effect=mock_run),
+            caplog.at_level(logging.WARNING, logger="vibeocr.backend.env_manager"),
         ):
             _probe_module(python_exe, "mineru", "mineru")
 
@@ -1439,9 +1439,9 @@ class TestProbeModuleDoubleLayer:
             r.stdout = ""
             return r
 
-        from vibeocr.env_manager import _probe_module
+        from vibeocr.backend.env_manager import _probe_module
 
-        with patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run):
+        with patch("vibeocr.backend.env_manager.subprocess.run", side_effect=mock_run):
             installed, usable, missing = _probe_module(python_exe, "mineru", "mineru")
 
         assert installed is False
@@ -1488,11 +1488,11 @@ class TestProbeModuleDoubleLayer:
                 r.stdout = ""
             return r
 
-        from vibeocr.env_manager import _probe_module
+        from vibeocr.backend.env_manager import _probe_module
 
         with (
-            patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run),
-            caplog.at_level(logging.WARNING, logger="vibeocr.env_manager"),
+            patch("vibeocr.backend.env_manager.subprocess.run", side_effect=mock_run),
+            caplog.at_level(logging.WARNING, logger="vibeocr.backend.env_manager"),
         ):
             installed, usable, missing = _probe_module(
                 python_exe, "brokenpkg", "brokenpkg"
@@ -1537,11 +1537,11 @@ class TestProbeModuleDoubleLayer:
                 r.stdout = ""
             return r
 
-        from vibeocr.env_manager import _probe_module
+        from vibeocr.backend.env_manager import _probe_module
 
         with (
-            patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run),
-            caplog.at_level(logging.WARNING, logger="vibeocr.env_manager"),
+            patch("vibeocr.backend.env_manager.subprocess.run", side_effect=mock_run),
+            caplog.at_level(logging.WARNING, logger="vibeocr.backend.env_manager"),
         ):
             installed, usable, missing = _probe_module(python_exe, "mineru", "mineru")
 
@@ -1576,10 +1576,10 @@ class TestCheckImportsDoubleLayer:
             r.stdout = "1.0.0" if "metadata" in (cmd[cmd.index("-c") + 1] if "-c" in cmd else "") else ""
             return r
 
-        with patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run):
+        with patch("vibeocr.backend.env_manager.subprocess.run", side_effect=mock_run):
             result = _check_imports(python_exe)
 
-        from vibeocr.services.env_config import (
+        from vibeocr.backend.services.env_config import (
             OCR_CHECK_LEAF_MODULES,
             OCR_CHECK_MODULES,
         )
@@ -1620,8 +1620,8 @@ class TestCheckImportsDoubleLayer:
             return r
 
         with (
-            patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run),
-            caplog.at_level(logging.WARNING, logger="vibeocr.env_manager"),
+            patch("vibeocr.backend.env_manager.subprocess.run", side_effect=mock_run),
+            caplog.at_level(logging.WARNING, logger="vibeocr.backend.env_manager"),
         ):
             result = _check_imports(python_exe)
 
@@ -1654,12 +1654,12 @@ class TestCheckImportsDetailed:
             r.stdout = "1.0.0" if "metadata" in code else ""
             return r
 
-        with patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run):
-            from vibeocr.env_manager import _check_imports_detailed
+        with patch("vibeocr.backend.env_manager.subprocess.run", side_effect=mock_run):
+            from vibeocr.backend.env_manager import _check_imports_detailed
 
             result = _check_imports_detailed(python_exe)
 
-        from vibeocr.services.env_config import (
+        from vibeocr.backend.services.env_config import (
             OCR_CHECK_LEAF_MODULES,
             OCR_CHECK_MODULES,
         )
@@ -1699,8 +1699,8 @@ class TestCheckImportsDetailed:
                 r.stdout = ""
             return r
 
-        with patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run):
-            from vibeocr.env_manager import _check_imports_detailed
+        with patch("vibeocr.backend.env_manager.subprocess.run", side_effect=mock_run):
+            from vibeocr.backend.env_manager import _check_imports_detailed
 
             result = _check_imports_detailed(python_exe)
 
@@ -1731,8 +1731,8 @@ class TestGetDependencyVersionsImportlibMetadata:
             r.stdout = "3.4.0" if "metadata" in code else ""
             return r
 
-        with patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run):
-            from vibeocr.env_manager import get_dependency_versions
+        with patch("vibeocr.backend.env_manager.subprocess.run", side_effect=mock_run):
+            from vibeocr.backend.env_manager import get_dependency_versions
 
             versions = get_dependency_versions(python_exe)
 
@@ -1761,8 +1761,8 @@ class TestGetDependencyVersionsImportlibMetadata:
                 r.stdout = "2.6.0"  # __version__ 返回值
             return r
 
-        with patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run):
-            from vibeocr.env_manager import get_dependency_versions
+        with patch("vibeocr.backend.env_manager.subprocess.run", side_effect=mock_run):
+            from vibeocr.backend.env_manager import get_dependency_versions
 
             versions = get_dependency_versions(python_exe)
 
@@ -1783,12 +1783,12 @@ class TestGetDependencyVersionsImportlibMetadata:
             r.stdout = ""
             return r
 
-        with patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run):
-            from vibeocr.env_manager import get_dependency_versions
+        with patch("vibeocr.backend.env_manager.subprocess.run", side_effect=mock_run):
+            from vibeocr.backend.env_manager import get_dependency_versions
 
             versions = get_dependency_versions(python_exe)
 
-        from vibeocr.services.env_config import OCR_CHECK_MODULES
+        from vibeocr.backend.services.env_config import OCR_CHECK_MODULES
 
         assert all(v == "" for v in versions.values()), (
             f"未安装应全为空串，实际: {versions}"
@@ -1807,8 +1807,8 @@ class TestResolveUseGpu:
             "hardware_info": {"has_gpu": False, "cuda_version": None},
         }
         with (
-            patch("vibeocr.env_manager.is_cache_valid", return_value=(True, cached)),
-            patch("vibeocr.env_manager.detect_gpu") as mock_detect,
+            patch("vibeocr.backend.env_manager.is_cache_valid", return_value=(True, cached)),
+            patch("vibeocr.backend.env_manager.detect_gpu") as mock_detect,
         ):
             result = resolve_use_gpu(tmp_path)
 
@@ -1824,8 +1824,8 @@ class TestResolveUseGpu:
             "hardware_info": {"has_gpu": True, "cuda_version": "cu126"},
         }
         with (
-            patch("vibeocr.env_manager.is_cache_valid", return_value=(True, cached)),
-            patch("vibeocr.env_manager.detect_gpu") as mock_detect,
+            patch("vibeocr.backend.env_manager.is_cache_valid", return_value=(True, cached)),
+            patch("vibeocr.backend.env_manager.detect_gpu") as mock_detect,
         ):
             result = resolve_use_gpu(tmp_path)
 
@@ -1835,9 +1835,9 @@ class TestResolveUseGpu:
     def test_falls_back_to_detect_gpu_when_cache_invalid(self, tmp_path):
         """缓存失效时应回退到 detect_gpu() 实时探测"""
         with (
-            patch("vibeocr.env_manager.is_cache_valid", return_value=(False, None)),
+            patch("vibeocr.backend.env_manager.is_cache_valid", return_value=(False, None)),
             patch(
-                "vibeocr.env_manager.detect_gpu", return_value=(False, None)
+                "vibeocr.backend.env_manager.detect_gpu", return_value=(False, None)
             ) as mock_detect,
         ):
             result = resolve_use_gpu(tmp_path)
@@ -1849,9 +1849,9 @@ class TestResolveUseGpu:
         """缓存有效但缺 hardware_info 字段时也应回退探测"""
         cached = {"version": 1, "machine_id": "any"}  # 无 hardware_info
         with (
-            patch("vibeocr.env_manager.is_cache_valid", return_value=(True, cached)),
+            patch("vibeocr.backend.env_manager.is_cache_valid", return_value=(True, cached)),
             patch(
-                "vibeocr.env_manager.detect_gpu", return_value=(True, "cu126")
+                "vibeocr.backend.env_manager.detect_gpu", return_value=(True, "cu126")
             ) as mock_detect,
         ):
             result = resolve_use_gpu(tmp_path)
@@ -1868,8 +1868,8 @@ class TestResolveUseGpu:
             "hardware_info": {"has_gpu": False, "cuda_version": None},
         }
         with (
-            patch("vibeocr.env_manager.is_cache_valid", return_value=(True, cached)),
-            patch("vibeocr.env_manager.detect_gpu") as mock_detect,
+            patch("vibeocr.backend.env_manager.is_cache_valid", return_value=(True, cached)),
+            patch("vibeocr.backend.env_manager.detect_gpu") as mock_detect,
         ):
             result = resolve_use_gpu(tmp_path)
 
@@ -1885,8 +1885,8 @@ class TestResolveUseGpu:
             "hardware_info": {"has_gpu": True, "cuda_version": "cu126"},
         }
         with (
-            patch("vibeocr.env_manager.is_cache_valid", return_value=(True, cached)),
-            patch("vibeocr.env_manager.detect_gpu") as mock_detect,
+            patch("vibeocr.backend.env_manager.is_cache_valid", return_value=(True, cached)),
+            patch("vibeocr.backend.env_manager.detect_gpu") as mock_detect,
         ):
             result = resolve_use_gpu(tmp_path)
 
@@ -1913,15 +1913,15 @@ class TestGpuInstallUsesTorchForCudaRuntime:
 
         with (
             patch(
-                "vibeocr.env_manager.get_pip_source",
+                "vibeocr.backend.env_manager.get_pip_source",
                 return_value="https://pypi.org/simple",
             ),
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=python_exe,
             ),
             patch(
-                "vibeocr.env_manager.subprocess.Popen",
+                "vibeocr.backend.env_manager.subprocess.Popen",
                 side_effect=_popen_side_effect(mock_run),
             ),
         ):
@@ -2004,7 +2004,7 @@ class TestGpuNoFallbackPyPi:
 
         with (
             patch(
-                "vibeocr.env_manager.subprocess.Popen",
+                "vibeocr.backend.env_manager.subprocess.Popen",
                 side_effect=_popen_side_effect(mock_run),
             ),
         ):
@@ -2053,7 +2053,7 @@ class TestGpuNoFallbackPyPi:
             return r
 
         with patch(
-            "vibeocr.env_manager.subprocess.Popen",
+            "vibeocr.backend.env_manager.subprocess.Popen",
             side_effect=_popen_side_effect(mock_run),
         ):
             ok, _msg = _install_paddle_stack(
@@ -2093,7 +2093,7 @@ class TestGpuNoFallbackPyPi:
             return r
 
         with patch(
-            "vibeocr.env_manager.subprocess.Popen",
+            "vibeocr.backend.env_manager.subprocess.Popen",
             side_effect=_popen_side_effect(mock_run),
         ):
             _install_paddle_stack(
@@ -2134,23 +2134,23 @@ class TestSwitchPaddleBackend:
 
         with (
             patch(
-                "vibeocr.env_manager.get_pip_source",
+                "vibeocr.backend.env_manager.get_pip_source",
                 return_value="https://pypi.org/simple",
             ),
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=python_exe,
             ),
             # uninstall 等仍走 subprocess.run；安装路径（_run_pip）走 Popen。
             # 两者共用 mock_run，命令都 append 到同一 calls 列表。
-            patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run),
+            patch("vibeocr.backend.env_manager.subprocess.run", side_effect=mock_run),
             patch(
-                "vibeocr.env_manager.subprocess.Popen",
+                "vibeocr.backend.env_manager.subprocess.Popen",
                 side_effect=_popen_side_effect(mock_run),
             ),
-            patch("vibeocr.env_manager.detect_gpu", return_value=(True, "cu126")),
+            patch("vibeocr.backend.env_manager.detect_gpu", return_value=(True, "cu126")),
             patch(
-                "vibeocr.env_manager.update_cache_field", return_value=True
+                "vibeocr.backend.env_manager.update_cache_field", return_value=True
             ) as mock_update,
         ):
             ok, msg = switch_paddle_backend(
@@ -2222,7 +2222,7 @@ class TestSwitchPaddleBackend:
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
         with patch(
-            "vibeocr.env_manager.get_embedded_python_executable",
+            "vibeocr.backend.env_manager.get_embedded_python_executable",
             return_value=python_exe,
         ):
             ok, msg = switch_paddle_backend(tmp_path, "tpu")
@@ -2237,12 +2237,12 @@ class TestInstallLogging:
         """download_file_with_progress 应通过 logger.info 输出，不依赖 print"""
         import logging
 
-        from vibeocr.env_manager import download_file_with_progress
+        from vibeocr.backend.env_manager import download_file_with_progress
 
         dest = tmp_path / "fake.tar.gz"
         with (
-            patch("vibeocr.env_manager.urlopen") as mock_urlopen,
-            patch("vibeocr.env_manager.Request"),
+            patch("vibeocr.backend.env_manager.urlopen") as mock_urlopen,
+            patch("vibeocr.backend.env_manager.Request"),
         ):
             # 构造一个最小 response：content-length=4，body=b"data"
             fake_resp = MagicMock()
@@ -2253,7 +2253,7 @@ class TestInstallLogging:
             fake_resp.read.side_effect = [b"data", b""]
             mock_urlopen.return_value = fake_resp
 
-            with caplog.at_level(logging.INFO, logger="vibeocr.env_manager"):
+            with caplog.at_level(logging.INFO, logger="vibeocr.backend.env_manager"):
                 ok = download_file_with_progress(
                     "http://x/y.tar.gz", dest, "Python(镜像)"
                 )
@@ -2269,7 +2269,7 @@ class TestInstallLogging:
         """下载失败时应重试（max_retries 次），最终成功"""
         import contextlib
 
-        from vibeocr.env_manager import download_file_with_progress
+        from vibeocr.backend.env_manager import download_file_with_progress
 
         dest = tmp_path / "fake.tar.gz"
         call_count = {"n": 0}
@@ -2291,8 +2291,8 @@ class TestInstallLogging:
             return resp
 
         with (
-            patch("vibeocr.env_manager.urlopen", side_effect=side_effect),
-            patch("vibeocr.env_manager.Request"),
+            patch("vibeocr.backend.env_manager.urlopen", side_effect=side_effect),
+            patch("vibeocr.backend.env_manager.Request"),
             contextlib.nullcontext(),
         ):
             ok = download_file_with_progress(
@@ -2319,16 +2319,16 @@ class TestInstallLogging:
         import logging as _logging
 
         with (
-            patch("vibeocr.env_manager.get_environment_mode", return_value="none"),
+            patch("vibeocr.backend.env_manager.get_environment_mode", return_value="none"),
             patch(
-                "vibeocr.env_manager.download_file_with_progress"
+                "vibeocr.backend.env_manager.download_file_with_progress"
             ) as mock_dl,
             patch("tarfile.open", wraps=tarfile.open),
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=tmp_path / "python" / "python.exe",
             ),
-            patch("vibeocr.env_manager.subprocess.run") as mock_run,
+            patch("vibeocr.backend.env_manager.subprocess.run") as mock_run,
         ):
             # 让下载写一个最小 tar.gz
             def _make_tar():
@@ -2363,7 +2363,7 @@ class TestInstallLogging:
             mock_dl.side_effect = _fake_dl
             mock_run.return_value = MagicMock(returncode=0, stdout="pip 25.0", stderr="")
 
-            with caplog.at_level(_logging.INFO, logger="vibeocr.env_manager"):
+            with caplog.at_level(_logging.INFO, logger="vibeocr.backend.env_manager"):
                 ok, msg = install_embedded_python(tmp_path)
         return ok, msg
 
@@ -2382,18 +2382,18 @@ class TestInstallLogging:
 
         with (
             patch(
-                "vibeocr.env_manager.get_pip_source",
+                "vibeocr.backend.env_manager.get_pip_source",
                 return_value="https://pypi.org/simple",
             ),
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=python_exe,
             ),
             patch(
-                "vibeocr.env_manager.subprocess.Popen",
+                "vibeocr.backend.env_manager.subprocess.Popen",
                 side_effect=_popen_side_effect(mock_run),
             ),
-            caplog.at_level(logging.INFO, logger="vibeocr.env_manager"),
+            caplog.at_level(logging.INFO, logger="vibeocr.backend.env_manager"),
         ):
             ok, _msg = install_embedded_dependencies(
                 tmp_path, progress_callback=lambda s, m: None
@@ -2420,21 +2420,21 @@ class TestInstallLogging:
 
         with (
             patch(
-                "vibeocr.env_manager.get_pip_source",
+                "vibeocr.backend.env_manager.get_pip_source",
                 return_value="https://pypi.org/simple",
             ),
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=python_exe,
             ),
-            patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run),
+            patch("vibeocr.backend.env_manager.subprocess.run", side_effect=mock_run),
             patch(
-                "vibeocr.env_manager.subprocess.Popen",
+                "vibeocr.backend.env_manager.subprocess.Popen",
                 side_effect=_popen_side_effect(mock_run),
             ),
-            patch("vibeocr.env_manager.detect_gpu", return_value=(True, "cu126")),
-            patch("vibeocr.env_manager.update_cache_field", return_value=True),
-            caplog.at_level(logging.INFO, logger="vibeocr.env_manager"),
+            patch("vibeocr.backend.env_manager.detect_gpu", return_value=(True, "cu126")),
+            patch("vibeocr.backend.env_manager.update_cache_field", return_value=True),
+            caplog.at_level(logging.INFO, logger="vibeocr.backend.env_manager"),
         ):
             ok, _msg = switch_paddle_backend(
                 tmp_path, "cpu", progress_callback=lambda s, m: None
@@ -2450,7 +2450,7 @@ class TestReinstallPython:
 
     def test_deletes_python_dir_then_installs(self, tmp_path):
         """应先 rmtree(python/) 再调 install_embedded_python"""
-        from vibeocr.env_manager import reinstall_embedded_python
+        from vibeocr.backend.env_manager import reinstall_embedded_python
 
         python_dir = tmp_path / "python"
         python_dir.mkdir()
@@ -2466,9 +2466,9 @@ class TestReinstallPython:
             return True, "ok"
 
         with (
-            patch("vibeocr.env_manager.shutil.rmtree", side_effect=fake_rmtree),
+            patch("vibeocr.backend.env_manager.shutil.rmtree", side_effect=fake_rmtree),
             patch(
-                "vibeocr.env_manager.install_embedded_python", side_effect=fake_install
+                "vibeocr.backend.env_manager.install_embedded_python", side_effect=fake_install
             ),
         ):
             ok, _msg = reinstall_embedded_python(tmp_path)
@@ -2481,12 +2481,12 @@ class TestReinstallPython:
 
     def test_rmtree_ignores_errors_when_dir_missing(self, tmp_path):
         """python/ 不存在时 rmtree(ignore_errors=True) 不报错，继续安装"""
-        from vibeocr.env_manager import reinstall_embedded_python
+        from vibeocr.backend.env_manager import reinstall_embedded_python
 
         with (
-            patch("vibeocr.env_manager.shutil.rmtree") as mock_rmtree,
+            patch("vibeocr.backend.env_manager.shutil.rmtree") as mock_rmtree,
             patch(
-                "vibeocr.env_manager.install_embedded_python",
+                "vibeocr.backend.env_manager.install_embedded_python",
                 return_value=(True, "ok"),
             ),
         ):
@@ -2499,13 +2499,13 @@ class TestReinstallPython:
 
     def test_progress_callback_receives_cleanup_stage(self, tmp_path):
         """progress_callback 应收到'清理'阶段"""
-        from vibeocr.env_manager import reinstall_embedded_python
+        from vibeocr.backend.env_manager import reinstall_embedded_python
 
         stages = []
         with (
-            patch("vibeocr.env_manager.shutil.rmtree"),
+            patch("vibeocr.backend.env_manager.shutil.rmtree"),
             patch(
-                "vibeocr.env_manager.install_embedded_python",
+                "vibeocr.backend.env_manager.install_embedded_python",
                 return_value=(True, "ok"),
             ),
         ):
@@ -2519,12 +2519,12 @@ class TestReinstallPython:
 
     def test_returns_false_when_install_fails(self, tmp_path):
         """install_embedded_python 失败时应返回 False"""
-        from vibeocr.env_manager import reinstall_embedded_python
+        from vibeocr.backend.env_manager import reinstall_embedded_python
 
         with (
-            patch("vibeocr.env_manager.shutil.rmtree"),
+            patch("vibeocr.backend.env_manager.shutil.rmtree"),
             patch(
-                "vibeocr.env_manager.install_embedded_python",
+                "vibeocr.backend.env_manager.install_embedded_python",
                 return_value=(False, "下载失败"),
             ),
         ):
@@ -2549,7 +2549,7 @@ class TestBuildPaddleRequirements:
 
     def test_gpu_with_cuda_selects_gpu_index(self):
         """GPU + cuda_version → paddlepaddle-gpu + 含 cu-tag 的 index"""
-        from vibeocr.env_manager import _build_paddle_requirements
+        from vibeocr.backend.env_manager import _build_paddle_requirements
 
         reqs = _build_paddle_requirements(
             specs=self._specs(),
@@ -2566,7 +2566,7 @@ class TestBuildPaddleRequirements:
 
     def test_cpu_selects_cpu_index(self):
         """CPU → paddlepaddle(CPU) + cpu index"""
-        from vibeocr.env_manager import _build_paddle_requirements
+        from vibeocr.backend.env_manager import _build_paddle_requirements
 
         reqs = _build_paddle_requirements(
             specs=self._specs(),
@@ -2584,7 +2584,7 @@ class TestBuildPaddleRequirements:
 
     def test_gpu_default_tag_when_no_cuda(self):
         """GPU 无 cuda_version → 用默认 cu126"""
-        from vibeocr.env_manager import _build_paddle_requirements
+        from vibeocr.backend.env_manager import _build_paddle_requirements
 
         reqs = _build_paddle_requirements(
             specs=self._specs(),
@@ -2599,7 +2599,7 @@ class TestBuildPaddleRequirements:
 
     def test_specs_with_paddlepaddle_key_only(self):
         """specs 仅含 paddlepaddle 键（打包环境 version.json 风格）应正常工作"""
-        from vibeocr.env_manager import _build_paddle_requirements
+        from vibeocr.backend.env_manager import _build_paddle_requirements
 
         specs = {"paddlepaddle": "paddlepaddle>=3.3.1"}
         reqs = _build_paddle_requirements(
@@ -2655,7 +2655,7 @@ class TestInstallPaddleStackRequirementsOverride:
         # 只装 mineru 一个
         subset = [("MinerU", "mineru[core]>=3.4.0", "https://pypi.org/simple")]
         with patch(
-            "vibeocr.env_manager.subprocess.Popen",
+            "vibeocr.backend.env_manager.subprocess.Popen",
             side_effect=_popen_side_effect(mock_run),
         ):
             ok, _msg = _install_paddle_stack(
@@ -2689,7 +2689,7 @@ class TestInstallPaddleStackRequirementsOverride:
             return r
 
         with patch(
-            "vibeocr.env_manager.subprocess.Popen",
+            "vibeocr.backend.env_manager.subprocess.Popen",
             side_effect=_popen_side_effect(mock_run),
         ):
             ok, _msg = _install_paddle_stack(
@@ -2719,7 +2719,7 @@ class TestInstallPaddleStackRequirementsOverride:
         排在后面的 fonttools/fastapi 等小包被跳过。改为收集失败继续装，
         循环结束后汇总返回失败（让用户二次补装真正失败的）。
         """
-        from vibeocr.env_manager import _install_paddle_stack
+        from vibeocr.backend.env_manager import _install_paddle_stack
 
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
@@ -2745,7 +2745,7 @@ class TestInstallPaddleStackRequirementsOverride:
             return r
 
         with patch(
-            "vibeocr.env_manager.subprocess.Popen",
+            "vibeocr.backend.env_manager.subprocess.Popen",
             side_effect=_popen_side_effect(mock_run),
         ):
             ok, msg = _install_paddle_stack(
@@ -2798,7 +2798,7 @@ class TestInstallMissingDependencies:
 
     def test_skips_installed_packages_only_installs_missing(self, tmp_path):
         """已 import 成功的包应跳过，只装缺失的"""
-        from vibeocr.env_manager import install_missing_dependencies
+        from vibeocr.backend.env_manager import install_missing_dependencies
 
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
@@ -2820,7 +2820,7 @@ class TestInstallMissingDependencies:
                 # （usable=True），mineru/torch 不可用。
                 # leaf 包必须标可用，否则 install_missing_dependencies 的 leaf 缺失
                 # 检测会把 paddleocr 加入重装 subset（即使顶层可用），破坏"已装跳过"语义。
-                from vibeocr.services.env_config import OCR_CHECK_LEAF_MODULES
+                from vibeocr.backend.services.env_config import OCR_CHECK_LEAF_MODULES
 
                 usable_modules = {"paddle", "paddleocr"} | set(OCR_CHECK_LEAF_MODULES.keys())
                 module = import_code.split()[1]
@@ -2832,19 +2832,19 @@ class TestInstallMissingDependencies:
 
         with (
             patch(
-                "vibeocr.env_manager.get_pip_source",
+                "vibeocr.backend.env_manager.get_pip_source",
                 return_value="https://pypi.org/simple",
             ),
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=python_exe,
             ),
-            patch("vibeocr.env_manager._load_dep_specs", return_value=self._specs()),
+            patch("vibeocr.backend.env_manager._load_dep_specs", return_value=self._specs()),
             # _check_imports 走 subprocess.run（mock_run 区分 metadata/import 成功失败）；
             # 安装路径走 Popen。
-            patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run),
+            patch("vibeocr.backend.env_manager.subprocess.run", side_effect=mock_run),
             patch(
-                "vibeocr.env_manager.subprocess.Popen",
+                "vibeocr.backend.env_manager.subprocess.Popen",
                 side_effect=_popen_side_effect(mock_run),
             ),
         ):
@@ -2866,7 +2866,7 @@ class TestInstallMissingDependencies:
 
     def test_all_installed_skips_everything(self, tmp_path):
         """全部已装时应跳过所有安装，返回成功"""
-        from vibeocr.env_manager import install_missing_dependencies
+        from vibeocr.backend.env_manager import install_missing_dependencies
 
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
@@ -2879,18 +2879,18 @@ class TestInstallMissingDependencies:
 
         with (
             patch(
-                "vibeocr.env_manager.get_pip_source",
+                "vibeocr.backend.env_manager.get_pip_source",
                 return_value="https://pypi.org/simple",
             ),
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=python_exe,
             ),
-            patch("vibeocr.env_manager._load_dep_specs", return_value=self._specs()),
+            patch("vibeocr.backend.env_manager._load_dep_specs", return_value=self._specs()),
             # _check_imports 走 subprocess.run；安装路径走 Popen。两者都用 mock_run。
-            patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run),
+            patch("vibeocr.backend.env_manager.subprocess.run", side_effect=mock_run),
             patch(
-                "vibeocr.env_manager.subprocess.Popen",
+                "vibeocr.backend.env_manager.subprocess.Popen",
                 side_effect=_popen_side_effect(mock_run),
             ),
         ):
@@ -2903,7 +2903,7 @@ class TestInstallMissingDependencies:
 
     def test_all_missing_installs_everything(self, tmp_path):
         """全部缺失时应装全部（等同全量）"""
-        from vibeocr.env_manager import install_missing_dependencies
+        from vibeocr.backend.env_manager import install_missing_dependencies
 
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
@@ -2922,18 +2922,18 @@ class TestInstallMissingDependencies:
 
         with (
             patch(
-                "vibeocr.env_manager.get_pip_source",
+                "vibeocr.backend.env_manager.get_pip_source",
                 return_value="https://pypi.org/simple",
             ),
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=python_exe,
             ),
-            patch("vibeocr.env_manager._load_dep_specs", return_value=self._specs()),
+            patch("vibeocr.backend.env_manager._load_dep_specs", return_value=self._specs()),
             # _check_imports 走 subprocess.run；安装路径走 Popen。
-            patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run),
+            patch("vibeocr.backend.env_manager.subprocess.run", side_effect=mock_run),
             patch(
-                "vibeocr.env_manager.subprocess.Popen",
+                "vibeocr.backend.env_manager.subprocess.Popen",
                 side_effect=_popen_side_effect(mock_run),
             ),
         ):
@@ -2953,7 +2953,7 @@ class TestInstallMissingDependencies:
 
     def test_force_backend_gpu_uses_gpu_requirements(self, tmp_path):
         """force_backend=gpu 时应构建 GPU requirements（含 torch）"""
-        from vibeocr.env_manager import install_missing_dependencies
+        from vibeocr.backend.env_manager import install_missing_dependencies
 
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
@@ -2972,21 +2972,21 @@ class TestInstallMissingDependencies:
 
         with (
             patch(
-                "vibeocr.env_manager.get_pip_source",
+                "vibeocr.backend.env_manager.get_pip_source",
                 return_value="https://pypi.org/simple",
             ),
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=python_exe,
             ),
-            patch("vibeocr.env_manager._load_dep_specs", return_value=self._specs()),
+            patch("vibeocr.backend.env_manager._load_dep_specs", return_value=self._specs()),
             # _check_imports 走 subprocess.run；安装路径走 Popen。
-            patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run),
+            patch("vibeocr.backend.env_manager.subprocess.run", side_effect=mock_run),
             patch(
-                "vibeocr.env_manager.subprocess.Popen",
+                "vibeocr.backend.env_manager.subprocess.Popen",
                 side_effect=_popen_side_effect(mock_run),
             ),
-            patch("vibeocr.env_manager.detect_gpu", return_value=(True, "cu126")),
+            patch("vibeocr.backend.env_manager.detect_gpu", return_value=(True, "cu126")),
         ):
             ok, _msg = install_missing_dependencies(
                 tmp_path,
@@ -3008,7 +3008,7 @@ class TestInstallMissingDependencies:
         import 永远失败（用户报告"装几次还失败"）。残缺时必须 --force-reinstall --no-deps
         才能真正重写模块文件。
         """
-        from vibeocr.env_manager import install_missing_dependencies
+        from vibeocr.backend.env_manager import install_missing_dependencies
 
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
@@ -3041,17 +3041,17 @@ class TestInstallMissingDependencies:
 
         with (
             patch(
-                "vibeocr.env_manager.get_pip_source",
+                "vibeocr.backend.env_manager.get_pip_source",
                 return_value="https://pypi.org/simple",
             ),
             patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
+                "vibeocr.backend.env_manager.get_embedded_python_executable",
                 return_value=python_exe,
             ),
-            patch("vibeocr.env_manager._load_dep_specs", return_value=self._specs()),
-            patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run),
+            patch("vibeocr.backend.env_manager._load_dep_specs", return_value=self._specs()),
+            patch("vibeocr.backend.env_manager.subprocess.run", side_effect=mock_run),
             patch(
-                "vibeocr.env_manager.subprocess.Popen",
+                "vibeocr.backend.env_manager.subprocess.Popen",
                 side_effect=_popen_side_effect(mock_run),
             ),
         ):
@@ -3108,10 +3108,10 @@ class TestInstallFailureLogging:
         }
         with (
             patch(
-                "vibeocr.env_manager.subprocess.Popen",
+                "vibeocr.backend.env_manager.subprocess.Popen",
                 side_effect=_popen_side_effect(mock_run),
             ),
-            caplog.at_level(logging.ERROR, logger="vibeocr.env_manager"),
+            caplog.at_level(logging.ERROR, logger="vibeocr.backend.env_manager"),
         ):
             ok, _msg = _install_paddle_stack(
                 python_exe=python_exe,
@@ -3139,7 +3139,7 @@ class TestRunPip:
 
     def test_returns_completed_process_with_returncode_stdout_stderr(self):
         """正常完成应返回 CompletedProcess（兼容旧 subprocess.run 返回类型）"""
-        from vibeocr.env_manager import _run_pip
+        from vibeocr.backend.env_manager import _run_pip
 
         proc = MagicMock()
         proc.returncode = 0
@@ -3147,7 +3147,7 @@ class TestRunPip:
         proc.communicate.return_value = ("stdout-content", "stderr-content")
 
         with patch(
-            "vibeocr.env_manager.subprocess.Popen", return_value=proc
+            "vibeocr.backend.env_manager.subprocess.Popen", return_value=proc
         ) as popen:
             result = _run_pip(["python", "-m", "pip", "install", "x"], timeout=10)
 
@@ -3158,7 +3158,7 @@ class TestRunPip:
 
     def test_on_proc_callback_receives_popen_handle(self):
         """on_proc 回调应收到 Popen 句柄（调用方可据此 kill 子进程）"""
-        from vibeocr.env_manager import _run_pip
+        from vibeocr.backend.env_manager import _run_pip
 
         proc = MagicMock()
         proc.returncode = 0
@@ -3166,7 +3166,7 @@ class TestRunPip:
         proc.communicate.return_value = ("", "")
 
         received = []
-        with patch("vibeocr.env_manager.subprocess.Popen", return_value=proc):
+        with patch("vibeocr.backend.env_manager.subprocess.Popen", return_value=proc):
             _run_pip(["python", "-m", "pip"], timeout=10, on_proc=received.append)
 
         assert received == [proc], "on_proc 应收到 Popen 句柄"
@@ -3175,7 +3175,7 @@ class TestRunPip:
         """cancel_event 被 set 后应 kill 子进程并抛 InstallCancelled"""
         import threading
 
-        from vibeocr.env_manager import InstallCancelled, _run_pip
+        from vibeocr.backend.env_manager import InstallCancelled, _run_pip
 
         proc = MagicMock()
         proc.returncode = -1
@@ -3193,7 +3193,7 @@ class TestRunPip:
 
         threading.Thread(target=_set_cancel_later, daemon=True).start()
 
-        with patch("vibeocr.env_manager.subprocess.Popen", return_value=proc):
+        with patch("vibeocr.backend.env_manager.subprocess.Popen", return_value=proc):
             with pytest.raises(InstallCancelled):
                 _run_pip(
                     ["python", "-m", "pip", "install", "x"],
@@ -3225,7 +3225,7 @@ class TestInstallPaddleStackCancel:
 
         reports = []
         with patch(
-            "vibeocr.env_manager.subprocess.Popen",
+            "vibeocr.backend.env_manager.subprocess.Popen",
             side_effect=_popen_side_effect(mock_run),
         ):
             ok, msg = _install_paddle_stack(
@@ -3265,7 +3265,7 @@ class TestInstallPaddleStackCancel:
             return r
 
         with patch(
-            "vibeocr.env_manager.subprocess.Popen",
+            "vibeocr.backend.env_manager.subprocess.Popen",
             side_effect=_popen_side_effect(mock_run),
         ):
             ok, msg = _install_paddle_stack(
@@ -3304,13 +3304,13 @@ class TestInstallWritesCache:
 
         with (
             patch(
-                "vibeocr.env_manager.subprocess.Popen",
+                "vibeocr.backend.env_manager.subprocess.Popen",
                 side_effect=_popen_side_effect(mock_run),
             ),
-            patch("vibeocr.env_manager._quick_verify_deps",
+            patch("vibeocr.backend.env_manager._quick_verify_deps",
                   return_value={"paddlepaddle": True, "paddleocr": True,
                                 "mineru": True, "markdown": True, "torch": True}),
-            patch("vibeocr.env_manager.update_cache_field") as mock_update,
+            patch("vibeocr.backend.env_manager.update_cache_field") as mock_update,
         ):
             ok, _msg = _install_paddle_stack(
                 python_exe=python_exe,
@@ -3344,10 +3344,10 @@ class TestInstallWritesCache:
 
         with (
             patch(
-                "vibeocr.env_manager.subprocess.Popen",
+                "vibeocr.backend.env_manager.subprocess.Popen",
                 side_effect=_popen_side_effect(mock_run),
             ),
-            patch("vibeocr.env_manager.update_cache_field") as mock_update,
+            patch("vibeocr.backend.env_manager.update_cache_field") as mock_update,
         ):
             ok, _msg = _install_paddle_stack(
                 python_exe=python_exe,
@@ -3378,12 +3378,12 @@ class TestInstallWritesCache:
 
         with (
             patch(
-                "vibeocr.env_manager.subprocess.Popen",
+                "vibeocr.backend.env_manager.subprocess.Popen",
                 side_effect=_popen_side_effect(mock_run),
             ),
-            patch("vibeocr.env_manager._quick_verify_deps",
+            patch("vibeocr.backend.env_manager._quick_verify_deps",
                   return_value={"paddlepaddle": True}),
-            patch("vibeocr.env_manager.update_cache_field",
+            patch("vibeocr.backend.env_manager.update_cache_field",
                   side_effect=RuntimeError("disk full")),
         ):
             ok, msg = _install_paddle_stack(
@@ -3427,7 +3427,7 @@ class TestDetectDependencyUpdatesLockedVersions:
             specs: {pkg: spec 串}，默认 mineru ``mineru[core]>=3.4.0``。
             mode: 环境模式（``"portable"`` 默认；``"venv"`` 应短路返回空）。
         """
-        import vibeocr.env_manager as em
+        import vibeocr.backend.env_manager as em
 
         python_exe = tmp_path / "python.exe"
         python_exe.touch()  # detect 早期检查 python_exe.exists()
@@ -3441,20 +3441,20 @@ class TestDetectDependencyUpdatesLockedVersions:
         try:
             with (
                 patch(
-                    "vibeocr.env_manager.get_embedded_python_executable",
+                    "vibeocr.backend.env_manager.get_embedded_python_executable",
                     return_value=python_exe,
                 ),
-                patch("vibeocr.env_manager._load_dep_specs", return_value=specs),
+                patch("vibeocr.backend.env_manager._load_dep_specs", return_value=specs),
                 patch(
-                    "vibeocr.env_manager.get_dependency_versions",
+                    "vibeocr.backend.env_manager.get_dependency_versions",
                     return_value=dict(installed),
                 ),
                 patch(
-                    "vibeocr.env_manager._load_locked_versions",
+                    "vibeocr.backend.env_manager._load_locked_versions",
                     return_value=dict(locked),
                 ),
                 patch(
-                    "vibeocr.env_manager.get_environment_mode",
+                    "vibeocr.backend.env_manager.get_environment_mode",
                     return_value=mode,
                 ),
             ):

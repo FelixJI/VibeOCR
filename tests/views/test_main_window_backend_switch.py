@@ -8,8 +8,8 @@ is_cache_valid / update_cache_field。
 from pathlib import Path
 from unittest.mock import patch
 
-from vibeocr.views import main_window as mw_module
-from vibeocr.views.main_window import MainWindow
+from vibeocr.classic.views import main_window as mw_module
+from vibeocr.classic.views.main_window import MainWindow
 
 
 class _StubWindow:

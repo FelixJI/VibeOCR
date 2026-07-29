@@ -4,7 +4,9 @@ import sys
 
 import pytest
 
-from vibeocr.core.pipelines.pipeline_ocr import _isolate_unused_modelscope_import
+from vibeocr.backend.core.pipelines.pipeline_ocr import (
+    _isolate_unused_modelscope_import,
+)
 
 
 def test_non_modelscope_source_installs_non_torch_placeholder(

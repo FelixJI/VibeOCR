@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from vibeocr.models.ocr_result import OCRResult, normalize_bbox, normalize_polygon
+from vibeocr.backend.models.ocr_result import (
+    OCRResult,
+    normalize_bbox,
+    normalize_polygon,
+)
 
 
 @pytest.mark.parametrize(

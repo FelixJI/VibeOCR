@@ -15,7 +15,7 @@ import sys
 
 import pytest
 
-from vibeocr.env_manager import (
+from vibeocr.backend.env_manager import (
     get_bundled_changelog_path,
     get_bundled_resources_dir,
 )

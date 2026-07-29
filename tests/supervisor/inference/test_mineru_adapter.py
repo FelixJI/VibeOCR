@@ -8,8 +8,8 @@ import time
 
 import pytest
 
-from vibeocr.supervisor.inference.budgets import InputItem
-from vibeocr.supervisor.inference.mineru_adapter import (
+from vibeocr.backend.supervisor.inference.budgets import InputItem
+from vibeocr.backend.supervisor.inference.mineru_adapter import (
     MinerUProcessAdapter,
     unique_stem,
 )
@@ -87,7 +87,7 @@ def test_mineru_logs_preload_and_recognition_model_with_elapsed(
 
     with caplog.at_level(
         logging.INFO,
-        logger="vibeocr.supervisor.inference.mineru_adapter",
+        logger="vibeocr.backend.supervisor.inference.mineru_adapter",
     ):
         adapter.preload(("MinerU",))
         adapter.recognize_many(items)
@@ -163,7 +163,7 @@ def test_release_idle_stops_subprocess() -> None:
     adapter.ensure_started()
     status = adapter.residency_status()
     entry = next(e for e in status.entries if e.pipeline == "MinerU")
-    from vibeocr.protocol.v2 import ResidencyKind
+    from vibeocr.runtime_contracts import ResidencyKind
 
     assert entry.kind is ResidencyKind.SOFT_TTL
     adapter.release_idle()
@@ -206,7 +206,7 @@ def test_residency_status_is_bounded_while_mineru_process_starts() -> None:
 
 
 def test_finite_ttl_stops_idle_mineru_process() -> None:
-    from vibeocr.protocol.v2 import (
+    from vibeocr.runtime_contracts import (
         EvictionReason,
         PipelineSpec,
         ResidencyKind,
@@ -234,7 +234,7 @@ def test_finite_ttl_stops_idle_mineru_process() -> None:
 
 
 def test_pinned_mineru_is_not_released() -> None:
-    from vibeocr.protocol.v2 import PipelineSpec, ResidencyKind, SettingsSnapshot
+    from vibeocr.runtime_contracts import PipelineSpec, ResidencyKind, SettingsSnapshot
 
     adapter = MinerUProcessAdapter(client_factory=lambda: _FakeMinerUClient())
     adapter.configure_settings(

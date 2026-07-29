@@ -26,18 +26,18 @@ def check_imports():
 
     # 检查 workers 模块
     try:
-        from vibeocr.workers import (
+        from vibeocr.classic.workers import (
             OCRWorkerError,  # noqa: F401  # type: ignore[unused-import]
         )
 
-        print("[OK] vibeocr.workers 模块可导入")
+        print("[OK] vibeocr.classic.workers 模块可导入")
     except ImportError as e:
-        print(f"[FAIL] vibeocr.workers 导入失败: {e}")
+        print(f"[FAIL] vibeocr.classic.workers 导入失败: {e}")
         return False
 
     # 检查 env_manager 新增函数
     try:
-        from vibeocr.env_manager import (  # noqa: F401
+        from vibeocr.backend.env_manager import (  # noqa: F401
             get_embedded_python,  # type: ignore[unused-import]
             get_embedded_python_info,  # type: ignore[unused-import]
             get_embedded_venv_python,  # type: ignore[unused-import]
@@ -154,7 +154,7 @@ def check_env_manager():
     print_section("5. 检查环境管理器增强")
 
     try:
-        from vibeocr.env_manager import (
+        from vibeocr.backend.env_manager import (
             get_embedded_python,
             get_embedded_python_info,
             get_embedded_venv_python,

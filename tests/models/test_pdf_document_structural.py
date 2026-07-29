@@ -1,6 +1,6 @@
 """PdfDocument.has_structural_change 标志测试。"""
 
-from vibeocr.models.pdf_document import PdfDocument
+from vibeocr.backend.models.pdf_document import PdfDocument
 
 
 class TestHasStructuralChange:

@@ -1,8 +1,8 @@
 """InlineRecognitionPanel tests"""
 
-from vibeocr.core.pipelines import OCRPipeline
-from vibeocr.models.ocr_options import OCROptions
-from vibeocr.widgets.inline_recognition_panel import InlineRecognitionPanel
+from vibeocr.backend.core.pipelines import OCRPipeline
+from vibeocr.backend.models.ocr_options import OCROptions
+from vibeocr.classic.widgets.inline_recognition_panel import InlineRecognitionPanel
 
 
 class TestInlineRecognitionPanel:
@@ -17,7 +17,7 @@ class TestInlineRecognitionPanel:
 
     def test_get_options_uses_persisted(self, qapp, tmp_path):
         """get_options 返回持久化的选项而非默认值"""
-        from vibeocr.utils.ocr_preferences import OCRPreferences
+        from vibeocr.classic.utils.ocr_preferences import OCRPreferences
 
         OCRPreferences.reset_instance()
         try:
@@ -38,7 +38,7 @@ class TestInlineRecognitionPanel:
 
     def test_click_button_loads_persisted_options(self, qapp, tmp_path):
         """点击按钮加载该管道的持久化选项"""
-        from vibeocr.utils.ocr_preferences import OCRPreferences
+        from vibeocr.classic.utils.ocr_preferences import OCRPreferences
 
         OCRPreferences.reset_instance()
         try:
@@ -78,7 +78,7 @@ class TestInlineRecognitionPanel:
     def test_pipeline_authority_over_corrupted_screenshot_source(self, qapp, tmp_path):
         """加固：即使 screenshot 源存了 .pipeline 不一致的腐烂数据，
         按钮选什么就识别什么——get_options().pipeline 恒等于按钮选择。"""
-        from vibeocr.utils.ocr_preferences import OCRPreferences
+        from vibeocr.classic.utils.ocr_preferences import OCRPreferences
 
         OCRPreferences.reset_instance()
         try:

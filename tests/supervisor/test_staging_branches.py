@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from vibeocr.supervisor.jobs.staging import (
+from vibeocr.backend.supervisor.jobs.staging import (
     InputStager,
     StagingQuotaError,
 )
@@ -223,7 +223,7 @@ def test_stage_job_with_item_errors_isolates_oversized_item(tmp_path: Path) -> N
     )
     # The small item staged; the huge item is a FAILED JobItem.
     assert len(staged) == 1
-    from vibeocr.protocol.v2 import ItemState
+    from vibeocr.runtime_contracts import ItemState
 
     states = {item.item_id: item.state for item in items}
     assert states["it-0000"] is ItemState.QUEUED

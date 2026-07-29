@@ -2,7 +2,7 @@ from pathlib import Path
 
 import fitz
 
-from vibeocr.services.pdf_service import PdfService
+from vibeocr.backend.services.pdf_service import PdfService
 
 
 def test_save_incremental_persists_and_keeps_doc_usable(tmp_path):
@@ -77,7 +77,7 @@ def test_save_incremental_does_not_copy_whole_pdf(tmp_path, monkeypatch):
     def reject_copy(*args, **kwargs):
         raise AssertionError("incremental checkpoint must not copy the whole PDF")
 
-    monkeypatch.setattr("vibeocr.services.pdf_service.shutil.copy2", reject_copy)
+    monkeypatch.setattr("vibeocr.backend.services.pdf_service.shutil.copy2", reject_copy)
     assert PdfService.save_incremental(doc, str(pdf)) is True
     doc.close()
 
@@ -165,7 +165,7 @@ def test_save_incremental_logs_diagnostics_when_unavailable(
     便于定位为何生产环境恒 False。"""
     import logging
 
-    from vibeocr.services import pdf_service as ps
+    from vibeocr.backend.services import pdf_service as ps
 
     pdf = tmp_path / "diag.pdf"
     doc = fitz.open()

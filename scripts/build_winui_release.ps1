@@ -13,6 +13,7 @@ param(
     [string]$Configuration = "Release",
     [string]$OutputDir = "$env:TEMP\VibeOCR-winui-publish",
     [string]$Version = "",
+    [string]$BackendVersion = "",
     [string]$WheelDirectory = "",
     [string]$BackendWheel = "",
     [string]$PythonExecutable = ""
@@ -33,13 +34,33 @@ if (-not $PythonExecutable) {
 }
 $PythonExecutable = (Resolve-Path $PythonExecutable).Path
 if (-not $Version) {
-    $pyproject = Get-Content (Join-Path $repo 'pyproject.toml') -Raw
+    # During the single-repository transition the Classic project carries the
+    # shared product version.  The root is intentionally workspace-only and no
+    # longer publishes a meta wheel.
+    $pyproject = Get-Content (Join-Path $repo 'apps\vibeocr-pyside\pyproject.toml') -Raw
     if ($pyproject -notmatch '(?m)^version\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)"') {
         throw 'project version not found in pyproject.toml'
     }
     $Version = $Matches[1]
 }
 if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') { throw "invalid version: $Version" }
+if (-not $BackendVersion -and $BackendWheel) {
+    $backendWheelName = Split-Path -Leaf $BackendWheel
+    if ($backendWheelName -notmatch '^vibeocr_backend-([0-9]+\.[0-9]+\.[0-9]+)-') {
+        throw "cannot derive backend version from wheel: $backendWheelName"
+    }
+    $BackendVersion = $Matches[1]
+}
+if (-not $BackendVersion) {
+    $backendPyproject = Get-Content (Join-Path $repo 'packages\vibeocr-backend\pyproject.toml') -Raw
+    if ($backendPyproject -notmatch '(?m)^version\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)"') {
+        throw 'backend version not found in pyproject.toml'
+    }
+    $BackendVersion = $Matches[1]
+}
+if ($BackendVersion -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
+    throw "invalid backend version: $BackendVersion"
+}
 
 $outputFull = [IO.Path]::GetFullPath($OutputDir)
 if ($outputFull -eq [IO.Path]::GetPathRoot($outputFull) -or $outputFull -eq $repo) {
@@ -70,9 +91,8 @@ if ($LASTEXITCODE -ne 0) { throw "bootstrapper build failed with exit $LASTEXITC
 & $PythonExecutable (Join-Path $repo 'scripts\build_release_metadata.py') --version $Version --output $outputFull
 if ($LASTEXITCODE -ne 0) { throw "release metadata/updater build failed with exit $LASTEXITCODE" }
 
-# Stage the exact contracts + Runtime Client + product client + backend wheel
-# set. WinUI never copies workspace source directly; all four wheels retain
-# their physical ownership.
+# Stage the exact contracts + Runtime Client + Backend wheel set. WinUI never
+# copies workspace source directly; all three wheels retain physical ownership.
 if (-not $WheelDirectory -and $BackendWheel) {
     $WheelDirectory = Split-Path -Parent (Resolve-Path $BackendWheel).Path
 }
@@ -82,7 +102,6 @@ if (-not $WheelDirectory) {
     foreach ($project in @(
         'packages\vibeocr-contracts-py',
         'packages\vibeocr-runtime-client-py',
-        'packages\vibeocr-client-py',
         'packages\vibeocr-backend'
     )) {
         & $PythonExecutable -m build --wheel (Join-Path $repo $project) --outdir $WheelDirectory
@@ -91,13 +110,12 @@ if (-not $WheelDirectory) {
 }
 $wheelDirFull = (Resolve-Path $WheelDirectory).Path
 $runtimeWheels = @(
-    Get-ChildItem -LiteralPath $wheelDirFull -Filter "vibeocr_contracts_py-*.whl" | Select-Object -First 1
+    Get-ChildItem -LiteralPath $wheelDirFull -Filter "vibeocr_runtime_contracts-*.whl" | Select-Object -First 1
     Get-ChildItem -LiteralPath $wheelDirFull -Filter "vibeocr_runtime_client-*.whl" | Select-Object -First 1
-    Get-ChildItem -LiteralPath $wheelDirFull -Filter "vibeocr_client_py-$Version-*.whl" | Select-Object -First 1
-    Get-ChildItem -LiteralPath $wheelDirFull -Filter "vibeocr_backend-$Version-*.whl" | Select-Object -First 1
+    Get-ChildItem -LiteralPath $wheelDirFull -Filter "vibeocr_backend-$BackendVersion-*.whl" | Select-Object -First 1
 )
 if (@($runtimeWheels | Where-Object { $_ -eq $null }).Count -gt 0) {
-    throw 'contracts/runtime-client/product-client/backend wheel set is incomplete'
+    throw 'contracts/runtime-client/backend wheel set is incomplete'
 }
 $supervisorRoot = Join-Path $outputFull 'supervisor'
 # Ensure a clean extraction target: the whole $outputFull is wiped at the top,
@@ -122,14 +140,16 @@ foreach ($wheel in $runtimeWheels) {
     $wheelRecords += [ordered]@{ file = $wheel.Name; sha256 = $hashSb.ToString() }
 }
 $backendRecord = $wheelRecords | Where-Object { $_.file -like 'vibeocr_backend-*' } | Select-Object -First 1
-$protocolWheel = $runtimeWheels | Where-Object { $_.Name -like 'vibeocr_contracts_py-*' } | Select-Object -First 1
-$protocolVersion = $protocolWheel.BaseName -replace '^vibeocr_contracts_py-([^-]+)-.*$', '$1'
+$protocolWheel = $runtimeWheels | Where-Object { $_.Name -like 'vibeocr_runtime_contracts-*' } | Select-Object -First 1
+$protocolVersion = $protocolWheel.BaseName -replace '^vibeocr_runtime_contracts-([^-]+)-.*$', '$1'
 $sourceCommit = (git -C $repo rev-parse HEAD).Trim()
 $productManifest = [ordered]@{
     frontend = 'winui'
     frontend_version = $Version
+    backend_version = $BackendVersion
     backend_wheel = $backendRecord.file
     backend_sha256 = $backendRecord.sha256
+    supervisor_module = 'vibeocr.backend.supervisor.main'
     python_wheels = $wheelRecords
     protocol_major = 2
     protocol_version = $protocolVersion
@@ -137,7 +157,7 @@ $productManifest = [ordered]@{
 }
 $productManifest | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $outputFull 'product-manifest.json') -Encoding utf8
 
-$protocolSource = Join-Path $repo 'packages\vibeocr-contracts-py\src\vibeocr\protocol\v2'
+$protocolSource = Join-Path $repo 'packages\vibeocr-contracts-py\src\vibeocr\runtime_contracts'
 $contractsRoot = Join-Path $outputFull 'contracts'
 New-Item -ItemType Directory -Path $contractsRoot -Force | Out-Null
 Copy-Item -LiteralPath $protocolSource -Destination (Join-Path $contractsRoot 'v2') -Recurse -Force
@@ -148,10 +168,10 @@ foreach ($cache in $contractCaches) {
     Remove-Item -LiteralPath $cache.FullName -Recurse -Force
 }
 
-$stagedSupervisor = Join-Path $supervisorRoot 'vibeocr\supervisor\main.py'
+$stagedSupervisor = Join-Path $supervisorRoot 'vibeocr\backend\supervisor\main.py'
 $stagedGolden = Join-Path $contractsRoot 'v2\golden\golden.json'
 if (-not (Test-Path $stagedSupervisor -PathType Leaf)) {
-    throw 'backend wheel did not stage vibeocr/supervisor/main.py'
+    throw 'backend wheel did not stage vibeocr/backend/supervisor/main.py'
 }
 if (-not (Test-Path $stagedGolden -PathType Leaf)) {
     throw 'contracts v2 staging is incomplete'

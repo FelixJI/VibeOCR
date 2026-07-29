@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import logging
 
-from vibeocr.ipc.model_bridge import apply_diff, mirror_to_doc
-from vibeocr.ipc.schemas import (
+from vibeocr.backend.ipc.model_bridge import apply_diff, mirror_to_doc
+from vibeocr.backend.ipc.schemas import (
     ModelDiff,
     PdfDocumentMirror,
     PdfPageInfoMirror,

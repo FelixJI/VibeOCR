@@ -15,7 +15,7 @@ import time
 import fitz
 import pytest
 
-from vibeocr.managers.pdf_session_manager import PdfSessionManager
+from vibeocr.classic.managers.pdf_session_manager import PdfSessionManager
 
 # These are slow integration tests (spawn a real PDF backend child). They are
 # skipped by default (addopts = "-m 'not slow'"); run with `-m slow`.
@@ -38,7 +38,7 @@ def manager(qapp):
     # tests keep exercising the real PDF backend child without requiring the
     # full supervisor process. Production resolves the transport lazily from
     # the supervisor adapter; this injection is test-only.
-    from vibeocr.services.pdf_backend_client import PdfBackendClient
+    from vibeocr.backend.services.pdf_backend_client import PdfBackendClient
 
     mgr = PdfSessionManager(parent=qapp, client=PdfBackendClient.instance())
     yield mgr
@@ -615,7 +615,7 @@ class TestOcrRunnerCancel:
         """
         from unittest.mock import MagicMock
 
-        from vibeocr.managers.pdf_session_manager import PdfSessionManager
+        from vibeocr.classic.managers.pdf_session_manager import PdfSessionManager
 
         # 复用 start_ocr 内定义的 _OcrRunner：它捕获 mgr 并持有 sid。
         mgr = PdfSessionManager.__new__(PdfSessionManager)
@@ -733,8 +733,8 @@ class TestOcrPageDoneIncrementalModel:
     def test_page_done_writes_ocr_blocks_to_model(self, qapp, tmp_path):
         from unittest.mock import MagicMock
 
-        from vibeocr.managers.pdf_session_manager import PdfSessionManager
-        from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
+        from vibeocr.backend.models.pdf_document import PdfDocument, PdfPageInfo
+        from vibeocr.classic.managers.pdf_session_manager import PdfSessionManager
 
         mgr = PdfSessionManager.__new__(PdfSessionManager)
         mgr._sessions = {}
@@ -769,8 +769,8 @@ class TestOcrPageDoneIncrementalModel:
         """result 为 None（失败/空页）时不写 model、不发块，仅转发信号。"""
         from unittest.mock import MagicMock
 
-        from vibeocr.managers.pdf_session_manager import PdfSessionManager
-        from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
+        from vibeocr.backend.models.pdf_document import PdfDocument, PdfPageInfo
+        from vibeocr.classic.managers.pdf_session_manager import PdfSessionManager
 
         mgr = PdfSessionManager.__new__(PdfSessionManager)
         mgr._sessions = {}
@@ -804,8 +804,8 @@ class TestRunOcrIncrementalSave:
     ):
         from unittest.mock import MagicMock
 
-        from vibeocr.managers.pdf_session_manager import PdfSessionManager
-        from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
+        from vibeocr.backend.models.pdf_document import PdfDocument, PdfPageInfo
+        from vibeocr.classic.managers.pdf_session_manager import PdfSessionManager
 
         pdf_path = tmp_path / "doc.pdf"
         pdf_path.write_bytes(b"%PDF-1.4 test")
@@ -855,7 +855,7 @@ class TestRunOcrIncrementalSave:
 
         # sidecar 重定向到 tmp（隔离测试，避免污染真实缓存目录）
         monkeypatch.setattr(
-            "vibeocr.utils.ocr_sidecar._sessions_dir", lambda: tmp_path / "sessions"
+            "vibeocr.backend.utils.ocr_sidecar._sessions_dir", lambda: tmp_path / "sessions"
         )
 
         runner = MagicMock()
@@ -886,7 +886,7 @@ class TestRunOcrIncrementalSave:
         # 每批已增量落盘，不再整文档压缩，也不再全量拉取模型。
         client.save.assert_not_called()
         client.get_model.assert_not_called()
-        from vibeocr.utils.ocr_sidecar import load_sidecar
+        from vibeocr.backend.utils.ocr_sidecar import load_sidecar
 
         data = load_sidecar(str(pdf_path))
         assert data is not None
@@ -905,8 +905,8 @@ class TestRunOcrIncrementalSave:
         from types import SimpleNamespace
         from unittest.mock import MagicMock
 
-        from vibeocr.managers.pdf_session_manager import PdfSessionManager
-        from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
+        from vibeocr.backend.models.pdf_document import PdfDocument, PdfPageInfo
+        from vibeocr.classic.managers.pdf_session_manager import PdfSessionManager
 
         pdf_path = tmp_path / "fallback.pdf"
         pdf_path.write_bytes(b"%PDF-1.4 test")
@@ -936,7 +936,7 @@ class TestRunOcrIncrementalSave:
             return_value=[SimpleNamespace(text_blocks=[block], preproc_angle=90)]
         )
         monkeypatch.setattr(
-            "vibeocr.utils.ocr_sidecar._sessions_dir", lambda: tmp_path / "sessions"
+            "vibeocr.backend.utils.ocr_sidecar._sessions_dir", lambda: tmp_path / "sessions"
         )
 
         runner = MagicMock()
@@ -950,7 +950,7 @@ class TestRunOcrIncrementalSave:
 
         assert client.save.call_args.kwargs["rewrite_text_layers"] is False
         client.get_model.assert_not_called()
-        from vibeocr.utils.ocr_sidecar import load_sidecar
+        from vibeocr.backend.utils.ocr_sidecar import load_sidecar
 
         data = load_sidecar(str(pdf_path))
         assert data is not None and data["completed"] is True
@@ -962,8 +962,8 @@ class TestRunOcrIncrementalSave:
         from types import SimpleNamespace
         from unittest.mock import MagicMock
 
-        from vibeocr.managers.pdf_session_manager import PdfSessionManager
-        from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
+        from vibeocr.backend.models.pdf_document import PdfDocument, PdfPageInfo
+        from vibeocr.classic.managers.pdf_session_manager import PdfSessionManager
 
         pdf_path = tmp_path / "pipeline.pdf"
         pdf_path.write_bytes(b"%PDF-1.4 test")
@@ -999,7 +999,7 @@ class TestRunOcrIncrementalSave:
         mgr._inference_client = MagicMock()
         mgr._recognize_images_via_job = RecordingOcr().recognize
         monkeypatch.setattr(
-            "vibeocr.pyside.pdf_session_manager.mirror_to_doc",
+            "vibeocr.classic.pyside.pdf_session_manager.mirror_to_doc",
             lambda _model: doc,
         )
         runner = MagicMock()
@@ -1022,9 +1022,9 @@ class TestRunOcrIncrementalSave:
         from types import SimpleNamespace
         from unittest.mock import MagicMock
 
-        from vibeocr.core.batch_budget import BatchBudget
-        from vibeocr.managers.pdf_session_manager import PdfSessionManager
-        from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
+        from vibeocr.backend.core.batch_budget import BatchBudget
+        from vibeocr.backend.models.pdf_document import PdfDocument, PdfPageInfo
+        from vibeocr.classic.managers.pdf_session_manager import PdfSessionManager
 
         pdf_path = tmp_path / "transfer-budget.pdf"
         pdf_path.write_bytes(b"%PDF-1.4 test")
@@ -1061,7 +1061,7 @@ class TestRunOcrIncrementalSave:
         mgr._client = MagicMock()
         mgr._client.get_model.return_value = MagicMock()
         monkeypatch.setattr(
-            "vibeocr.pyside.pdf_session_manager.mirror_to_doc", lambda _model: doc
+            "vibeocr.classic.pyside.pdf_session_manager.mirror_to_doc", lambda _model: doc
         )
 
         runner = MagicMock()
@@ -1090,16 +1090,16 @@ class TestStartOcrResumeFilter:
 
         from PySide6.QtCore import QThread
 
-        from vibeocr.managers.pdf_session_manager import PdfSessionManager
-        from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
+        from vibeocr.backend.models.pdf_document import PdfDocument, PdfPageInfo
+        from vibeocr.classic.managers.pdf_session_manager import PdfSessionManager
 
         pdf_path = tmp_path / "r.pdf"
         pdf_path.write_bytes(b"abc")
         monkeypatch.setattr(
-            "vibeocr.utils.ocr_sidecar._sessions_dir", lambda: tmp_path / "s"
+            "vibeocr.backend.utils.ocr_sidecar._sessions_dir", lambda: tmp_path / "s"
         )
         # 预置 sidecar：页 0 已落盘，未完成
-        from vibeocr.utils.ocr_sidecar import mark_pages_saved
+        from vibeocr.backend.utils.ocr_sidecar import mark_pages_saved
 
         mark_pages_saved(str(pdf_path), [0], {0: 0})
 
@@ -1144,15 +1144,15 @@ class TestStartOcrResumeFilter:
 
         from PySide6.QtCore import QThread
 
-        from vibeocr.managers.pdf_session_manager import PdfSessionManager
-        from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
+        from vibeocr.backend.models.pdf_document import PdfDocument, PdfPageInfo
+        from vibeocr.classic.managers.pdf_session_manager import PdfSessionManager
 
         pdf_path = tmp_path / "r2.pdf"
         pdf_path.write_bytes(b"abc")
         monkeypatch.setattr(
-            "vibeocr.utils.ocr_sidecar._sessions_dir", lambda: tmp_path / "s2"
+            "vibeocr.backend.utils.ocr_sidecar._sessions_dir", lambda: tmp_path / "s2"
         )
-        from vibeocr.utils.ocr_sidecar import mark_pages_saved
+        from vibeocr.backend.utils.ocr_sidecar import mark_pages_saved
 
         mark_pages_saved(str(pdf_path), [0], {0: 0})
 
@@ -1203,15 +1203,15 @@ class TestStartOcrResumeFilter:
 
         from PySide6.QtCore import QThread
 
-        from vibeocr.managers.pdf_session_manager import PdfSessionManager
-        from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
+        from vibeocr.backend.models.pdf_document import PdfDocument, PdfPageInfo
+        from vibeocr.classic.managers.pdf_session_manager import PdfSessionManager
 
         pdf_path = tmp_path / "r3.pdf"
         pdf_path.write_bytes(b"abc")
         monkeypatch.setattr(
-            "vibeocr.utils.ocr_sidecar._sessions_dir", lambda: tmp_path / "s3"
+            "vibeocr.backend.utils.ocr_sidecar._sessions_dir", lambda: tmp_path / "s3"
         )
-        from vibeocr.utils.ocr_sidecar import mark_pages_saved
+        from vibeocr.backend.utils.ocr_sidecar import mark_pages_saved
 
         # 页 0,1 都已落盘
         mark_pages_saved(str(pdf_path), [0, 1], {0: 0, 1: 0})

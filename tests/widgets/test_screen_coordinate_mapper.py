@@ -2,7 +2,10 @@
 from PySide6.QtCore import QPoint, QPointF, QRect
 from PySide6.QtGui import QColor, QPixmap
 
-from vibeocr.widgets.screen_coordinate_mapper import ScreenCoordinateMapper, ScreenInfo
+from vibeocr.classic.widgets.screen_coordinate_mapper import (
+    ScreenCoordinateMapper,
+    ScreenInfo,
+)
 
 
 def _make_screen_info(x=0, y=0, w=1920, h=1080, dpr=1.0, color=None) -> ScreenInfo:

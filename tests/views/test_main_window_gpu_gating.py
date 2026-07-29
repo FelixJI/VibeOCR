@@ -7,10 +7,10 @@ from pathlib import Path
 from PySide6.QtCore import QObject, QPoint, Qt, QTimer
 from PySide6.QtTest import QTest
 
-from vibeocr import env_manager
-from vibeocr.views.main_window import MainWindow
-from vibeocr.widgets.backend_options_widget import BackendOptionsWidget
-from vibeocr.widgets.toolbar import EdgeToolbar
+from vibeocr.backend import env_manager
+from vibeocr.classic.views.main_window import MainWindow
+from vibeocr.classic.widgets.backend_options_widget import BackendOptionsWidget
+from vibeocr.classic.widgets.toolbar import EdgeToolbar
 
 
 class _GpuGatingHarness(QObject):
@@ -40,7 +40,7 @@ def test_slow_gpu_probe_does_not_block_edge_toolbar_drag(qapp, monkeypatch):
     monkeypatch.setattr(env_manager, "get_runtime_gpu_capability", slow_gpu_capability)
 
     monkeypatch.setattr(
-        "vibeocr.widgets.backend_options_widget.load_cache",
+        "vibeocr.classic.widgets.backend_options_widget.load_cache",
         lambda _project_root: None,
     )
     monkeypatch.setattr(

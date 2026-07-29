@@ -2,7 +2,7 @@
 
 from PySide6.QtCore import QPoint, QRect, Qt
 
-from vibeocr.widgets.selection_resize_frame import (
+from vibeocr.classic.widgets.selection_resize_frame import (
     HandlePosition,
     _apply_resize,
     _constrain_rect,

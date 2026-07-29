@@ -10,9 +10,9 @@ import threading
 import time
 from typing import TYPE_CHECKING
 
-from vibeocr.protocol.v2 import ItemState, JobKind, JobPriority, JobState
-from vibeocr.supervisor.jobs.registry import JobRegistry
-from vibeocr.supervisor.jobs.staging import InputStager
+from vibeocr.backend.supervisor.jobs.registry import JobRegistry
+from vibeocr.backend.supervisor.jobs.staging import InputStager
+from vibeocr.runtime_contracts import ItemState, JobKind, JobPriority, JobState
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -29,7 +29,7 @@ def test_concurrent_mutation_and_snapshot_is_consistent() -> None:
         kind=JobKind.RECOGNITION,
         priority=JobPriority.INTERACTIVE,
         items=[
-            __import__("vibeocr.protocol.v2", fromlist=["JobItem"]).JobItem(
+            __import__("vibeocr.runtime_contracts", fromlist=["JobItem"]).JobItem(
                 item_id=f"it-{i}", display_name=f"f{i}", state=ItemState.QUEUED
             )
             for i in range(50)

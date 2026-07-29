@@ -33,7 +33,7 @@ try {
     $previousPythonPath = $env:PYTHONPATH
     $sourceRoots = @(
         (Join-Path $ProjectRoot "packages\vibeocr-contracts-py\src"),
-        (Join-Path $ProjectRoot "packages\vibeocr-client-py\src"),
+        (Join-Path $ProjectRoot "packages\vibeocr-runtime-client-py\src"),
         (Join-Path $ProjectRoot "packages\vibeocr-backend\src"),
         (Join-Path $ProjectRoot "apps\vibeocr-pyside\src")
     ) -join [IO.Path]::PathSeparator

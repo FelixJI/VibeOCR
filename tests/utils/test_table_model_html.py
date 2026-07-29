@@ -1,22 +1,22 @@
 import pytest
 
-import vibeocr.tables.html_adapter as html_adapter
-from vibeocr.contracts.tables import TableCellV1, TableModelV1
-from vibeocr.tables.blocks import (
+import vibeocr.backend.tables.html_adapter as html_adapter
+from vibeocr.backend.tables.blocks import (
     canonicalize_table_block,
     table_model_from_block,
     validate_table_blocks,
 )
-from vibeocr.tables.html_adapter import (
+from vibeocr.backend.tables.html_adapter import (
     parse_table_source_layout,
     table_model_from_html,
     table_model_to_html,
 )
-from vibeocr.tables.projections import (
+from vibeocr.backend.tables.projections import (
     table_model_to_grid,
     table_model_to_markdown,
     table_model_to_tsv,
 )
+from vibeocr.runtime_contracts.contracts.tables import TableCellV1, TableModelV1
 
 
 def test_html_adapter_preserves_mixed_row_and_column_spans():
@@ -342,14 +342,14 @@ class TestHtmlAdapterEdgeCases:
 
     def test_row_count_exceeds_limit_raises(self):
         """行数超过 MAX_TABLE_DIMENSION 时 raise（line 127）。"""
-        from vibeocr.tables.html_adapter import MAX_TABLE_DIMENSION
+        from vibeocr.backend.tables.html_adapter import MAX_TABLE_DIMENSION
         rows = "<tr><td>x</td></tr>" * (MAX_TABLE_DIMENSION + 1)
         with pytest.raises(ValueError, match="row count"):
             table_model_from_html(f"<table>{rows}</table>", table_id="too-many-rows")
 
     def test_cell_coverage_exceeds_limit_raises(self):
         """单元格覆盖总数超 MAX_TABLE_COVERAGE 时 raise（line 176）。"""
-        from vibeocr.tables.html_adapter import MAX_TABLE_COVERAGE
+        from vibeocr.backend.tables.html_adapter import MAX_TABLE_COVERAGE
         huge = MAX_TABLE_COVERAGE + 1
         with pytest.raises(ValueError):
             table_model_from_html(

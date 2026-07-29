@@ -5,7 +5,7 @@
 
 from types import SimpleNamespace
 
-from vibeocr.widgets.export_settings_widget import ExportSettingsWidget
+from vibeocr.classic.widgets.export_settings_widget import ExportSettingsWidget
 
 
 class TestExportCurrentButtonState:

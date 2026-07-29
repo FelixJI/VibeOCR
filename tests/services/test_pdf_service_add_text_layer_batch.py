@@ -10,9 +10,9 @@ from __future__ import annotations
 import fitz
 import pytest
 
-from vibeocr.models.ocr_result import OCRResult, TextBlock
-from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
-from vibeocr.services.pdf_service import PdfService
+from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
+from vibeocr.backend.models.pdf_document import PdfDocument, PdfPageInfo
+from vibeocr.backend.services.pdf_service import PdfService
 
 
 def _ocr_result_to_dict(text: str) -> dict:

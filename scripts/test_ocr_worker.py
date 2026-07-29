@@ -120,7 +120,7 @@ def test_ocr_service():
 
     try:
         logger.info("[主线程] 导入 OCR 服务...")
-        from vibeocr.services.ocr_service import OCRPipeline, OCRService
+        from vibeocr.backend.services.ocr_service import OCRPipeline, OCRService
 
         logger.info("[主线程] 创建 OCR 服务实例...")
         ocr = OCRService()
@@ -161,7 +161,7 @@ def test_ocr_in_thread():
         def _do_init(self):
             logger.info("[OCRTestWorker] 开始初始化 OCR 服务...")
             try:
-                from vibeocr.services.ocr_service import OCRPipeline, OCRService
+                from vibeocr.backend.services.ocr_service import OCRPipeline, OCRService
 
                 ocr = OCRService()
                 pipeline = ocr.get_pipeline(OCRPipeline.OCR)

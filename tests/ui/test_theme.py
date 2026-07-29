@@ -1,7 +1,7 @@
 # tests/ui/test_theme.py
 """theme 模块 token 与 QSS 生成函数测试"""
 
-from vibeocr.ui import theme
+from vibeocr.classic.ui import theme
 
 
 class TestColors:

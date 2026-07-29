@@ -6,7 +6,7 @@ from PIL import Image
 
 @pytest.fixture
 def service():
-    from vibeocr.services.qrcode_service import QrcodeService
+    from vibeocr.backend.services.qrcode_service import QrcodeService
 
     return QrcodeService()
 
@@ -210,7 +210,7 @@ class TestQrcodeServiceInternalBranches:
         """sys.platform=darwin 时返回 MAC 字体候选路径（line 146-150）。"""
         import sys
 
-        from vibeocr.services.qrcode_service import QrcodeService
+        from vibeocr.backend.services.qrcode_service import QrcodeService
 
         monkeypatch.setattr(sys, "platform", "darwin")
         font = QrcodeService._load_font(20)
@@ -220,7 +220,7 @@ class TestQrcodeServiceInternalBranches:
         """sys.platform=linux 时返回 Linux 字体候选（line 151-155）。"""
         import sys
 
-        from vibeocr.services.qrcode_service import QrcodeService
+        from vibeocr.backend.services.qrcode_service import QrcodeService
 
         monkeypatch.setattr(sys, "platform", "linux")
         font = QrcodeService._load_font(20)
@@ -228,7 +228,7 @@ class TestQrcodeServiceInternalBranches:
 
     def test_load_font_falls_back_to_default_when_all_missing(self, monkeypatch):
         """所有候选字体都不存在/损坏时回退 load_default（line 161-163）。"""
-        from vibeocr.services.qrcode_service import QrcodeService
+        from vibeocr.backend.services.qrcode_service import QrcodeService
 
         font = QrcodeService._load_font(16)
         assert font is not None

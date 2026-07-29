@@ -4,10 +4,10 @@ from pathlib import Path
 
 import fitz
 
-from vibeocr.models.ocr_result import OCRResult, TextBlock
-from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
-from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
-from vibeocr.services.pdf_service import PdfService, SaveResult
+from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
+from vibeocr.backend.models.pdf_document import PdfDocument, PdfPageInfo
+from vibeocr.backend.models.pdf_ocr_options import PdfGlobalSettings
+from vibeocr.backend.services.pdf_service import PdfService, SaveResult
 
 
 def _make_scanned_pdf(path):

@@ -213,6 +213,7 @@ progress.md
 # ============================================
 # 运行时用户配置
 # ============================================
+/data/backend/
 config/export_settings.json
 config/layout.json
 config/ocr_preferences.json

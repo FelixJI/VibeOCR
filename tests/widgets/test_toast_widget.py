@@ -7,7 +7,7 @@
 import pytest
 from PySide6.QtWidgets import QWidget
 
-from vibeocr.widgets.toast_widget import (
+from vibeocr.classic.widgets.toast_widget import (
     ToastWidget,
     _active_toasts,
     show_toast,
@@ -43,7 +43,7 @@ def test_show_toast_no_longer_raises_name_error(host, qtbot, caplog):
     """
     import logging
 
-    with caplog.at_level(logging.ERROR, logger="vibeocr.views.settings_page_controller"):
+    with caplog.at_level(logging.ERROR, logger="vibeocr.classic.views.settings_page_controller"):
         show_toast(host, "测试")
     # 不应有 ERROR 级日志（旧 bug 会触发 _show_settings_toast 的 except 分支）
     assert not any("Toast" in r.message and "失败" in r.message for r in caplog.records)

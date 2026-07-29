@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from vibeocr.core.batch_budget import BatchBudget, BatchEntry, partition_batches
-from vibeocr.core.constants import Constants
+from vibeocr.backend.core.batch_budget import BatchBudget, BatchEntry, partition_batches
+from vibeocr.backend.core.constants import Constants
 
 
 def _values(entries, budget):
@@ -76,7 +76,7 @@ def test_batch_budget_rejects_non_positive_limits() -> None:
     """任一限制 <=0 时 raise ValueError（line 25-26）。"""
     import pytest
 
-    from vibeocr.core.batch_budget import BatchBudget
+    from vibeocr.backend.core.batch_budget import BatchBudget
 
     with pytest.raises(ValueError, match="positive"):
         BatchBudget(max_items=0, max_encoded_bytes=100, max_pixels=100)
@@ -92,7 +92,7 @@ def test_image_pixel_count_reads_header_from_bytes() -> None:
 
     from PIL import Image
 
-    from vibeocr.core.batch_budget import image_pixel_count
+    from vibeocr.backend.core.batch_budget import image_pixel_count
 
     img = Image.new("RGB", (10, 20), "red")
     buf = io.BytesIO()
@@ -105,7 +105,7 @@ def test_image_pixel_count_reads_header_from_path(tmp_path) -> None:
 
     from PIL import Image
 
-    from vibeocr.core.batch_budget import image_pixel_count
+    from vibeocr.backend.core.batch_budget import image_pixel_count
 
     img = Image.new("RGB", (4, 5), "blue")
     p = tmp_path / "t.png"
@@ -115,7 +115,7 @@ def test_image_pixel_count_reads_header_from_path(tmp_path) -> None:
 
 def test_image_pixel_count_returns_none_on_garbage() -> None:
     """无法识别的数据返回 None（line 121-122）。"""
-    from vibeocr.core.batch_budget import image_pixel_count
+    from vibeocr.backend.core.batch_budget import image_pixel_count
 
     assert image_pixel_count(b"not an image") is None
     assert image_pixel_count(b"") is None
@@ -123,7 +123,7 @@ def test_image_pixel_count_returns_none_on_garbage() -> None:
 
 def test_partition_batches_empty_entries_returns_empty() -> None:
     """空 entries 返回空 chunks 列表（flush 早返回 line 72）。"""
-    from vibeocr.core.batch_budget import BatchBudget, partition_batches
+    from vibeocr.backend.core.batch_budget import BatchBudget, partition_batches
 
     budget = BatchBudget(max_items=2, max_encoded_bytes=100, max_pixels=100)
     assert partition_batches([], budget) == []

@@ -2,14 +2,14 @@
 """TextBlockProcessor 单元测试（纯函数，无 Qt 依赖）"""
 
 
-from vibeocr.models.ocr_result import TextBlock
-from vibeocr.models.text_block_options import (
+from vibeocr.backend.models.ocr_result import TextBlock
+from vibeocr.backend.models.text_block_options import (
     LINE_MODE_KEEP,
     LINE_MODE_MERGE,
     LINE_MODE_SMART,
     TextBlockOptions,
 )
-from vibeocr.services.text_block_processor import TextBlockProcessor
+from vibeocr.backend.utils.text_layout import TextBlockProcessor
 
 
 def _block(text, bbox=None, order=-1):

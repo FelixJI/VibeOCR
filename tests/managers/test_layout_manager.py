@@ -5,7 +5,7 @@ import json
 
 from PySide6.QtCore import QByteArray
 
-from vibeocr.managers.layout_manager import LayoutManager
+from vibeocr.classic.managers.layout_manager import LayoutManager
 
 
 def _b64(data: bytes) -> str:

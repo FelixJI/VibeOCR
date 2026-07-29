@@ -1,17 +1,3 @@
-[project]
-name = "vibeocr"
-version = "0.6.3"
-description = "A screenshot OCR application"
-authors = [{name = "Felix Ji"}]
-requires-python = ">=3.13,<3.14"
-dependencies = [
-    "vibeocr-contracts-py==2.0.0rc1",
-    "vibeocr-runtime-client==2.0.0rc1",
-    "vibeocr-client-py==0.6.3",
-    "vibeocr-backend==0.6.3",
-    "vibeocr-pyside==0.6.3",
-]
-
 [dependency-groups]
 dev = [
     "pytest>=9.0.3",
@@ -37,13 +23,6 @@ test-pyside = ["pytest>=9.0.3", "pytest-qt>=4.5.0"]
 build-common = ["hatchling>=1.0.0", "uv>=0.11.14"]
 build-pyside = ["pyinstaller>=6.6"]
 build-winui = []
-
-[build-system]
-requires = ["hatchling>=1.0.0"]
-build-backend = "hatchling.build"
-
-[tool.hatch.build.targets.wheel]
-bypass-selection = true
 
 # =============================================================================
 # Ruff - Linter + Formatter
@@ -106,7 +85,7 @@ known-first-party = ["vibeocr"]
 "tests/*" = ["S101", "ARG", "PLR2004", "SIM117"]
 "__init__.py" = ["F401"]
 # pyside6-uic 生成代码，源文件是同目录 .ui；不要手工格式化生成物。
-"apps/vibeocr-pyside/src/vibeocr/ui/ui_*.py" = ["ALL"]
+"apps/vibeocr-pyside/src/vibeocr/classic/ui/ui_*.py" = ["ALL"]
 
 # =============================================================================
 # Pyright - 静态类型检查
@@ -119,6 +98,12 @@ venv = ".venv"
 typeCheckingMode = "standard"
 include = ["apps", "packages", "scripts", "tests", "qa", "examples"]
 exclude = [".venv", "**/__pycache__"]
+extraPaths = [
+    "packages/vibeocr-contracts-py/src",
+    "packages/vibeocr-runtime-client-py/src",
+    "packages/vibeocr-backend/src",
+    "apps/vibeocr-pyside/src",
+]
 reportMissingImports = true
 reportMissingTypeStubs = false
 reportUnusedImport = "error"
@@ -179,7 +164,6 @@ markers = [
 pythonpath = [
     "packages/vibeocr-contracts-py/src",
     "packages/vibeocr-runtime-client-py/src",
-    "packages/vibeocr-client-py/src",
     "packages/vibeocr-backend/src",
     "apps/vibeocr-pyside/src",
 ]
@@ -215,6 +199,7 @@ fail_under = 77
 # uv 配置
 # =============================================================================
 [tool.uv]
+package = false
 override-dependencies = [
     "opencv-python ; sys_platform == 'nonexistent'",
     # torchvision 是 torch 的传递依赖。unsafe-best-match + index-strategy 下，
@@ -236,11 +221,10 @@ index-strategy = "unsafe-best-match"
 members = ["packages/*", "apps/*"]
 
 [tool.uv.sources]
-vibeocr-contracts-py = { workspace = true }
+vibeocr-runtime-contracts = { workspace = true }
 vibeocr-runtime-client = { workspace = true }
-vibeocr-client-py = { workspace = true }
 vibeocr-backend = { workspace = true }
-vibeocr-pyside = { workspace = true }
+vibeocr-classic = { workspace = true }
 
 # paddlepaddle-gpu 和 torch 都用 CUDA 12.6 构建（cu126），保持同源：
 # - paddle cu126 找 cublas64_12.dll，torch cu126 的 torch/lib 正好提供

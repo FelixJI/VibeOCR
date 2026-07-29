@@ -6,7 +6,7 @@ import json
 import sys
 from pathlib import Path
 
-from vibeocr import dependency_bootstrap, env_manager
+from vibeocr.backend import dependency_bootstrap, env_manager
 
 
 def test_packaged_profile_is_available_without_repository(monkeypatch, tmp_path) -> None:

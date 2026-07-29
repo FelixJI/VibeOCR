@@ -10,8 +10,8 @@ import fitz
 import numpy as np
 import pytest
 
-from vibeocr.models.ocr_result import OCRResult, TextBlock
-from vibeocr.services.pdf_service import PdfService, SaveResult
+from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
+from vibeocr.backend.services.pdf_service import PdfService, SaveResult
 
 
 def _create_test_pdf(path: Path, num_pages: int = 2) -> Path:
@@ -59,7 +59,7 @@ class TestSaveEdgeCases:
 
     def test_save_incremental_path_success(self, tmp_path):
         """compress_on_save=False 走增量保存快路径（lines 123-134）。"""
-        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+        from vibeocr.backend.models.pdf_ocr_options import PdfGlobalSettings
 
         path = tmp_path / "incr.pdf"
         _create_test_pdf(path, num_pages=1)
@@ -76,7 +76,7 @@ class TestSaveEdgeCases:
 
     def test_save_incremental_failure_restores_backup(self, tmp_path, monkeypatch):
         """compress_on_save=False 增量保存抛异常时应回滚备份并 re-raise（lines 129-132）。"""
-        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+        from vibeocr.backend.models.pdf_ocr_options import PdfGlobalSettings
 
         path = tmp_path / "incr_fail.pdf"
         _create_test_pdf(path, num_pages=1)
@@ -160,7 +160,7 @@ class TestSaveWithRewriteEdgeCases:
         用 rotate（不改结构）保持 has_structural_change=False，且 rotate 后
         doc.can_save_incrementally() 仍为 True。
         """
-        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+        from vibeocr.backend.models.pdf_ocr_options import PdfGlobalSettings
 
         path = tmp_path / "rw_incr.pdf"
         _create_test_pdf(path, num_pages=1)
@@ -183,7 +183,7 @@ class TestSaveWithRewriteEdgeCases:
 
     def test_save_with_rewrite_incremental_fail_raises(self, tmp_path, monkeypatch):
         """增量保存失败时 save_with_rewrite 应抛 RuntimeError（line 311）。"""
-        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+        from vibeocr.backend.models.pdf_ocr_options import PdfGlobalSettings
 
         path = tmp_path / "rw_fail.pdf"
         _create_test_pdf(path, num_pages=1)
@@ -647,7 +647,7 @@ class TestAddTextLayerBatchOverwrite:
 class TestWriteBlocksEdges:
     def test_write_blocks_empty_rect_skipped(self, tmp_path, caplog):
         """退化矩形（width<=0）应跳过并记警告（lines 988-996）。"""
-        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+        from vibeocr.backend.models.pdf_ocr_options import PdfGlobalSettings
 
         path = tmp_path / "empty_rect.pdf"
         _create_scanned_pdf(path)
@@ -655,7 +655,7 @@ class TestWriteBlocksEdges:
         try:
             # bbox 使 disp_rect.width <= 0（x1 <= x0）
             block = TextBlock(text="x", score=0.9, bbox=(200, 50, 200, 100), page_idx=0)
-            with caplog.at_level(logging.WARNING, logger="vibeocr.services.pdf_service"):
+            with caplog.at_level(logging.WARNING, logger="vibeocr.backend.services.pdf_service"):
                 w, s = PdfService._write_blocks_to_page(
                     doc, 0, [block], 0, PdfGlobalSettings()
                 )
@@ -667,7 +667,7 @@ class TestWriteBlocksEdges:
 
     def test_write_blocks_with_polygon_vertical(self, tmp_path):
         """带竖排多边形的块走 insert_textbox 路径（覆盖 _poly_orientation vertical 分支）。"""
-        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+        from vibeocr.backend.models.pdf_ocr_options import PdfGlobalSettings
 
         path = tmp_path / "poly_v.pdf"
         _create_scanned_pdf(path)
@@ -690,14 +690,14 @@ class TestWriteBlocksEdges:
 
     def test_write_blocks_natural_width_fallback_heuristic(self, tmp_path, monkeypatch):
         """无子集字体（china-s 回退）→ _natural_width 用启发式（lines 950-962）。"""
-        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+        from vibeocr.backend.models.pdf_ocr_options import PdfGlobalSettings
 
         path = tmp_path / "nofont.pdf"
         _create_scanned_pdf(path)
         doc, _pdf_doc = PdfService.open_doc(str(path))
         try:
             # 强制 _CJK_RESOLVER.resolve 返回 None → china-s 回退
-            import vibeocr.services.pdf_service as psm
+            import vibeocr.backend.services.pdf_service as psm
 
             monkeypatch.setattr(
                 psm._CJK_RESOLVER, "resolve", lambda chars: None
@@ -717,7 +717,7 @@ class TestWriteBlocksEdges:
 
     def test_write_blocks_insert_text_exception_falls_back(self, tmp_path, monkeypatch):
         """insert_text 抛异常 → 回退 insert_textbox（lines 1088-1094）。"""
-        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+        from vibeocr.backend.models.pdf_ocr_options import PdfGlobalSettings
 
         path = tmp_path / "ins_fail.pdf"
         _create_scanned_pdf(path)
@@ -932,7 +932,7 @@ class TestRemainingBranches:
 
     def test_write_blocks_empty_text_skipped(self, tmp_path):
         """空文本块应被跳过（line 968）。"""
-        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+        from vibeocr.backend.models.pdf_ocr_options import PdfGlobalSettings
 
         path = tmp_path / "empty_text.pdf"
         _create_scanned_pdf(path)
@@ -949,13 +949,13 @@ class TestRemainingBranches:
 
     def test_write_blocks_natural_width_cjk_heuristic(self, tmp_path, monkeypatch):
         """china-s 回退 + CJK 字符 → units+=1.0 分支（line 959）。"""
-        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+        from vibeocr.backend.models.pdf_ocr_options import PdfGlobalSettings
 
         path = tmp_path / "cjk_h.pdf"
         _create_scanned_pdf(path)
         doc, _pdf_doc = PdfService.open_doc(str(path))
         try:
-            import vibeocr.services.pdf_service as psm
+            import vibeocr.backend.services.pdf_service as psm
 
             monkeypatch.setattr(psm._CJK_RESOLVER, "resolve", lambda chars: None)
             block = TextBlock(
@@ -973,7 +973,7 @@ class TestRemainingBranches:
 
     def test_write_blocks_retry_zero_loops(self, tmp_path, monkeypatch):
         """font_size_retry_count=0 → for range 空，走兜底（branch 1110->1129）。"""
-        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+        from vibeocr.backend.models.pdf_ocr_options import PdfGlobalSettings
 
         path = tmp_path / "zero_retry.pdf"
         _create_scanned_pdf(path)
@@ -999,7 +999,7 @@ class TestRemainingBranches:
 
     def test_write_blocks_fallback_insert_text_failure(self, tmp_path, monkeypatch):
         """insert_textbox 失败 + 兜底 insert_text 也失败 → skipped（lines 1159-1168）。"""
-        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+        from vibeocr.backend.models.pdf_ocr_options import PdfGlobalSettings
 
         path = tmp_path / "both_fail.pdf"
         _create_scanned_pdf(path)

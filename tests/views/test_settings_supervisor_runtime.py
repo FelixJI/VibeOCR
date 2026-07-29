@@ -8,7 +8,9 @@ import pytest
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QCheckBox, QLabel, QMessageBox, QPushButton, QWidget
 
-from vibeocr.protocol.v2 import (
+from vibeocr.classic.ui.ui_main_window import Ui_MainWindowWidget
+from vibeocr.classic.views.settings_page_controller import SettingsPageController
+from vibeocr.runtime_contracts import (
     EvictionReason,
     PipelineSpec,
     ResidencyEntry,
@@ -16,8 +18,6 @@ from vibeocr.protocol.v2 import (
     ResidencyStatus,
     SettingsSnapshot,
 )
-from vibeocr.ui.ui_main_window import Ui_MainWindowWidget
-from vibeocr.views.settings_page_controller import SettingsPageController
 
 
 class _FakeRuntimeAdapter(QObject):
@@ -84,21 +84,24 @@ def runtime_controller(qtbot, tmp_path, monkeypatch):
     config.set_pipeline_ttl.side_effect = set_ttl
     config_class = MagicMock()
     config_class.instance.return_value = config
-    monkeypatch.setattr("vibeocr.pyside.runtime.ConfigManager", config_class)
+    monkeypatch.setattr(
+        "vibeocr.classic.managers.config_manager.ConfigManager",
+        config_class,
+    )
 
     adapter = _FakeRuntimeAdapter()
     monkeypatch.setattr(
-        "vibeocr.views.settings_page_controller.get_supervisor_adapter",
+        "vibeocr.classic.views.settings_page_controller.get_supervisor_adapter",
         lambda: adapter,
     )
 
     with (
         patch(
-            "vibeocr.views.settings_page_controller.is_cache_valid",
+            "vibeocr.classic.views.settings_page_controller.is_cache_valid",
             return_value=(False, None),
         ),
         patch(
-            "vibeocr.views.settings_page_controller.SettingsPageController."
+            "vibeocr.classic.views.settings_page_controller.SettingsPageController."
             "_refresh_env_maintenance_state"
         ),
     ):
@@ -212,7 +215,7 @@ def test_release_all_uses_release_idle_and_reenables_on_status(
 ) -> None:
     _controller, host, adapter, _ttls = runtime_controller
     monkeypatch.setattr(
-        "vibeocr.views.settings_page_controller.QMessageBox.question",
+        "vibeocr.classic.views.settings_page_controller.QMessageBox.question",
         lambda *_args, **_kwargs: QMessageBox.StandardButton.Yes,
     )
 

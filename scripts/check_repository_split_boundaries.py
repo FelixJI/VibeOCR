@@ -20,7 +20,6 @@ LEGACY_DEBT = ROOT / "config/repository-split/legacy-import-debt.json"
 SOURCE_TREES = (
     ROOT / "packages/vibeocr-contracts-py",
     ROOT / "packages/vibeocr-runtime-client-py",
-    ROOT / "packages/vibeocr-client-py",
     ROOT / "packages/vibeocr-backend",
     ROOT / "apps/vibeocr-pyside",
     ROOT / "src/dotnet/VibeOCR.Contracts",
@@ -32,17 +31,15 @@ SOURCE_TREES = (
 PYTHON_SOURCE_ROOTS = (
     ROOT / "packages/vibeocr-contracts-py/src",
     ROOT / "packages/vibeocr-runtime-client-py/src",
-    ROOT / "packages/vibeocr-client-py/src",
     ROOT / "packages/vibeocr-backend/src",
     ROOT / "apps/vibeocr-pyside/src",
 )
 
 WHEEL_SOURCE_ROOTS = {
-    "vibeocr-contracts-py": ROOT / "packages/vibeocr-contracts-py/src",
+    "vibeocr-runtime-contracts": ROOT / "packages/vibeocr-contracts-py/src",
     "vibeocr-runtime-client": ROOT / "packages/vibeocr-runtime-client-py/src",
-    "vibeocr-client-py": ROOT / "packages/vibeocr-client-py/src",
     "vibeocr-backend": ROOT / "packages/vibeocr-backend/src",
-    "vibeocr-pyside": ROOT / "apps/vibeocr-pyside/src",
+    "vibeocr-classic": ROOT / "apps/vibeocr-pyside/src",
 }
 
 
@@ -289,10 +286,8 @@ _DIRECT_REFERENCE = re.compile(
 def check_release_dependencies_are_immutable() -> None:
     violations = []
     pyprojects = (
-        ROOT / "pyproject.toml",
         ROOT / "packages/vibeocr-contracts-py/pyproject.toml",
         ROOT / "packages/vibeocr-runtime-client-py/pyproject.toml",
-        ROOT / "packages/vibeocr-client-py/pyproject.toml",
         ROOT / "packages/vibeocr-backend/pyproject.toml",
         ROOT / "apps/vibeocr-pyside/pyproject.toml",
     )

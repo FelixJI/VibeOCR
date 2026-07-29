@@ -1,4 +1,4 @@
-from vibeocr.widgets.runtime_status_bar import RuntimeStatusBar
+from vibeocr.classic.widgets.runtime_status_bar import RuntimeStatusBar
 
 
 def test_defaults_and_blank_values_are_normalized(qtbot):

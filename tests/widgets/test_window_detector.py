@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 from PySide6.QtCore import QPoint, QRect
 
-from vibeocr.widgets.window_detector import WindowDetector
+from vibeocr.classic.widgets.window_detector import WindowDetector
 
 
 def _make_mapper(dpr: float = 1.0, virtual_offset: QPoint | None = None) -> MagicMock:
@@ -59,7 +59,7 @@ class TestWindowDetectorInit:
 class TestHitTest:
     def test_returns_none_when_no_window(self, detector, monkeypatch):
         monkeypatch.setattr(
-            "vibeocr.widgets.window_detector._win",
+            "vibeocr.classic.widgets.window_detector._win",
             _MockWin32(window_from_point_result=0),
         )
         result = detector._hit_test((100, 200))
@@ -67,7 +67,7 @@ class TestHitTest:
 
     def test_filters_overlay_hwnd(self, detector, monkeypatch):
         monkeypatch.setattr(
-            "vibeocr.widgets.window_detector._win",
+            "vibeocr.classic.widgets.window_detector._win",
             _MockWin32(window_from_point_result=12345, ancestor_result=12345),
         )
         result = detector._hit_test((100, 200))
@@ -75,7 +75,7 @@ class TestHitTest:
 
     def test_returns_root_hwnd(self, detector, monkeypatch):
         monkeypatch.setattr(
-            "vibeocr.widgets.window_detector._win",
+            "vibeocr.classic.widgets.window_detector._win",
             _MockWin32(
                 window_from_point_result=999, ancestor_result=888, is_visible=True
             ),
@@ -106,7 +106,7 @@ class TestGetControlRect:
 class TestGetWindowRect:
     def test_returns_rect_for_valid_hwnd(self, detector, monkeypatch):
         monkeypatch.setattr(
-            "vibeocr.widgets.window_detector._win",
+            "vibeocr.classic.widgets.window_detector._win",
             _MockWin32(get_window_rect_result=ctypes.wintypes.RECT(100, 200, 500, 400)),
         )
         result = detector._get_window_rect(888)
@@ -114,7 +114,7 @@ class TestGetWindowRect:
 
     def test_returns_none_for_invalid_hwnd(self, detector, monkeypatch):
         monkeypatch.setattr(
-            "vibeocr.widgets.window_detector._win",
+            "vibeocr.classic.widgets.window_detector._win",
             _MockWin32(get_window_rect_result=None),
         )
         result = detector._get_window_rect(0)

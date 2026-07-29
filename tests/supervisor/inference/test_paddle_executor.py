@@ -9,11 +9,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from vibeocr.protocol.v2 import ItemState, JobKind, JobPriority, JobState
-from vibeocr.supervisor.inference.paddle_adapter import PaddlePipelineAdapter
-from vibeocr.supervisor.inference.paddle_executor import PaddleExecutor
-from vibeocr.supervisor.jobs.registry import JobRegistry
-from vibeocr.supervisor.jobs.staging import StagedInput
+from vibeocr.backend.supervisor.inference.paddle_adapter import PaddlePipelineAdapter
+from vibeocr.backend.supervisor.inference.paddle_executor import PaddleExecutor
+from vibeocr.backend.supervisor.jobs.registry import JobRegistry
+from vibeocr.backend.supervisor.jobs.staging import StagedInput
+from vibeocr.runtime_contracts import ItemState, JobKind, JobPriority, JobState
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -44,8 +44,8 @@ def _make_job(registry: JobRegistry, items: int) -> Any:
         kind=JobKind.RECOGNITION,
         priority=JobPriority.INTERACTIVE,
         items=[
-            __import__("vibeocr.protocol.v2", fromlist=["JobItem"]).JobItem(
-                item_id=f"it-{i}", display_name=f"f{i}.png", state=__import__("vibeocr.protocol.v2", fromlist=["ItemState"]).ItemState.QUEUED
+            __import__("vibeocr.runtime_contracts", fromlist=["JobItem"]).JobItem(
+                item_id=f"it-{i}", display_name=f"f{i}.png", state=__import__("vibeocr.runtime_contracts", fromlist=["ItemState"]).ItemState.QUEUED
             )
             for i in range(items)
         ],

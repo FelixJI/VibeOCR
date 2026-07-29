@@ -5,9 +5,9 @@ import json
 
 import pytest
 
-from vibeocr.core.pipelines import OCRPipeline
-from vibeocr.models.ocr_options import OCROptions
-from vibeocr.utils.ocr_preferences import OCRPreferences
+from vibeocr.backend.core.pipelines import OCRPipeline
+from vibeocr.backend.models.ocr_options import OCROptions
+from vibeocr.classic.utils.ocr_preferences import OCRPreferences
 
 
 @pytest.fixture
@@ -385,7 +385,7 @@ class TestPdfSettings:
 
     def test_pdf_settings_round_trip(self, tmp_config_dir):
         """PdfGlobalSettings 保存后重新加载应保持一致"""
-        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+        from vibeocr.backend.models.pdf_ocr_options import PdfGlobalSettings
 
         prefs = OCRPreferences(tmp_config_dir)
         settings = PdfGlobalSettings(
@@ -529,7 +529,7 @@ class TestTextBlockOptions:
     """文本块处理选项（TextBlockOptions）持久化测试"""
 
     def test_round_trip(self, tmp_config_dir):
-        from vibeocr.models.text_block_options import (
+        from vibeocr.backend.models.text_block_options import (
             LINE_MODE_SMART,
             TextBlockOptions,
         )
@@ -553,7 +553,7 @@ class TestTextBlockOptions:
 
     def test_default_when_absent(self, tmp_config_dir):
         """空配置时返回默认值。"""
-        from vibeocr.models.text_block_options import LINE_MODE_MERGE
+        from vibeocr.backend.models.text_block_options import LINE_MODE_MERGE
 
         prefs = OCRPreferences(tmp_config_dir)
         loaded = prefs.get_text_options()
@@ -562,7 +562,7 @@ class TestTextBlockOptions:
 
     def test_old_config_without_field_uses_defaults(self, tmp_config_dir):
         """v3 配置（无 text_block_options 字段）加载后走默认值。"""
-        from vibeocr.models.text_block_options import LINE_MODE_MERGE
+        from vibeocr.backend.models.text_block_options import LINE_MODE_MERGE
 
         config_path = tmp_config_dir / "ocr_preferences.json"
         v3_data = {

@@ -3,17 +3,22 @@
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-from vibeocr.managers.subprocess_manager import SubprocessManager
+from vibeocr.classic.managers.subprocess_manager import SubprocessManager
 
 
-def test_started_transfers_process_owner_before_task_is_released(qapp, tmp_path) -> None:
+def test_started_transfers_process_owner_before_task_is_released(
+    qapp, tmp_path, monkeypatch
+) -> None:
     manager = SubprocessManager(tmp_path)
     process = Mock()
     task = SimpleNamespace(supervisor_proc=process)
     manager._start_task = task
+    install_adapter = Mock()
+    monkeypatch.setattr(manager, "_install_runtime_adapter", install_adapter)
 
     manager._on_started(True)
 
+    install_adapter.assert_called_once_with(process)
     assert manager.is_ready is True
     assert manager._supervisor_process is process
     assert task.supervisor_proc is None
@@ -29,7 +34,7 @@ def test_external_shutdown_callable_closes_adapter_and_owned_process(
     manager._supervisor_process = process
     manager._is_ready = True
     monkeypatch.setattr(
-        "vibeocr.pyside.supervisor_adapter.get_supervisor_adapter",
+        "vibeocr.classic.pyside.supervisor_adapter.get_supervisor_adapter",
         lambda: adapter,
     )
 

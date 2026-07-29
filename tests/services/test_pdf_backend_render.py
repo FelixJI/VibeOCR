@@ -20,7 +20,7 @@ from unittest.mock import MagicMock
 import fitz
 import pytest
 
-from vibeocr.services.pdf_backend_client import PdfBackendClient
+from vibeocr.backend.services.pdf_backend_client import PdfBackendClient
 
 
 @pytest.fixture
@@ -94,8 +94,8 @@ class TestRenderParallelization:
         耗时比推断并发。若 render_preview 重新获取 session.fitz_lock，首个
         请求会在栅栏超时，测试将确定性失败。
         """
-        from vibeocr.ipc.schemas import RenderPreviewRequest
-        from vibeocr.services import pdf_backend_process as backend
+        from vibeocr.backend.ipc.schemas import RenderPreviewRequest
+        from vibeocr.backend.services import pdf_backend_process as backend
 
         session = backend.BackendSession(
             session_id="parallel-render",
@@ -128,7 +128,7 @@ class TestRenderParallelization:
 
     def test_render_preview_invalid_page_returns_400(self, backend_client, heavy_pdf):
         """页索引越界应返回 400（而非 500）。"""
-        from vibeocr.services.pdf_backend_client import PdfBackendError
+        from vibeocr.backend.services.pdf_backend_client import PdfBackendError
 
         open_resp = backend_client.open_session(str(heavy_pdf))
         sid = open_resp.session_id

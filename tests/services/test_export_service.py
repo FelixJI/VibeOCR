@@ -4,8 +4,8 @@ import io
 
 import pytest
 
-from vibeocr.models.ocr_result import OCRResult
-from vibeocr.services.export_service import ExportService
+from vibeocr.backend.models.ocr_result import OCRResult
+from vibeocr.backend.services.export_service import ExportService
 
 
 def _make_ocr_result(

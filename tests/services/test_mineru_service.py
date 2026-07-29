@@ -10,8 +10,8 @@ import pytest
 # mineru_service 依赖 httpx；缺该依赖时整文件跳过而非 collection error
 pytest.importorskip("httpx", reason="httpx not installed")
 
-from vibeocr.models.ocr_result import OCRResult
-from vibeocr.services.mineru_service import MinerUService
+from vibeocr.backend.models.ocr_result import OCRResult
+from vibeocr.backend.services.mineru_service import MinerUService
 
 
 def _make_api_response(md_content="", content_list=None, images=None):
@@ -74,7 +74,7 @@ class TestMinerUService:
 
         with (
             patch.object(service, "_ensure_api_running"),
-            patch("vibeocr.services.mineru_service.httpx") as mock_httpx,
+            patch("vibeocr.backend.services.mineru_service.httpx") as mock_httpx,
         ):
             mock_httpx.post.return_value = mock_resp
             result = service.parse(b"fake_pdf_data", "application/pdf")
@@ -104,7 +104,7 @@ class TestMinerUService:
 
         with (
             patch.object(service, "_ensure_api_running"),
-            patch("vibeocr.services.mineru_service.httpx") as mock_httpx,
+            patch("vibeocr.backend.services.mineru_service.httpx") as mock_httpx,
         ):
             mock_httpx.post.return_value = mock_resp
             result = service.parse(b"fake_pdf_data", "application/pdf")
@@ -126,7 +126,7 @@ class TestMinerUService:
 
         with (
             patch.object(service, "_ensure_api_running"),
-            patch("vibeocr.services.mineru_service.httpx") as mock_httpx,
+            patch("vibeocr.backend.services.mineru_service.httpx") as mock_httpx,
         ):
             mock_httpx.post.return_value = mock_resp
             service.parse(b"fake_image_data", "image/png")
@@ -148,8 +148,8 @@ class TestMinerUService:
         mock_resp.status_code = 200
         mock_resp.json.return_value = api_response
 
-        from vibeocr.core.pipelines import OCRPipeline
-        from vibeocr.models.ocr_options import OCROptions
+        from vibeocr.backend.core.pipelines import OCRPipeline
+        from vibeocr.backend.models.ocr_options import OCROptions
 
         options = OCROptions(
             pipeline=OCRPipeline.DOCUMENT_PARSING,
@@ -160,7 +160,7 @@ class TestMinerUService:
 
         with (
             patch.object(service, "_ensure_api_running"),
-            patch("vibeocr.services.mineru_service.httpx") as mock_httpx,
+            patch("vibeocr.backend.services.mineru_service.httpx") as mock_httpx,
         ):
             mock_httpx.post.return_value = mock_resp
             service.parse(b"data", "application/pdf", options)
@@ -187,13 +187,13 @@ class TestMinerUService:
         mock_resp.status_code = 200
         mock_resp.json.return_value = api_response
 
-        from vibeocr.models.ocr_options import OCROptions
+        from vibeocr.backend.models.ocr_options import OCROptions
 
         options = OCROptions(lang_list=[])
 
         with (
             patch.object(service, "_ensure_api_running"),
-            patch("vibeocr.services.mineru_service.httpx") as mock_httpx,
+            patch("vibeocr.backend.services.mineru_service.httpx") as mock_httpx,
         ):
             mock_httpx.post.return_value = mock_resp
             service.parse(b"data", "application/pdf", options)
@@ -217,7 +217,7 @@ class TestMinerUService:
 
         with (
             patch.object(service, "_ensure_api_running"),
-            patch("vibeocr.services.mineru_service.httpx") as mock_httpx,
+            patch("vibeocr.backend.services.mineru_service.httpx") as mock_httpx,
         ):
             mock_httpx.post.return_value = mock_resp
             with pytest.raises(RuntimeError, match="failed"):
@@ -236,7 +236,7 @@ class TestMinerUService:
 
         with (
             patch.object(service, "_ensure_api_running"),
-            patch("vibeocr.services.mineru_service.httpx") as mock_httpx,
+            patch("vibeocr.backend.services.mineru_service.httpx") as mock_httpx,
         ):
             mock_httpx.post.return_value = mock_resp
             service.parse(b"data", "application/pdf")
@@ -262,7 +262,7 @@ class TestMinerUService:
 
         with (
             patch.object(service, "_ensure_api_running"),
-            patch("vibeocr.services.mineru_service.httpx") as mock_httpx,
+            patch("vibeocr.backend.services.mineru_service.httpx") as mock_httpx,
         ):
             mock_httpx.post.side_effect = [error_resp, ok_resp]
             service.parse(b"data", "application/pdf")
@@ -292,16 +292,16 @@ class TestMinerUService:
                 "_resolve_python_executable",
                 return_value=Path("/fake/python.exe"),
             ),
-            patch("vibeocr.services.mineru_service.subprocess.Popen") as mock_popen,
-            patch("vibeocr.services.mineru_service.httpx") as mock_httpx,
-            patch("vibeocr.services.mineru_service.socket"),
+            patch("vibeocr.backend.services.mineru_service.subprocess.Popen") as mock_popen,
+            patch("vibeocr.backend.services.mineru_service.httpx") as mock_httpx,
+            patch("vibeocr.backend.services.mineru_service.socket"),
             # JobObjectGuard.assign_from_popen 调真实 OpenProcess(pid=12345) 会因
             # 无效句柄失败并记 warning；mock 掉守卫避免噪声并隔离被测逻辑。
-            patch("vibeocr.services.mineru_service.JobObjectGuard") as mock_guard_cls,
+            patch("vibeocr.backend.services.mineru_service.JobObjectGuard") as mock_guard_cls,
             # NetworkDetector.__init__ 会触发 generate_machine_id() 调 wmic
             # （subprocess.Popen），与被 mock 的 Popen 冲突导致 assert_called_once 失败。
             # mock 掉 NetworkDetector 消除该副作用。
-            patch("vibeocr.network_detector.NetworkDetector"),
+            patch("vibeocr.backend.network_detector.NetworkDetector"),
         ):
             mock_guard_cls.return_value.assign_from_popen.return_value = True
             mock_popen.return_value = mock_process
@@ -331,12 +331,12 @@ class TestMinerUService:
                 "_resolve_python_executable",
                 return_value=Path("/fake/python.exe"),
             ),
-            patch("vibeocr.services.mineru_service.subprocess.Popen") as mock_popen,
-            patch("vibeocr.services.mineru_service.httpx") as mock_httpx,
-            patch("vibeocr.services.mineru_service.socket"),
-            patch("vibeocr.services.mineru_service.JobObjectGuard"),
+            patch("vibeocr.backend.services.mineru_service.subprocess.Popen") as mock_popen,
+            patch("vibeocr.backend.services.mineru_service.httpx") as mock_httpx,
+            patch("vibeocr.backend.services.mineru_service.socket"),
+            patch("vibeocr.backend.services.mineru_service.JobObjectGuard"),
             # 同上：避免 generate_machine_id 的 wmic Popen 干扰断言。
-            patch("vibeocr.network_detector.NetworkDetector"),
+            patch("vibeocr.backend.network_detector.NetworkDetector"),
         ):
             mock_popen.return_value = mock_process
             mock_httpx.get.return_value = mock_health_resp

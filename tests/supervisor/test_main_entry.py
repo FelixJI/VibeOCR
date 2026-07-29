@@ -1,4 +1,4 @@
-"""Tests for the testable seams of ``vibeocr.supervisor.main``.
+"""Tests for the testable seams of ``vibeocr.backend.supervisor.main``.
 
 The bulk of ``main`` is a genuine uvicorn entry point: it binds a loopback
 socket, emits the ready envelope on stdout, then serves the FastAPI app
@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from vibeocr.supervisor import main as supervisor_main
+from vibeocr.backend.supervisor import main as supervisor_main
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

@@ -2,8 +2,8 @@
 
 import fitz
 
-from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
-from vibeocr.services.pdf_service import PdfService
+from vibeocr.backend.models.pdf_document import PdfDocument, PdfPageInfo
+from vibeocr.backend.services.pdf_service import PdfService
 
 
 def _make_pdf_with_text(path, texts):

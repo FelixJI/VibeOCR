@@ -18,7 +18,7 @@ def _image(color: str) -> QImage:
 
 
 def test_preview_slow_decode_keeps_event_loop_responsive(qapp, qtbot, monkeypatch):
-    module = import_module("vibeocr.widgets.preview_widget")
+    module = import_module("vibeocr.classic.widgets.preview_widget")
     widget = module.PreviewWidget()
     qtbot.addWidget(widget)
     started = threading.Event()
@@ -41,7 +41,7 @@ def test_preview_slow_decode_keeps_event_loop_responsive(qapp, qtbot, monkeypatc
 
 
 def test_preview_fast_second_file_wins_and_pdf_cancels_image(qapp, qtbot, monkeypatch):
-    module = import_module("vibeocr.widgets.preview_widget")
+    module = import_module("vibeocr.classic.widgets.preview_widget")
     widget = module.PreviewWidget()
     qtbot.addWidget(widget)
     old_started = threading.Event()
@@ -84,7 +84,7 @@ def test_preview_fast_second_file_wins_and_pdf_cancels_image(qapp, qtbot, monkey
 
 
 def test_preview_clear_and_close_drop_late_decode(qapp, qtbot, monkeypatch):
-    module = import_module("vibeocr.widgets.preview_widget")
+    module = import_module("vibeocr.classic.widgets.preview_widget")
     widget = module.PreviewWidget()
     qtbot.addWidget(widget)
     started = threading.Event()
@@ -122,7 +122,7 @@ class _QrBackend:
 def test_qr_slow_file_decode_is_responsive_and_second_file_wins(
     qapp, qtbot, monkeypatch
 ):
-    module = import_module("vibeocr.views.tabs.qrcode_tab")
+    module = import_module("vibeocr.classic.views.tabs.qrcode_tab")
     tab = module.QrcodeTab(backend=_QrBackend())
     qtbot.addWidget(tab)
     tab._sub_tabs.setCurrentIndex(1)
@@ -156,7 +156,7 @@ def test_qr_slow_file_decode_is_responsive_and_second_file_wins(
 
 
 def test_qr_clear_and_close_drop_late_file_decode(qapp, qtbot, monkeypatch):
-    module = import_module("vibeocr.views.tabs.qrcode_tab")
+    module = import_module("vibeocr.classic.views.tabs.qrcode_tab")
     tab = module.QrcodeTab(backend=_QrBackend())
     qtbot.addWidget(tab)
     tab._sub_tabs.setCurrentIndex(1)

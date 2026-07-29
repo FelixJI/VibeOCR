@@ -38,22 +38,26 @@ _PY_V2_TREES: tuple[Path, ...] = (
     / "vibeocr-contracts-py"
     / "src"
     / "vibeocr"
-    / "protocol"
-    / "v2",
+    / "runtime_contracts",
     _REPO_ROOT
     / "packages"
     / "vibeocr-runtime-client-py"
     / "src"
     / "vibeocr"
-    / "protocol"
-    / "v2",
-    _REPO_ROOT / "packages" / "vibeocr-backend" / "src" / "vibeocr" / "supervisor",
-    _REPO_ROOT / "packages" / "vibeocr-client-py" / "src" / "vibeocr" / "supervisor",
+    / "runtime_client",
+    _REPO_ROOT
+    / "packages"
+    / "vibeocr-backend"
+    / "src"
+    / "vibeocr"
+    / "backend"
+    / "supervisor",
     _REPO_ROOT
     / "apps"
     / "vibeocr-pyside"
     / "src"
     / "vibeocr"
+    / "classic"
     / "pyside"
     / "supervisor_adapter.py",
 )
@@ -89,10 +93,10 @@ _PY_FORBIDDEN_NAMES: frozenset[str] = frozenset(
 # under vibeocr.*).
 _PY_FORBIDDEN_IMPORT_PREFIXES: tuple[str, ...] = (
     "vibeocr.worker_host",
-    "vibeocr.ipc",
-    "vibeocr.services",
-    "vibeocr.client.batch",
-    "vibeocr.client.session",
+    "vibeocr.backend.ipc",
+    "vibeocr.backend.services",
+    "vibeocr.classic.client.batch",
+    "vibeocr.classic.client.session",
 )
 
 _DOTNET_FORBIDDEN_TOKENS: tuple[str, ...] = (
@@ -161,25 +165,25 @@ def test_python_v2_tree_has_no_legacy_transport(py_file: Path) -> None:
 
 
 def _assert_allowed_import(file: Path, module: str, lineno: int) -> None:
-    # The v2 trees legitimately import from vibeocr.protocol.v2 and from their
+    # The v2 trees legitimately import from vibeocr.runtime_contracts and from their
     # own package; only the legacy prefixes are banned.
     # Explicit reuse exception (plan §5.2 重点复用): the stable OCR core
     # (ocr_service.py) is deliberately reused by the supervisor's Paddle
-    # executor. Other vibeocr.services.* modules remain legacy transport.
+    # executor. Other vibeocr.backend.services.* modules remain legacy transport.
     _REUSE_ALLOWED = {
-        "vibeocr.services.ocr_service",
-        "vibeocr.services.qrcode_decode_service",
-        "vibeocr.services.qrcode_service",
-        "vibeocr.services.export_service",
-        "vibeocr.services.pdf_backend_client",
-        "vibeocr.services.mineru_service",
-        "vibeocr.application.contracts",
-        # vibeocr.ipc.schemas is a pure pydantic DTO module (PdfDocumentMirror,
+        "vibeocr.backend.services.ocr_service",
+        "vibeocr.backend.services.qrcode_decode_service",
+        "vibeocr.backend.services.qrcode_service",
+        "vibeocr.backend.services.export_service",
+        "vibeocr.backend.services.pdf_backend_client",
+        "vibeocr.backend.services.mineru_service",
+        "vibeocr.backend.application.contracts",
+        # vibeocr.backend.ipc.schemas is a pure pydantic DTO module (PdfDocumentMirror,
         # ModelDiff, ProgressEvent, request/response bodies) shared by the PDF
         # backend child, the supervisor v2 routes, and the supervisor client.
         # It is schema, not transport (model_bridge/shm/named_pipe are the
-        # transport modules under vibeocr.ipc and stay forbidden).
-        "vibeocr.ipc.schemas",
+        # transport modules under vibeocr.backend.ipc and stay forbidden).
+        "vibeocr.backend.ipc.schemas",
     }
     for forbidden in _PY_FORBIDDEN_IMPORT_PREFIXES:
         if module in _REUSE_ALLOWED:
@@ -213,13 +217,14 @@ def test_pyside_supervisor_adapter_does_not_import_legacy_sync_client() -> None:
         / "vibeocr-pyside"
         / "src"
         / "vibeocr"
+        / "classic"
         / "pyside"
         / "supervisor_adapter.py"
     )
     if not adapter.exists():
         pytest.skip("supervisor_adapter.py not present")
     text = adapter.read_text(encoding="utf-8")
-    assert "from vibeocr.client.session" not in text, (
+    assert "from vibeocr.classic.client.session" not in text, (
         "supervisor_adapter must use the v2 client, not the legacy sync backend session."
     )
     assert "SyncBackendClient" not in text and "OcrHttpClient" not in text, (
@@ -233,10 +238,17 @@ def test_pyside_app_does_not_import_pdf_backend_client() -> None:
     Plan §7A exit criterion: "PySide UI import scanner 不允许
     services/mineru_service、pdf_backend_client、worker_host". After the
     PDF→supervisor migration the GUI never imports
-    ``vibeocr.services.pdf_backend_client`` directly — the supervisor owns
+    ``vibeocr.backend.services.pdf_backend_client`` directly — the supervisor owns
     the PDF child. This guard prevents regression.
     """
-    pyside_src = _REPO_ROOT / "apps" / "vibeocr-pyside" / "src" / "vibeocr"
+    pyside_src = (
+        _REPO_ROOT
+        / "apps"
+        / "vibeocr-pyside"
+        / "src"
+        / "vibeocr"
+        / "classic"
+    )
     if not pyside_src.exists():
         pytest.skip("pyside app source not present")
     offenders: list[str] = []
@@ -244,8 +256,8 @@ def test_pyside_app_does_not_import_pdf_backend_client() -> None:
         if py_file.name == "__pycache__":
             continue
         text = py_file.read_text(encoding="utf-8")
-        # Catch both ``from vibeocr.services.pdf_backend_client import ...``
-        # and ``import vibeocr.services.pdf_backend_client``. Comments/docstrings
+        # Catch both ``from vibeocr.backend.services.pdf_backend_client import ...``
+        # and ``import vibeocr.backend.services.pdf_backend_client``. Comments/docstrings
         # mentioning the name are allowed (the migration notes reference it);
         # we only flag real import statements via AST.
         try:
@@ -255,20 +267,20 @@ def test_pyside_app_does_not_import_pdf_backend_client() -> None:
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    if alias.name == "vibeocr.services.pdf_backend_client":
+                    if alias.name == "vibeocr.backend.services.pdf_backend_client":
                         offenders.append(
                             f"{py_file.relative_to(_REPO_ROOT)}:{node.lineno} "
-                            f"imports vibeocr.services.pdf_backend_client"
+                            f"imports vibeocr.backend.services.pdf_backend_client"
                         )
             elif isinstance(node, ast.ImportFrom):
-                if node.module == "vibeocr.services.pdf_backend_client":
+                if node.module == "vibeocr.backend.services.pdf_backend_client":
                     offenders.append(
                         f"{py_file.relative_to(_REPO_ROOT)}:{node.lineno} "
-                        f"imports from vibeocr.services.pdf_backend_client"
+                        f"imports from vibeocr.backend.services.pdf_backend_client"
                     )
     assert not offenders, (
-        "PySide app must not import vibeocr.services.pdf_backend_client — "
-        "PDF ops go through the supervisor (vibeocr.supervisor.pdf_client). "
+        "PySide app must not import vibeocr.backend.services.pdf_backend_client — "
+        "PDF ops go through the supervisor (vibeocr.classic.pdf_client). "
         "Offenders:\n  " + "\n  ".join(offenders)
     )
 
@@ -282,26 +294,26 @@ def test_pyside_app_does_not_import_pdf_backend_client() -> None:
 
 _DELETED_PY_MODULES: tuple[str, ...] = (
     "vibeocr.worker_host",
-    "vibeocr.services.ocr_worker_process",
-    "vibeocr.services.ocr_service_subprocess",
-    "vibeocr.services.worker_runtime_state",
-    "vibeocr.services.mineru_runtime_cache",
-    "vibeocr.services.mineru_batch_service",
-    "vibeocr.services.worker_manager",
-    "vibeocr.utils.shared_memory_v2",
-    "vibeocr.workers.ocr_worker",
-    "vibeocr.workers.batch_queue_manager",
-    "vibeocr.contracts.protocol.v1",
+    "vibeocr.backend.services.ocr_worker_process",
+    "vibeocr.backend.services.ocr_service_subprocess",
+    "vibeocr.backend.services.worker_runtime_state",
+    "vibeocr.backend.services.mineru_runtime_cache",
+    "vibeocr.backend.services.mineru_batch_service",
+    "vibeocr.backend.services.worker_manager",
+    "vibeocr.backend.utils.shared_memory_v2",
+    "vibeocr.classic.workers.ocr_worker",
+    "vibeocr.classic.workers.batch_queue_manager",
+    "vibeocr.runtime_contracts.contracts.protocol.v1",
     "vibeocr.protocol.v1",
-    "vibeocr.client.batch",
-    "vibeocr.client.session",
+    "vibeocr.classic.client.batch",
+    "vibeocr.classic.client.session",
 )
 
 
 def _python_source_trees() -> list[Path]:
     return [
         _REPO_ROOT / "packages" / "vibeocr-backend" / "src",
-        _REPO_ROOT / "packages" / "vibeocr-client-py" / "src",
+        _REPO_ROOT / "packages" / "vibeocr-runtime-client-py" / "src",
         _REPO_ROOT / "packages" / "vibeocr-contracts-py" / "src",
         _REPO_ROOT / "apps" / "vibeocr-pyside" / "src",
     ]

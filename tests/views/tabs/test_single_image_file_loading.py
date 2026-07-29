@@ -8,7 +8,7 @@ from importlib import import_module
 from PySide6.QtGui import QColor, QGuiApplication, QImage
 
 from tests.qt_responsiveness import assert_qt_event_loop_responsive
-from vibeocr.models.ocr_result import OCRResult
+from vibeocr.backend.models.ocr_result import OCRResult
 
 
 def _image(color: str) -> QImage:
@@ -20,7 +20,7 @@ def _image(color: str) -> QImage:
 def test_standalone_file_button_loads_image_without_main_window(
     qapp, qtbot, monkeypatch
 ):
-    module = import_module("vibeocr.views.tabs.single_recognition_tab")
+    module = import_module("vibeocr.classic.views.tabs.single_recognition_tab")
     tab = module.SingleRecognitionTab(backend=object())
     qtbot.addWidget(tab)
     monkeypatch.setattr(
@@ -43,7 +43,7 @@ def test_standalone_file_button_loads_image_without_main_window(
 def test_process_file_decodes_off_gui_and_starts_recognition(
     qapp, qtbot, tmp_path, monkeypatch
 ):
-    module = import_module("vibeocr.views.tabs.single_recognition_tab")
+    module = import_module("vibeocr.classic.views.tabs.single_recognition_tab")
     path = tmp_path / "slow.png"
     path.write_bytes(b"placeholder")
     tab = module.SingleRecognitionTab(backend=object())
@@ -74,7 +74,7 @@ def test_process_file_decodes_off_gui_and_starts_recognition(
 def test_latest_image_wins_and_closing_drops_late_result(
     qapp, qtbot, tmp_path, monkeypatch
 ):
-    module = import_module("vibeocr.views.tabs.single_recognition_tab")
+    module = import_module("vibeocr.classic.views.tabs.single_recognition_tab")
     old_path = tmp_path / "old.png"
     new_path = tmp_path / "new.png"
     old_path.write_bytes(b"old")
@@ -122,7 +122,7 @@ def test_latest_image_wins_and_closing_drops_late_result(
 def test_paste_invalidates_slow_file_decode(
     qapp, qtbot, tmp_path, monkeypatch, sample_pixmap
 ):
-    module = import_module("vibeocr.views.tabs.single_recognition_tab")
+    module = import_module("vibeocr.classic.views.tabs.single_recognition_tab")
     path = tmp_path / "old.png"
     path.write_bytes(b"old")
     tab = module.SingleRecognitionTab(backend=object())
@@ -163,7 +163,7 @@ def test_paste_invalidates_slow_file_decode(
 def test_busy_state_rejects_all_new_input_entrypoints(
     qapp, qtbot, tmp_path, monkeypatch, sample_pixmap
 ):
-    module = import_module("vibeocr.views.tabs.single_recognition_tab")
+    module = import_module("vibeocr.classic.views.tabs.single_recognition_tab")
     path = tmp_path / "busy.png"
     path.write_bytes(b"placeholder")
     tab = module.SingleRecognitionTab(backend=object())
@@ -213,14 +213,14 @@ def test_busy_state_rejects_all_new_input_entrypoints(
 def test_document_gpu_capability_unknown_does_not_probe_on_gui_thread(
     qapp, qtbot, tmp_path, monkeypatch
 ):
-    module = import_module("vibeocr.views.tabs.single_recognition_tab")
+    module = import_module("vibeocr.classic.views.tabs.single_recognition_tab")
     path = tmp_path / "cold.pdf"
     path.write_bytes(b"%PDF")
     monkeypatch.setattr(
-        "vibeocr.env_manager._runtime_gpu_capability_cache", None
+        "vibeocr.backend.env_manager._runtime_gpu_capability_cache", None
     )
     monkeypatch.setattr(
-        "vibeocr.env_manager.get_runtime_gpu_capability",
+        "vibeocr.backend.env_manager.get_runtime_gpu_capability",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             AssertionError("GUI 路径不应同步探测 GPU")
         ),
@@ -265,7 +265,7 @@ def _quiet_result_rendering(tab, monkeypatch) -> None:
 def test_preprocessed_image_decode_is_responsive_and_latest_wins(
     qapp, qtbot, monkeypatch
 ):
-    module = import_module("vibeocr.views.tabs.single_recognition_tab")
+    module = import_module("vibeocr.classic.views.tabs.single_recognition_tab")
     tab = module.SingleRecognitionTab(backend=object())
     qtbot.addWidget(tab)
     _quiet_result_rendering(tab, monkeypatch)
@@ -304,7 +304,7 @@ def test_preprocessed_image_decode_is_responsive_and_latest_wins(
 def test_preprocessed_image_decode_drops_result_after_closing(
     qapp, qtbot, monkeypatch
 ):
-    module = import_module("vibeocr.views.tabs.single_recognition_tab")
+    module = import_module("vibeocr.classic.views.tabs.single_recognition_tab")
     tab = module.SingleRecognitionTab(backend=object())
     qtbot.addWidget(tab)
     _quiet_result_rendering(tab, monkeypatch)
@@ -335,7 +335,7 @@ def test_preprocessed_image_decode_drops_result_after_closing(
 def test_closing_propagates_and_drain_is_widget_free_poll(
     qapp, qtbot, monkeypatch
 ):
-    module = import_module("vibeocr.views.tabs.single_recognition_tab")
+    module = import_module("vibeocr.classic.views.tabs.single_recognition_tab")
     tab = module.SingleRecognitionTab(backend=object())
     qtbot.addWidget(tab)
     child_closing = []

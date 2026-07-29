@@ -19,7 +19,7 @@ import sys
 
 import pytest
 
-from vibeocr.utils.frontend_exclusive_lock import (
+from vibeocr.classic.utils.frontend_exclusive_lock import (
     EXCLUSIVE_MUTEX_NAME,
     FrontendExclusiveLock,
 )
@@ -109,13 +109,28 @@ def test_try_acquire_after_release_can_reacquire(unique_mutex_name: str) -> None
 
 def test_default_mutex_name_matches_contract() -> None:
     """Mutex 名必须与 C# 端和 ADR 一致，否则互斥失效。"""
-    assert EXCLUSIVE_MUTEX_NAME == r"Local\VibeOCR.Frontend.Exclusive.v1"
+    assert EXCLUSIVE_MUTEX_NAME == r"Local\VibeOCR.Frontend.Exclusive.v2"
+
+
+def test_windows_create_mutex_failure_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "vibeocr.classic.utils.frontend_exclusive_lock.os_name", lambda: "nt"
+    )
+    monkeypatch.setattr(
+        "vibeocr.classic.utils.frontend_exclusive_lock._create_mutex",
+        lambda _name: 0,
+    )
+    lock = FrontendExclusiveLock()
+    assert lock.try_acquire() is False
+    assert lock.is_acquired is False
 
 
 def test_non_windows_passthrough(monkeypatch: pytest.MonkeyPatch) -> None:
     """非 Windows 环境放行（VibeOCR 仅面向 Windows）。"""
     monkeypatch.setattr(
-        "vibeocr.utils.frontend_exclusive_lock.os_name", lambda: "posix"
+        "vibeocr.classic.utils.frontend_exclusive_lock.os_name", lambda: "posix"
     )
     lock = FrontendExclusiveLock()
     assert lock.try_acquire()

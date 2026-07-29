@@ -13,7 +13,7 @@ from typing import Any, cast
 
 import pytest
 
-from vibeocr.ipc.schemas import (
+from vibeocr.backend.ipc.schemas import (
     DetectTextLayersResponse,
     ModelDiff,
     MutateResponse,
@@ -23,7 +23,7 @@ from vibeocr.ipc.schemas import (
     ProgressPhase,
     SaveResponse,
 )
-from vibeocr.supervisor.pdf.adapter import PdfProcessAdapter
+from vibeocr.backend.supervisor.pdf.adapter import PdfProcessAdapter
 
 
 class _FullPdfChild:

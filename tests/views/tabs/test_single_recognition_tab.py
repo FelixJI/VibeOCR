@@ -6,8 +6,8 @@ import pytest
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QWidget
 
-from vibeocr.views.tabs.base_tab import BaseOcrTab
-from vibeocr.views.tabs.single_recognition_tab import SingleRecognitionTab
+from vibeocr.classic.views.tabs.base_tab import BaseOcrTab
+from vibeocr.classic.views.tabs.single_recognition_tab import SingleRecognitionTab
 
 
 class _FakeBackend:
@@ -18,7 +18,7 @@ class _FakeBackend:
         return None
 
     def recognize_sync(self, *args, **kwargs):
-        from vibeocr.models.ocr_result import OCRResult
+        from vibeocr.backend.models.ocr_result import OCRResult
 
         return OCRResult(raw_text="fake")
 
@@ -104,7 +104,7 @@ class TestRecognitionStatus:
     """状态栏摘要必须使用同一组文本框统计，且不把空结果说成成功。"""
 
     def test_status_counts_boxes_low_confidence_and_elapsed(self):
-        from vibeocr.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
 
         result = OCRResult(
             raw_text="可信\n待复核",
@@ -122,7 +122,7 @@ class TestRecognitionStatus:
         )
 
     def test_status_reports_empty_result_honestly(self):
-        from vibeocr.models.ocr_result import OCRResult
+        from vibeocr.backend.models.ocr_result import OCRResult
 
         status = SingleRecognitionTab._build_recognition_status(
             OCRResult(), 0.248
@@ -131,7 +131,7 @@ class TestRecognitionStatus:
         assert status == "未识别到文本 · 耗时 248 毫秒"
 
     def test_status_does_not_claim_zero_boxes_when_statistics_are_missing(self):
-        from vibeocr.models.ocr_result import OCRResult
+        from vibeocr.backend.models.ocr_result import OCRResult
 
         status = SingleRecognitionTab._build_recognition_status(
             OCRResult(raw_text="后端只返回了文本"), 12.34
@@ -256,7 +256,7 @@ class TestPasteAndStartFeedback:
 
 def _make_table_result():
     """构造一个表格管道风格的 OCRResult（content_list + text_blocks + table_body）。"""
-    from vibeocr.models.ocr_result import OCRResult, TextBlock
+    from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
 
     table_html = "<table><tr><td>A</td><td>B</td></tr></table>"
     return OCRResult(
@@ -278,7 +278,7 @@ def _make_table_result():
 
 def _make_formula_result():
     """构造一个公式管道风格的 OCRResult（content_list type=formula）。"""
-    from vibeocr.models.ocr_result import OCRResult, TextBlock
+    from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
 
     latex = "E=mc^2"
     return OCRResult(
@@ -352,7 +352,7 @@ def _make_plain_text_result():
     content_list 为空（仅 text_blocks）—— 通用 OCR 管道在 _display_result 之前
     的真实形态。段落处理选项只对这类结果有意义（结构化结果走块类型渲染）。
     """
-    from vibeocr.models.ocr_result import OCRResult, TextBlock
+    from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
 
     return OCRResult(
         text_blocks=[
@@ -521,7 +521,7 @@ class TestOcrFinishedEmitsBringToFront:
         from PySide6.QtGui import QPixmap
 
         from tests.conftest import wait_until_done
-        from vibeocr.models.ocr_options import OCROptions
+        from vibeocr.backend.models.ocr_options import OCROptions
 
         tab = SingleRecognitionTab()
         observed: list[bool] = []
@@ -533,7 +533,7 @@ class TestOcrFinishedEmitsBringToFront:
         monkeypatch.setattr(tab, "_call_backend_recognize", fake_recognize)
         monkeypatch.setattr(tab, "_display_result", lambda result: None)
         monkeypatch.setattr(
-            "vibeocr.pipeline_status.is_pipeline_ever_succeeded", lambda *args: True
+            "vibeocr.backend.pipeline_status.is_pipeline_ever_succeeded", lambda *args: True
         )
         options = OCROptions()
 
@@ -565,7 +565,7 @@ class TestRunOcrAsync:
         from PySide6.QtGui import QPixmap
 
         from tests.conftest import wait_until_done
-        from vibeocr.models.ocr_options import OCROptions
+        from vibeocr.backend.models.ocr_options import OCROptions
 
         tab = SingleRecognitionTab()
         finished_calls: list = []
@@ -578,7 +578,7 @@ class TestRunOcrAsync:
             tab, "_on_ocr_finished", lambda r: finished_calls.append(r)
         )
         monkeypatch.setattr(
-            "vibeocr.pipeline_status.is_pipeline_ever_succeeded", lambda *a: True
+            "vibeocr.backend.pipeline_status.is_pipeline_ever_succeeded", lambda *a: True
         )
 
         pixmap = QPixmap(4, 4)
@@ -610,7 +610,7 @@ class TestRunOcrAsync:
         from PySide6.QtGui import QPixmap
 
         from tests.conftest import wait_until_done
-        from vibeocr.models.ocr_options import OCROptions
+        from vibeocr.backend.models.ocr_options import OCROptions
 
         tab = SingleRecognitionTab()
         barrier = threading.Event()
@@ -623,7 +623,7 @@ class TestRunOcrAsync:
         monkeypatch.setattr(tab, "_call_backend_recognize", blocking_recognize)
         monkeypatch.setattr(tab, "_display_result", lambda r: None)
         monkeypatch.setattr(
-            "vibeocr.pipeline_status.is_pipeline_ever_succeeded", lambda *a: True
+            "vibeocr.backend.pipeline_status.is_pipeline_ever_succeeded", lambda *a: True
         )
 
         timer_fired: list[bool] = []
@@ -654,7 +654,7 @@ class TestRunOcrAsync:
         from PySide6.QtGui import QPixmap
 
         from tests.conftest import wait_until_done
-        from vibeocr.models.ocr_options import OCROptions
+        from vibeocr.backend.models.ocr_options import OCROptions
 
         tab = SingleRecognitionTab()
         barrier = threading.Event()
@@ -668,7 +668,7 @@ class TestRunOcrAsync:
         monkeypatch.setattr(tab, "_call_backend_recognize", blocking_recognize)
         monkeypatch.setattr(tab, "_display_result", lambda r: None)
         monkeypatch.setattr(
-            "vibeocr.pipeline_status.is_pipeline_ever_succeeded", lambda *a: True
+            "vibeocr.backend.pipeline_status.is_pipeline_ever_succeeded", lambda *a: True
         )
 
         pixmap = QPixmap(4, 4)
@@ -693,7 +693,7 @@ class TestRunOcrAsync:
         from PySide6.QtGui import QPixmap
 
         from tests.conftest import wait_until_done
-        from vibeocr.models.ocr_options import OCROptions
+        from vibeocr.backend.models.ocr_options import OCROptions
 
         tab = SingleRecognitionTab()
         error_calls: list[str] = []
@@ -706,7 +706,7 @@ class TestRunOcrAsync:
             tab, "_on_ocr_error", lambda msg: error_calls.append(msg)
         )
         monkeypatch.setattr(
-            "vibeocr.pipeline_status.is_pipeline_ever_succeeded", lambda *a: True
+            "vibeocr.backend.pipeline_status.is_pipeline_ever_succeeded", lambda *a: True
         )
 
         tab._ocr_from_screenshot = True  # 验证错误路径不复位由 _on_ocr_error 负责
@@ -728,7 +728,7 @@ class TestRunOcrAsync:
         from PySide6.QtGui import QPixmap
 
         from tests.conftest import wait_until_done
-        from vibeocr.models.ocr_options import OCROptions
+        from vibeocr.backend.models.ocr_options import OCROptions
 
         tab = SingleRecognitionTab()
         barrier = threading.Event()
@@ -744,7 +744,7 @@ class TestRunOcrAsync:
             tab, "_on_ocr_finished", lambda r: finished_calls.append(r)
         )
         monkeypatch.setattr(
-            "vibeocr.pipeline_status.is_pipeline_ever_succeeded", lambda *a: True
+            "vibeocr.backend.pipeline_status.is_pipeline_ever_succeeded", lambda *a: True
         )
 
         pixmap = QPixmap(4, 4)
@@ -792,7 +792,7 @@ class TestRecognitionPreparationAsync:
         from PySide6.QtGui import QPixmap
 
         from tests.conftest import wait_until_done
-        from vibeocr.models.ocr_options import OCROptions
+        from vibeocr.backend.models.ocr_options import OCROptions
 
         tab = SingleRecognitionTab()
         gui_thread = threading.get_ident()
@@ -806,7 +806,7 @@ class TestRecognitionPreparationAsync:
         monkeypatch.setattr(tab, "_qimage_to_png_bytes", record_thread)
         monkeypatch.setattr(tab, "_display_result", lambda result: None)
         monkeypatch.setattr(
-            "vibeocr.pipeline_status.is_pipeline_ever_succeeded", lambda *args: True
+            "vibeocr.backend.pipeline_status.is_pipeline_ever_succeeded", lambda *args: True
         )
         pixmap = QPixmap(8, 8)
         pixmap.fill()

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import inspect
 
-from vibeocr.models.ocr_options import OCROptions
-from vibeocr.views.batch_recognition_tab import BatchRecognitionTab
+from vibeocr.backend.models.ocr_options import OCROptions
+from vibeocr.classic.views.batch_recognition_tab import BatchRecognitionTab
 
 
 def test_loaded_batch_is_submitted_once_with_all_inputs(qtbot) -> None:
@@ -61,7 +61,7 @@ def test_submit_recognition_sync_exception_does_not_freeze_start(qtbot) -> None:
 def test_batch_tab_contains_no_private_http_transport() -> None:
     source = inspect.getsource(
         __import__(
-            "vibeocr.views.batch_recognition_tab",
+            "vibeocr.classic.views.batch_recognition_tab",
             fromlist=["BatchRecognitionTab"],
         )
     )

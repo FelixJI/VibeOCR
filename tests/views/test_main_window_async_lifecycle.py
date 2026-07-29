@@ -13,25 +13,25 @@ from PySide6.QtCore import QThread
 from PySide6.QtWidgets import QWidget
 from shiboken6 import isValid
 
-from vibeocr.views.main_window import MainWindow
+from vibeocr.classic.views.main_window import MainWindow
 
 
 @pytest.fixture
 def main_window(qapp, qtbot, tmp_path, monkeypatch):
-    from vibeocr.managers.config_manager import ConfigManager
+    from vibeocr.classic.managers.config_manager import ConfigManager
 
     ConfigManager.reset_instance()
     ConfigManager.instance(tmp_path)
     monkeypatch.setattr(
-        "vibeocr.managers.subprocess_manager.SubprocessManager.start_supervisor",
+        "vibeocr.classic.managers.subprocess_manager.SubprocessManager.start_supervisor",
         lambda self: None,
     )
     monkeypatch.setattr(
-        "vibeocr.managers.dependency_manager.DependencyManager.check_dependencies",
+        "vibeocr.classic.managers.dependency_manager.DependencyManager.check_dependencies",
         lambda self: None,
     )
     monkeypatch.setattr(
-        "vibeocr.widgets.backend_options_widget.BackendOptionsWidget._start_gpu_detection",
+        "vibeocr.classic.widgets.backend_options_widget.BackendOptionsWidget._start_gpu_detection",
         lambda self: None,
     )
     window = MainWindow()
@@ -92,7 +92,7 @@ def _configure_gui_poll_shutdown(window, monkeypatch, *, settings_is_drained):
     window._edge_toolbar = SimpleNamespace(close=lambda: None)
     monkeypatch.setattr(window, "_save_layout", lambda: None)
     monkeypatch.setattr(
-        "vibeocr.client.shutdown_backend_client", lambda: None
+        "vibeocr.classic.client.shutdown_backend_client", lambda: None
     )
     return calls
 
@@ -209,20 +209,20 @@ def test_closing_discards_late_lazy_prewarm(main_window, qtbot, monkeypatch):
 def test_restored_heavy_tab_builds_after_first_show_on_gui_thread(
     qapp, qtbot, tmp_path, monkeypatch
 ):
-    from vibeocr.managers.config_manager import ConfigManager
+    from vibeocr.classic.managers.config_manager import ConfigManager
 
     ConfigManager.reset_instance()
     ConfigManager.instance(tmp_path)
     monkeypatch.setattr(
-        "vibeocr.managers.subprocess_manager.SubprocessManager.start_supervisor",
+        "vibeocr.classic.managers.subprocess_manager.SubprocessManager.start_supervisor",
         lambda self: None,
     )
     monkeypatch.setattr(
-        "vibeocr.widgets.backend_options_widget.BackendOptionsWidget._start_gpu_detection",
+        "vibeocr.classic.widgets.backend_options_widget.BackendOptionsWidget._start_gpu_detection",
         lambda self: None,
     )
     monkeypatch.setattr(
-        "vibeocr.managers.layout_manager.LayoutManager.get_tab_index",
+        "vibeocr.classic.managers.layout_manager.LayoutManager.get_tab_index",
         lambda self: 3,
     )
     monkeypatch.setattr(
@@ -252,7 +252,7 @@ def test_restored_heavy_tab_builds_after_first_show_on_gui_thread(
 def test_about_to_quit_cleanup_has_no_thread_wait() -> None:
     path = (
         Path(__file__).resolve().parents[2]
-        / "apps/vibeocr-pyside/src/vibeocr/main.py"
+        / "apps/vibeocr-pyside/src/vibeocr/classic/main.py"
     )
     tree = ast.parse(path.read_text(encoding="utf-8"))
     cleanup = next(

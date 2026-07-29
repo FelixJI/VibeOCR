@@ -7,10 +7,10 @@ from unittest.mock import MagicMock
 
 def test_save_returns_status_only_diff(monkeypatch, tmp_path):
     """保存响应不得携带整份 OCR 文档，避免大文档超过控制帧上限。"""
-    from vibeocr.ipc.schemas import SaveRequest
-    from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
-    from vibeocr.services import pdf_backend_process as backend
-    from vibeocr.services.pdf_service import SaveResult
+    from vibeocr.backend.ipc.schemas import SaveRequest
+    from vibeocr.backend.models.pdf_document import PdfDocument, PdfPageInfo
+    from vibeocr.backend.services import pdf_backend_process as backend
+    from vibeocr.backend.services.pdf_service import SaveResult
 
     output = tmp_path / "saved.pdf"
     document = PdfDocument(file_path=str(output))

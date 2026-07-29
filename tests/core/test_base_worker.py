@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock
 
-from vibeocr.core import BaseWorker, BatchWorker
+from vibeocr.classic.core.base_worker import BaseWorker, BatchWorker
 
 
 class SimpleWorker(BaseWorker):

@@ -12,7 +12,7 @@ import os
 # ENTRYPOINT_NOT_FOUND (0xc0000139) 致命异常（在 torch._load_dll_libraries 处），
 # 可能杀死整个 pytest 进程或留下后台线程崩溃的诊断噪音（行为非确定）。
 #
-# 生产环境 apps/vibeocr-pyside/src/vibeocr/main.py 顶部已设置同样的兜底；测试进程不经过 main.py，
+# 生产环境 vibeocr.classic.main 顶部已设置同样的兜底；测试进程不经过 main.py，
 # 故在此复制。KMP_DUPLICATE_LIB_OK=TRUE 让 Intel OpenMP 运行时容忍重复加载，
 # 减少致命冲突。另见 test_ocr_service.py 的 PADDLE_TORCH_CONFLICT 跳过（治本）。
 # ---------------------------------------------------------------------------
@@ -29,7 +29,6 @@ repo_root = Path(__file__).parent.parent
 source_paths = [
     repo_root / "packages/vibeocr-contracts-py/src",
     repo_root / "packages/vibeocr-runtime-client-py/src",
-    repo_root / "packages/vibeocr-client-py/src",
     repo_root / "packages/vibeocr-backend/src",
     repo_root / "apps/vibeocr-pyside/src",
 ]
@@ -56,7 +55,7 @@ def qapp():
 
 def pytest_sessionfinish(session, exitstatus):
     """Close the process-wide WorkerHost before pytest joins executor threads."""
-    from vibeocr.client import shutdown_backend_client
+    from vibeocr.classic.client import shutdown_backend_client
 
     shutdown_backend_client()
 
@@ -151,7 +150,7 @@ def qasync_loop(qapp):
     """
     import asyncio
 
-    from vibeocr.utils.qt_async import create_qasync_event_loop
+    from vibeocr.classic.utils.qt_async import create_qasync_event_loop
 
     loop = create_qasync_event_loop(qapp)
     asyncio.set_event_loop(loop)
@@ -163,7 +162,7 @@ def qasync_loop(qapp):
         # 在当前 loop 上，若残留会污染后续测试（尤其 test_qt_async 复用该单例）。
         # close loop 前先取消所有未完成 task，避免跨 loop 残留。
         try:
-            from vibeocr.utils.qt_async import get_async_runner
+            from vibeocr.classic.utils.qt_async import get_async_runner
 
             runner = get_async_runner()
             runner.cancel_all()

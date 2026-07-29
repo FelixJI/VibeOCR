@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from vibeocr.ipc.schemas import (
+from vibeocr.backend.ipc.schemas import (
     DetectTextLayersResponse,
     ModelDiff,
     MutateResponse,
@@ -21,16 +21,16 @@ from vibeocr.ipc.schemas import (
     ProgressPhase,
     SaveResponse,
 )
-from vibeocr.supervisor.app import create_app
-from vibeocr.supervisor.bootstrap import generate_session_token, new_instance_id
-from vibeocr.supervisor.module import SupervisorModule, SupervisorOptions
+from vibeocr.backend.supervisor.app import create_app
+from vibeocr.backend.supervisor.bootstrap import generate_session_token, new_instance_id
+from vibeocr.backend.supervisor.module import SupervisorModule, SupervisorOptions
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
     from pathlib import Path
 
-    from vibeocr.protocol.v2 import CancelMode, ResidencyStatus, SettingsSnapshot
-    from vibeocr.supervisor.inference.mineru_adapter import MinerUProcessAdapter
+    from vibeocr.backend.supervisor.inference.mineru_adapter import MinerUProcessAdapter
+    from vibeocr.runtime_contracts import CancelMode, ResidencyStatus, SettingsSnapshot
 
 
 class FakePdfAdapter:
@@ -214,33 +214,33 @@ class NullExecutor:
     """Minimal executor: fails every job immediately (PDF tests don't use jobs)."""
 
     def execute(self, record, staged) -> None:  # type: ignore[no-untyped-def]
-        from vibeocr.protocol.v2 import JobState
+        from vibeocr.runtime_contracts import JobState
 
         if record.state not in (JobState.COMPLETED, JobState.FAILED, JobState.CANCELLED):
             record.transition(JobState.FAILED)
 
     def cancel_mode_for(self, record) -> CancelMode:  # type: ignore[no-untyped-def]
-        from vibeocr.protocol.v2 import CancelMode
+        from vibeocr.runtime_contracts import CancelMode
 
         return CancelMode.COOPERATIVE
 
     def residency_status(self) -> ResidencyStatus:
-        from vibeocr.protocol.v2 import ResidencyStatus
+        from vibeocr.runtime_contracts import ResidencyStatus
 
         return ResidencyStatus()
 
     def release_idle(self, pipeline: str | None = None) -> ResidencyStatus:
-        from vibeocr.protocol.v2 import ResidencyStatus
+        from vibeocr.runtime_contracts import ResidencyStatus
 
         return ResidencyStatus()
 
     def preload(self, pipelines: tuple[str, ...]) -> ResidencyStatus:
-        from vibeocr.protocol.v2 import ResidencyStatus
+        from vibeocr.runtime_contracts import ResidencyStatus
 
         return ResidencyStatus()
 
     def configure_settings(self, snapshot: SettingsSnapshot) -> ResidencyStatus:
-        from vibeocr.protocol.v2 import ResidencyStatus
+        from vibeocr.runtime_contracts import ResidencyStatus
 
         return ResidencyStatus(
             default_ttl_seconds=snapshot.default_ttl_seconds,
@@ -296,7 +296,7 @@ def _stop_mineru_watchers_after_test(
     test that created it. The lazy import keeps the backend module out of the
     client-side test path until a test actually touches MinerU.
     """
-    from vibeocr.supervisor.inference import mineru_adapter as _ma
+    from vibeocr.backend.supervisor.inference import mineru_adapter as _ma
 
     created: list = []
     original: Callable[..., None] = _ma.MinerUProcessAdapter._ensure_watcher_locked

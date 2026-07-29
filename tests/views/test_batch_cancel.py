@@ -7,7 +7,7 @@
 
 from unittest.mock import MagicMock
 
-from vibeocr.views.batch_recognition_tab import BatchRecognitionWorker
+from vibeocr.classic.views.batch_recognition_tab import BatchRecognitionWorker
 
 
 class TestBatchCancel:

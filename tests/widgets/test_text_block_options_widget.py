@@ -9,14 +9,14 @@
 
 import pytest
 
-from vibeocr.models.text_block_options import (
+from vibeocr.backend.models.text_block_options import (
     LINE_MODE_KEEP,
     LINE_MODE_MERGE,
     LINE_MODE_SMART,
     TextBlockOptions,
 )
-from vibeocr.utils.ocr_preferences import OCRPreferences
-from vibeocr.widgets.text_block_options_widget import TextBlockOptionsWidget
+from vibeocr.classic.utils.ocr_preferences import OCRPreferences
+from vibeocr.classic.widgets.text_block_options_widget import TextBlockOptionsWidget
 
 
 @pytest.fixture
@@ -127,7 +127,7 @@ class TestGetTextOptions:
 class TestCollapsible:
     def test_is_collapsible(self, widget):
         """改基类后支持折叠 API。"""
-        from vibeocr.widgets.collapsible_group_box import CollapsibleGroupBox
+        from vibeocr.classic.widgets.collapsible_group_box import CollapsibleGroupBox
 
         assert isinstance(widget, CollapsibleGroupBox)
         widget.set_collapsed(True)

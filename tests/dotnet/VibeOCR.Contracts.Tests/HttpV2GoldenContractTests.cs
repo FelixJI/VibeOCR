@@ -2,7 +2,7 @@
 //
 // These prove .NET and Python agree on the same v2 wire payloads (plan §1
 // exit criterion: "Python 与 C# golden 100% 一致"). Fixtures are loaded from
-// the Python package's protocol/v2/golden/golden.json and errors.json, exactly
+// the Python package's runtime_contracts/golden/golden.json and errors.json, exactly
 // like the v1 tests read protocol/v1. Round-trips use structural DeepEquals
 // (order/whitespace-insensitive), mirroring GoldenContractTests.
 using System.Text.Json;
@@ -169,8 +169,7 @@ public sealed class HttpV2GoldenContractTests
                     "vibeocr-contracts-py",
                     "src",
                     "vibeocr",
-                    "protocol",
-                    "v2");
+                    "runtime_contracts");
                 if (File.Exists(Path.Combine(candidate, "errors.json")))
                 {
                     return candidate;
@@ -180,6 +179,7 @@ public sealed class HttpV2GoldenContractTests
             }
         }
 
-        throw new DirectoryNotFoundException("Could not locate vibeocr protocol/v2 from test output.");
+        throw new DirectoryNotFoundException(
+            "Could not locate vibeocr/runtime_contracts from test output.");
     }
 }

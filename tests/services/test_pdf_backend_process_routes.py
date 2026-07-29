@@ -25,7 +25,7 @@ def app_client(tmp_path):
 
     用 TestClient context manager 触发 _lifespan startup/shutdown。
     """
-    from vibeocr.services import pdf_backend_process as backend
+    from vibeocr.backend.services import pdf_backend_process as backend
 
     # 重置全局 registry
     backend._REGISTRY = None
@@ -111,7 +111,7 @@ class TestHealthAndOpen:
 
     def test_get_registry_singleton(self):
         """_get_registry 懒初始化单例（lines 80-84）。"""
-        from vibeocr.services import pdf_backend_process as backend
+        from vibeocr.backend.services import pdf_backend_process as backend
 
         backend._REGISTRY = None
         r1 = backend._get_registry()
@@ -213,7 +213,7 @@ class TestRenderRoutes:
 
     def test_render_page_pixels_close_exception_swallowed(self, tmp_path, monkeypatch):
         """_render_page_pixels: doc.close 抛异常应被吞（lines 195-198）。"""
-        from vibeocr.services import pdf_backend_process as backend
+        from vibeocr.backend.services import pdf_backend_process as backend
 
         path = _create_test_pdf(tmp_path / "rp.pdf", num_pages=1)
         # 让 fitz.Document.close 抛异常
@@ -472,7 +472,7 @@ class TestTextLayerRoutes:
         self, app_client, tmp_path, monkeypatch
     ):
         """save_incremental 失败 → _compress_in_place 回退（lines 644-671）。"""
-        from vibeocr.services import pdf_backend_process as backend
+        from vibeocr.backend.services import pdf_backend_process as backend
 
         backend._REGISTRY = None
         client, _ = app_client
@@ -498,7 +498,7 @@ class TestTextLayerRoutes:
         self, app_client, tmp_path, monkeypatch
     ):
         """save_incremental 失败 + _compress_in_place 也失败 → 重开 doc（lines 657-671）。"""
-        from vibeocr.services import pdf_backend_process as backend
+        from vibeocr.backend.services import pdf_backend_process as backend
 
         backend._REGISTRY = None
         client, _ = app_client
@@ -738,8 +738,8 @@ class TestOtherRoutes:
 
 class TestMirrorBuilders:
     def test_text_layer_to_mirror(self):
-        from vibeocr.models.pdf_document import TextLayerInfo
-        from vibeocr.services.pdf_backend_process import _text_layer_to_mirror
+        from vibeocr.backend.models.pdf_document import TextLayerInfo
+        from vibeocr.backend.services.pdf_backend_process import _text_layer_to_mirror
 
         tl = TextLayerInfo(index=0, text_preview="hi", char_count=2, bbox=(1, 2, 3, 4), color_id=0)
         m = _text_layer_to_mirror(tl)
@@ -747,8 +747,8 @@ class TestMirrorBuilders:
         assert m.char_count == 2
 
     def test_text_block_to_mirror(self):
-        from vibeocr.models.ocr_result import TextBlock
-        from vibeocr.services.pdf_backend_process import _text_block_to_mirror
+        from vibeocr.backend.models.ocr_result import TextBlock
+        from vibeocr.backend.services.pdf_backend_process import _text_block_to_mirror
 
         b = TextBlock(text="x", score=0.5, bbox=(1, 2, 3, 4), page_idx=0)
         m = _text_block_to_mirror(b)
@@ -756,8 +756,8 @@ class TestMirrorBuilders:
         assert m.score == 0.5
 
     def test_page_to_mirror(self):
-        from vibeocr.models.pdf_document import PdfPageInfo
-        from vibeocr.services.pdf_backend_process import _page_to_mirror
+        from vibeocr.backend.models.pdf_document import PdfPageInfo
+        from vibeocr.backend.services.pdf_backend_process import _page_to_mirror
 
         info = PdfPageInfo(page_index=0, rotation=90)
         m = _page_to_mirror(info)
@@ -765,8 +765,8 @@ class TestMirrorBuilders:
         assert m.rotation == 90
 
     def test_doc_to_mirror(self):
-        from vibeocr.models.pdf_document import PdfDocument
-        from vibeocr.services.pdf_backend_process import _doc_to_mirror
+        from vibeocr.backend.models.pdf_document import PdfDocument
+        from vibeocr.backend.services.pdf_backend_process import _doc_to_mirror
 
         d = PdfDocument(file_path="x.pdf")
         d.pages = []
@@ -774,8 +774,8 @@ class TestMirrorBuilders:
         assert m.file_path == "x.pdf"
 
     def test_diff_full(self):
-        from vibeocr.models.pdf_document import PdfDocument
-        from vibeocr.services.pdf_backend_process import _diff_full
+        from vibeocr.backend.models.pdf_document import PdfDocument
+        from vibeocr.backend.services.pdf_backend_process import _diff_full
 
         d = PdfDocument(file_path="x.pdf")
         d.pages = []
@@ -784,11 +784,11 @@ class TestMirrorBuilders:
         assert diff.full_model is not None
 
     def test_diff_pages_with_invalidate(self):
-        from vibeocr.models.pdf_document import PdfDocument
-        from vibeocr.services.pdf_backend_process import _diff_pages
+        from vibeocr.backend.models.pdf_document import PdfDocument
+        from vibeocr.backend.services.pdf_backend_process import _diff_pages
 
         d = PdfDocument(file_path="x.pdf")
-        from vibeocr.models.pdf_document import PdfPageInfo
+        from vibeocr.backend.models.pdf_document import PdfPageInfo
 
         d.pages = [PdfPageInfo(page_index=0), PdfPageInfo(page_index=1)]
         diff = _diff_pages(d, [0, 1], invalidate_thumbnails=[0], modified=True)
@@ -798,8 +798,8 @@ class TestMirrorBuilders:
 
     def test_diff_pages_out_of_range_filtered(self):
         """_diff_pages 中越界页索引应被过滤（line 151 条件）。"""
-        from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
-        from vibeocr.services.pdf_backend_process import _diff_pages
+        from vibeocr.backend.models.pdf_document import PdfDocument, PdfPageInfo
+        from vibeocr.backend.services.pdf_backend_process import _diff_pages
 
         d = PdfDocument(file_path="x.pdf")
         d.pages = [PdfPageInfo(page_index=0)]
@@ -814,7 +814,7 @@ class TestRegistryEdges:
     def test_get_unknown_raises_404(self):
         from fastapi import HTTPException
 
-        from vibeocr.services.pdf_backend_process import SessionRegistry
+        from vibeocr.backend.services.pdf_backend_process import SessionRegistry
 
         reg = SessionRegistry()
         with pytest.raises(HTTPException) as exc:
@@ -822,7 +822,7 @@ class TestRegistryEdges:
         assert exc.value.status_code == 404
 
     def test_count(self):
-        from vibeocr.services.pdf_backend_process import SessionRegistry
+        from vibeocr.backend.services.pdf_backend_process import SessionRegistry
 
         reg = SessionRegistry()
         assert reg.count() == 0
@@ -831,7 +831,10 @@ class TestRegistryEdges:
         """_fitz_op 对非 OPEN 状态抛 409（lines 285-286）。"""
         from fastapi import HTTPException
 
-        from vibeocr.services.pdf_backend_process import BackendSession, _fitz_op
+        from vibeocr.backend.services.pdf_backend_process import (
+            BackendSession,
+            _fitz_op,
+        )
 
         s = BackendSession(
             session_id="x",
@@ -851,13 +854,13 @@ class TestRegistryEdges:
 
 class TestSettingsFromDict:
     def test_none_returns_none(self):
-        from vibeocr.services.pdf_backend_process import _settings_from_dict
+        from vibeocr.backend.services.pdf_backend_process import _settings_from_dict
 
         assert _settings_from_dict(None) is None
 
     def test_dict_returns_settings(self):
-        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
-        from vibeocr.services.pdf_backend_process import _settings_from_dict
+        from vibeocr.backend.models.pdf_ocr_options import PdfGlobalSettings
+        from vibeocr.backend.services.pdf_backend_process import _settings_from_dict
 
         s = _settings_from_dict({"compress_on_save": False})
         assert isinstance(s, PdfGlobalSettings)
@@ -922,7 +925,7 @@ class TestRenderPreviewError:
 class TestRegistryRemoveCloseException:
     def test_remove_swallows_doc_close_exception(self):
         """remove() 中 doc.close 抛异常应被吞（lines 267-268）。"""
-        from vibeocr.services.pdf_backend_process import (
+        from vibeocr.backend.services.pdf_backend_process import (
             BackendSession,
             SessionRegistry,
         )
@@ -945,7 +948,7 @@ class TestRegistryRemoveCloseException:
 class TestBatchSaveEdgeCases:
     def test_batch_save_no_file_path_skips_save(self, app_client, tmp_path):
         """save=True 但 file_path=None → 跳过 save（branch 633->672）。"""
-        from vibeocr.services import pdf_backend_process as backend
+        from vibeocr.backend.services import pdf_backend_process as backend
 
         backend._REGISTRY = None
         client, _ = app_client
@@ -979,7 +982,7 @@ class TestBatchSaveEdgeCases:
 
     def test_batch_save_incremental_exception(self, app_client, tmp_path, monkeypatch):
         """save_incremental 抛异常 → saved=False + 走 compress 回退（lines 637-643）。"""
-        from vibeocr.services import pdf_backend_process as backend
+        from vibeocr.backend.services import pdf_backend_process as backend
 
         backend._REGISTRY = None
         client, _ = app_client
@@ -1014,7 +1017,7 @@ class TestBatchSaveEdgeCases:
 
     def test_batch_compress_fail_reopen_fail(self, app_client, tmp_path, monkeypatch):
         """compress 失败 + 重开 doc 也失败（lines 666-667）。"""
-        from vibeocr.services import pdf_backend_process as backend
+        from vibeocr.backend.services import pdf_backend_process as backend
 
         backend._REGISTRY = None
         client, _ = app_client
@@ -1101,7 +1104,7 @@ class TestDeleteLayersCancelAndPayloads:
 
     def test_delete_text_layers_no_text_payload(self, app_client, tmp_path):
         """无文字页（扫描件）payload=(0,0,False)（line 769-770）。"""
-        from vibeocr.services import pdf_backend_process as backend
+        from vibeocr.backend.services import pdf_backend_process as backend
 
         backend._REGISTRY = None
         client, _ = app_client
@@ -1120,8 +1123,8 @@ class TestDeleteLayersCancelAndPayloads:
 class TestSettingsFromDictNoFromDict:
     def test_settings_from_dict_via_delattr(self, monkeypatch):
         """真正删除 from_dict 让 hasattr 返回 False（lines 867-869）。"""
-        from vibeocr.models import pdf_ocr_options
-        from vibeocr.services.pdf_backend_process import _settings_from_dict
+        from vibeocr.backend.models import pdf_ocr_options
+        from vibeocr.backend.services.pdf_backend_process import _settings_from_dict
 
         cls = pdf_ocr_options.PdfGlobalSettings
         original_from_dict = cls.from_dict
@@ -1136,7 +1139,7 @@ class TestSettingsFromDictNoFromDict:
 class TestMainEntry:
     def test_find_free_port(self):
         """_find_free_port 返回有效端口（lines 866-869）。"""
-        from vibeocr.services.pdf_backend_process import _find_free_port
+        from vibeocr.backend.services.pdf_backend_process import _find_free_port
 
         port = _find_free_port()
         assert isinstance(port, int)
@@ -1144,7 +1147,7 @@ class TestMainEntry:
 
     def test_main_with_explicit_port(self, monkeypatch, capsys):
         """main() 用 --port 启动 uvicorn（lines 873-890）。"""
-        import vibeocr.services.pdf_backend_process as backend
+        import vibeocr.backend.services.pdf_backend_process as backend
 
         called = {}
 
@@ -1163,7 +1166,7 @@ class TestMainEntry:
 
     def test_main_with_auto_port(self, monkeypatch, capsys):
         """main() --port 0 → 自动选端口（lines 887-889）。"""
-        import vibeocr.services.pdf_backend_process as backend
+        import vibeocr.backend.services.pdf_backend_process as backend
 
         called = {}
 

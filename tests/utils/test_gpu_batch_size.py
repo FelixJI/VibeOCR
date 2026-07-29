@@ -4,7 +4,7 @@
 会跳过整个文件）。本文件只测纯函数，不需要 GPU/pynvml。
 """
 
-from vibeocr.utils.gpu_memory_monitor import (
+from vibeocr.backend.utils.gpu_memory_monitor import (
     GPU_FALLBACK_BATCH_SIZE,
     estimate_gpu_batch_size,
 )
@@ -50,7 +50,7 @@ def test_estimate_gpu_batch_size_zero_pixels_returns_1():
 
 def test_estimate_gpu_batch_size_zero_vram_returns_fallback():
     """free_mb<=0 时返回夹紧的 fallback（line 159-160）。"""
-    from vibeocr.utils.gpu_memory_monitor import (
+    from vibeocr.backend.utils.gpu_memory_monitor import (
         GPU_BATCH_CAP,
         GPU_FALLBACK_BATCH_SIZE,
         estimate_gpu_batch_size,

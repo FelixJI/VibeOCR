@@ -19,8 +19,8 @@ import pytest
 from tests.fakes.sync_supervisor_job_client import (
     FakeSyncSupervisorJobClient,
 )
-from vibeocr.managers.pdf_session_manager import PdfSessionManager
-from vibeocr.models.ocr_result import OCRResult, TextBlock
+from vibeocr.backend.models.ocr_result import OCRResult, TextBlock
+from vibeocr.classic.managers.pdf_session_manager import PdfSessionManager
 
 
 def _make_text_pdf(path, num_pages=2):
@@ -79,7 +79,7 @@ def _wait_until(qapp, condition, timeout=20.0):
 
 @pytest.fixture
 def manager(qapp):
-    from vibeocr.services.pdf_backend_client import PdfBackendClient
+    from vibeocr.backend.services.pdf_backend_client import PdfBackendClient
 
     pdf_client = PdfBackendClient()
     mgr = PdfSessionManager(parent=qapp, client=pdf_client)
@@ -251,7 +251,7 @@ def backend_client():
     直接用 client 而非 PdfSessionManager,以精确控制 load_stream 与
     render_thumbnail 的并发时机(绕过 manager 的 Qt 信号/后台线程封装)。
     """
-    from vibeocr.services.pdf_backend_client import PdfBackendClient
+    from vibeocr.backend.services.pdf_backend_client import PdfBackendClient
 
     client = PdfBackendClient()
     yield client
@@ -304,7 +304,7 @@ class TestThumbnailLoadConcurrency:
         import threading
         from concurrent.futures import ThreadPoolExecutor
 
-        from vibeocr.ipc.schemas import ProgressPhase
+        from vibeocr.backend.ipc.schemas import ProgressPhase
 
         open_resp = backend_client.open_session(str(sample_pdf_multi_page))
         sid = open_resp.session_id

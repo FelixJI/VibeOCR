@@ -15,12 +15,12 @@ from scripts.check_openapi_quality import (
 
 ROOT = Path(__file__).resolve().parents[3]
 FORMAL_OPENAPI = (
-    ROOT / "packages/vibeocr-contracts-py/src/vibeocr/protocol/v2/openapi.yaml"
+    ROOT / "packages/vibeocr-contracts-py/src/vibeocr/runtime_contracts/openapi.yaml"
 )
 RELEASE_BASELINE = (
     ROOT
-    / "packages/vibeocr-contracts-py/src/vibeocr/protocol/v2/baselines"
-    / "openapi-2.0.0-rc.1.yaml"
+    / "packages/vibeocr-contracts-py/src/vibeocr/runtime_contracts/baselines"
+    / "openapi-2.0.0.yaml"
 )
 
 

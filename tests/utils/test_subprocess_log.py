@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from vibeocr.utils.subprocess_log import SubprocessLogForwarder
+from vibeocr.backend.utils.subprocess_log import SubprocessLogForwarder
 
 # 参数化：覆盖项目里三个子进程通道的 logger 名 + source_label 组合。
 # 每个用例都应给出一致的行为，这是"统一日志通道"的核心契约。
@@ -45,7 +45,7 @@ class TestSubprocessLogForwarder:
             logger_name=logger_name, source_label=source_label
         )
         line = (
-            "2024-01-15 10:30:45 [INFO] vibeocr.workers.ocr_worker: OCR 服务初始化完成"
+            "2024-01-15 10:30:45 [INFO] vibeocr.classic.workers.ocr_worker: OCR 服务初始化完成"
         )
 
         with caplog.at_level("DEBUG", logger=logger_name):
@@ -71,7 +71,7 @@ class TestSubprocessLogForwarder:
             logger_name=logger_name, source_label=source_label
         )
         line = (
-            "2024-01-15 10:30:45,123 [INFO] vibeocr.services.pipeline_cache_manager: "
+            "2024-01-15 10:30:45,123 [INFO] vibeocr.backend.services.pipeline_cache_manager: "
             "PipelineTTLWatcher 启动 (ttls={'OCR': 0}, max_heavy=1, tick=30s)"
         )
 
@@ -281,7 +281,7 @@ class TestSplitMixedLines:
 
 def test_raw_log_auto_flush_at_threshold(caplog):
     """裸 print 累积达阈值时自动 flush（line 110-116），无需显式 flush。"""
-    from vibeocr.utils.subprocess_log import SubprocessLogForwarder
+    from vibeocr.backend.utils.subprocess_log import SubprocessLogForwarder
 
     forwarder = SubprocessLogForwarder(
         logger_name="test_auto_flush",
@@ -301,7 +301,7 @@ def test_raw_log_auto_flush_at_threshold(caplog):
 
 def test_split_lines_returns_multiple_for_multiple_datetime_patterns():
     """含多个日期时间模式的文本被分割成多行（line 154-159）。"""
-    from vibeocr.utils.subprocess_log import SubprocessLogForwarder
+    from vibeocr.backend.utils.subprocess_log import SubprocessLogForwarder
 
     text = (
         "2024-01-01 12:00:00 first line\n"

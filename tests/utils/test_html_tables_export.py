@@ -1,6 +1,6 @@
 """Tests for table-extraction helpers used by export + copy.
 
-These pure functions live in ``vibeocr.utils.html_tables`` so they can be
+These pure functions live in ``vibeocr.backend.utils.html_tables`` so they can be
 shared between the backend export service and the PySide6 clipboard path.
 They guarantee that tables survive Excel export and Excel/Word paste even
 when the structured ``content_list`` is empty but the table HTML only lives
@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from vibeocr.utils.html_tables import (
+from vibeocr.backend.utils.html_tables import (
     html_tables_to_cell_grid,
     tables_from_result,
 )
@@ -183,7 +183,7 @@ class TestTablesFromResult:
         assert "<table>" in tables[0]
 
     def test_canonical_content_list_prevents_stale_projection_rediscovery(self):
-        from vibeocr.contracts.tables import TableCellV1, TableModelV1
+        from vibeocr.runtime_contracts.contracts.tables import TableCellV1, TableModelV1
 
         table = TableModelV1(
             table_id="canonical",

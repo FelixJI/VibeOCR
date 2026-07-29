@@ -18,7 +18,9 @@ from typing import Any
 import httpx
 import pytest
 
-from vibeocr.protocol.v2 import (
+from vibeocr.runtime_client.client import SupervisorClient
+from vibeocr.runtime_client.errors import InferenceClientError
+from vibeocr.runtime_contracts import (
     CancelMode,
     ErrorCode,
     JobCommand,
@@ -31,13 +33,11 @@ from vibeocr.protocol.v2 import (
     SubmitItem,
     SubmitRequest,
 )
-from vibeocr.supervisor.client import SupervisorClient
-from vibeocr.supervisor.errors import InferenceClientError
 
 
 def _golden(name: str) -> dict[str, Any]:
     raw = (
-        resources.files("vibeocr.protocol.v2.golden")
+        resources.files("vibeocr.runtime_contracts.golden")
         .joinpath("golden.json")
         .read_text(encoding="utf-8")
     )
@@ -487,7 +487,7 @@ async def test_log_http_response_elapsed_exception_branch(monkeypatch) -> None:
     def capture(**kwargs: Any) -> None:
         captured.update(kwargs)
 
-    monkeypatch.setattr("vibeocr.supervisor.client.log_http_response", capture)
+    monkeypatch.setattr("vibeocr.runtime_client.client.log_http_response", capture)
 
     request = httpx.Request("GET", "http://127.0.0.1/v2/health")
 

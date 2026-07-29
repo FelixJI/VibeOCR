@@ -3,7 +3,7 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from vibeocr.views.main_window import MainWindow
+from vibeocr.classic.views.main_window import MainWindow
 
 
 class _ReadyWindow:
@@ -26,11 +26,11 @@ def test_supervisor_ready_is_not_reported_as_startup_failure() -> None:
 
     with (
         patch(
-            "vibeocr.pyside.supervisor_adapter.get_supervisor_adapter",
+            "vibeocr.classic.pyside.supervisor_adapter.get_supervisor_adapter",
             return_value=adapter,
         ),
-        patch("vibeocr.views.main_window.QMessageBox.warning") as warning,
-        patch("vibeocr.startup_metrics.record_startup"),
+        patch("vibeocr.classic.views.main_window.QMessageBox.warning") as warning,
+        patch("vibeocr.classic.startup_metrics.record_startup"),
     ):
         window._on_supervisor_ready(True)
 
@@ -68,7 +68,7 @@ def test_subprocess_progress_names_process_and_handshake_stage() -> None:
 def test_supervisor_failure_does_not_blame_model_download() -> None:
     window = _ReadyWindow()
 
-    with patch("vibeocr.views.main_window.QMessageBox.warning") as warning:
+    with patch("vibeocr.classic.views.main_window.QMessageBox.warning") as warning:
         window._on_supervisor_ready(False)
 
     window._statusbar.set_service.assert_called_once_with("Supervisor 启动失败")
@@ -87,9 +87,9 @@ def test_t6_supervisor_failure_exits_instead_of_opening_modal(
     monkeypatch.setenv("VIBEOCR_SELF_TEST_SMOKE", "t6")
 
     with (
-        patch("vibeocr.views.main_window.QMessageBox.warning") as warning,
-        patch("vibeocr.startup_metrics.flush_startup") as flush,
-        patch("vibeocr.views.main_window.os._exit") as exit_process,
+        patch("vibeocr.classic.views.main_window.QMessageBox.warning") as warning,
+        patch("vibeocr.classic.startup_metrics.flush_startup") as flush,
+        patch("vibeocr.classic.views.main_window.os._exit") as exit_process,
     ):
         window._on_supervisor_ready(False)
 

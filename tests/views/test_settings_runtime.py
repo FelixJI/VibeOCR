@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 
 def test_settings_runtime_persists_then_applies(monkeypatch) -> None:
-    from vibeocr.pyside import settings_runtime
+    from vibeocr.classic.pyside import settings_runtime
 
     config = MagicMock()
     config.get_log_level.return_value = "WARNING"
@@ -20,7 +20,7 @@ def test_settings_runtime_persists_then_applies(monkeypatch) -> None:
 
 
 def test_settings_runtime_does_not_apply_when_persistence_fails(monkeypatch) -> None:
-    from vibeocr.pyside import settings_runtime
+    from vibeocr.classic.pyside import settings_runtime
 
     config = MagicMock()
     config.set_log_level.return_value = False

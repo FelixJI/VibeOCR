@@ -7,8 +7,8 @@ import threading
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QColor, QImage
 
-import vibeocr.widgets.preview_widget as preview_module
-from vibeocr.widgets.preview_widget import PreviewWidget
+import vibeocr.classic.widgets.preview_widget as preview_module
+from vibeocr.classic.widgets.preview_widget import PreviewWidget
 
 
 def _image(color: str) -> QImage:

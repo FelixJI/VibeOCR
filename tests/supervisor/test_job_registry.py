@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from vibeocr.protocol.v2 import (
+from vibeocr.backend.supervisor.jobs.registry import JobNotFoundError, JobRegistry
+from vibeocr.runtime_contracts import (
     CancelMode,
     ContractError,
     ItemState,
@@ -14,7 +15,6 @@ from vibeocr.protocol.v2 import (
     JobState,
     JobStateTransitionError,
 )
-from vibeocr.supervisor.jobs.registry import JobNotFoundError, JobRegistry
 
 
 def _make_registry() -> JobRegistry:

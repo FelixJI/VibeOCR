@@ -1,4 +1,4 @@
-"""Bind the exact six-wheel Python release set into a frontend ZIP."""
+"""Bind the exact immutable Python runtime wheels into a frontend ZIP."""
 
 from __future__ import annotations
 
@@ -12,28 +12,21 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-EXPECTED_WHEELS = {
-    "vibeocr",
+RUNTIME_WHEELS = {
     "vibeocr-backend",
-    "vibeocr-client-py",
-    "vibeocr-contracts-py",
-    "vibeocr-pyside",
+    "vibeocr-runtime-contracts",
     "vibeocr-runtime-client",
 }
-APPLICATION_WHEELS = {
-    "vibeocr",
-    "vibeocr-backend",
-    "vibeocr-client-py",
-    "vibeocr-pyside",
-}
 PROTOCOL_WHEELS = {
-    "vibeocr-contracts-py",
+    "vibeocr-runtime-contracts",
     "vibeocr-runtime-client",
 }
 REQUIRED_WHEEL_MEMBERS = {
-    "vibeocr-backend": "vibeocr/supervisor/main.py",
-    "vibeocr-contracts-py": "vibeocr/protocol/v2/golden/golden.json",
-    "vibeocr-runtime-client": "vibeocr/protocol/v2/client.py",
+    "vibeocr-backend": "vibeocr/backend/supervisor/main.py",
+    "vibeocr-runtime-contracts": (
+        "vibeocr/runtime_contracts/golden/golden.json"
+    ),
+    "vibeocr-runtime-client": "vibeocr/runtime_client/client.py",
 }
 FORBIDDEN_WHEEL_PREFIXES = (
     "vibeocr/worker_host/",
@@ -91,23 +84,26 @@ def main() -> int:
 
     wheels: dict[str, Path] = {}
     versions: dict[str, str] = {}
+    expected_wheels = set(RUNTIME_WHEELS)
+    if args.frontend == "pyside":
+        expected_wheels.add("vibeocr-classic")
     for path in sorted(wheel_dir.glob("*.whl")):
         distribution, version = _distribution_metadata(path)
-        if distribution not in EXPECTED_WHEELS:
+        if distribution not in expected_wheels:
             continue
         if distribution in wheels:
             raise RuntimeError(
                 f"duplicate wheel for {distribution}: "
                 f"{wheels[distribution].name}, {path.name}"
             )
-        if distribution in APPLICATION_WHEELS and version != args.version:
+        if distribution == "vibeocr-classic" and version != args.version:
             raise RuntimeError(
                 f"wheel version mismatch for {distribution}: "
                 f"expected {args.version}, found {version} in {path.name}"
             )
         wheels[distribution] = path
         versions[distribution] = version
-    missing = EXPECTED_WHEELS - set(wheels)
+    missing = expected_wheels - set(wheels)
     if missing:
         raise RuntimeError(f"release wheel set incomplete: {sorted(missing)}")
     protocol_versions = {versions[name] for name in PROTOCOL_WHEELS}
@@ -124,7 +120,7 @@ def main() -> int:
             "version": versions[name],
             "sha256": hashlib.sha256(wheels[name].read_bytes()).hexdigest(),
         }
-        for name in sorted(EXPECTED_WHEELS)
+        for name in sorted(expected_wheels)
     ]
     commit = subprocess.check_output(
         ["git", "rev-parse", "HEAD"], text=True, encoding="utf-8"
