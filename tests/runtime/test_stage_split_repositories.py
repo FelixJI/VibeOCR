@@ -88,6 +88,40 @@ def test_next_staging_uses_released_protocol_packages(tmp_path: Path) -> None:
     assert '<PackageReference Include="VibeOCR.Runtime.Contracts" />' in app
     assert '<PackageReference Include="VibeOCR.Runtime.Client" />' in platform
     assert 'Version="[2.0.0]"' in versions
-    assert "Repository-specific release builder has not been generated" not in (
-        root / "scripts/build-release.ps1"
-    ).read_text(encoding="utf-8")
+    build_script = (root / "scripts/build-release.ps1").read_text(encoding="utf-8")
+    assert "Repository-specific release builder has not been generated" not in build_script
+    assert "scripts/updater_main.py" in build_script
+    assert "updater.exe" in build_script
+    assert "dotnet publish" in build_script
+    assert "--locked-mode" in build_script
+    assert "verify_winui_artifact.ps1" in build_script
+    workflow = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    for capability in (
+        "export.document.v1",
+        "ocr.recognition.v2",
+        "pdf.edit.v2",
+        "qrcode.v2",
+        "runtime.settings.v2",
+    ):
+        assert capability in workflow
+
+
+def test_classic_staging_excludes_local_venv_and_builds_verified_updater(
+    tmp_path: Path,
+) -> None:
+    root = stage_repository(
+        "classic",
+        tmp_path / "vibeocr-classic",
+        cutover_commit="d" * 40,
+    )
+    assert not (root / "apps/vibeocr-pyside/.venv").exists()
+    assert (root / "tests/fakes").is_dir()
+    assert (root / "tests/conftest.py").is_file()
+    assert (root / "tests/qt_responsiveness.py").is_file()
+    build_script = (root / "scripts/build-release.ps1").read_text(encoding="utf-8")
+    assert "scripts/updater_main.py" in build_script
+    assert "updater.exe" in build_script
+    assert "verify_pyside_artifact.py" in build_script
+    ci = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    assert "python -m pytest" in ci
+    assert "./scripts/build-release.ps1" in ci

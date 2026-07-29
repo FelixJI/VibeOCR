@@ -3,10 +3,9 @@
 
 由 VibeOCR 主程序在更新时启动，负责：
 1. 验证下载的 zip 完整性
-2. 替换应用文件（保留 python/、data/、config/）
-3. 检测并同步 AI 依赖版本变化
-4. 清理临时文件
-5. 重新启动 VibeOCR
+2. 替换应用文件（保留用户数据与独立 Runtime 状态）
+3. 清理临时文件
+4. 重新启动调用产品明确指定的正式入口
 
 不依赖 VibeOCR 的任何模块，保持独立可执行。
 
@@ -51,31 +50,45 @@ def _notify_failure(message: str) -> None:
         logger.error(f"弹出失败提示框异常: {e}")
 
 
-def parse_args() -> tuple[Path, Path]:
+def parse_args() -> tuple[Path, Path, str, tuple[str, ...], Path | None]:
     parser = argparse.ArgumentParser(description="VibeOCR 更新助手")
     parser.add_argument("--update", required=True, help="更新包 zip 路径")
     parser.add_argument("--app-dir", required=True, help="应用目录路径")
+    parser.add_argument(
+        "--entry",
+        required=True,
+        help="替换完成后启动的产品专属入口文件名",
+    )
+    parser.add_argument(
+        "--entry-arg",
+        action="append",
+        default=[],
+        help="原样传给产品入口的参数；可重复",
+    )
+    parser.add_argument("--health-file", help="可选的产品启动健康信号路径")
     args = parser.parse_args()
-    return Path(args.update), Path(args.app_dir)
+    if Path(args.entry).name != args.entry:
+        parser.error("--entry 必须是单个文件名")
+    return (
+        Path(args.update),
+        Path(args.app_dir),
+        args.entry,
+        tuple(args.entry_arg),
+        Path(args.health_file) if args.health_file else None,
+    )
 
 
 def main() -> int:
-    zip_path, app_dir = parse_args()
+    zip_path, app_dir, launch_entry, launch_args, health_file = parse_args()
     # updater 专用日志文件（与旧版 self_update.log 历史区分，现仅 updater 一条路径）。
     setup_logging(app_dir, "updater.log")
     logger.info("VibeOCR 更新助手启动（updater.exe）")
 
     # 自动判断新旧路径：updater 自身是否在 app_dir。
     # 新路径（暂存目录运行）无需避让 updater.exe；旧路径（过渡期，自身在 app_dir）需避让。
-    # 同时避让旧 UI 与新的 WinUI/Bootstrapper 入口；不存在的文件会被安全忽略。
-    # 这样既能完成旧版本到 WinUI 的一次性迁移，也能支持后续 WinUI 自更新。
+    # 产品入口由调用方显式传入；更新器不包含跨产品回退。
     detected = _detect_self_exe_names(app_dir)
-    self_exe_names = (
-        *detected,
-        "VibeOCR.exe",
-        "VibeOCR.WinUI.exe",
-        "VibeOCR.Bootstrapper.exe",
-    )
+    self_exe_names = (*detected, launch_entry)
     logger.info(f"路径判定: detected={detected}, self_exe_names={self_exe_names}")
 
     # 就绪信号用默认的 updater.ready，与主程序端 _launch_updater 的轮询文件名对应。
@@ -85,6 +98,9 @@ def main() -> int:
         app_dir,
         self_exe_names=self_exe_names,
         ready_filename="updater.ready",
+        launch_entry=launch_entry,
+        launch_args=launch_args,
+        launch_health_file=health_file,
         on_failure=_notify_failure,
     )
 

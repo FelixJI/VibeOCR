@@ -133,6 +133,7 @@ def _make_app_dir(app_dir: Path) -> None:
     (app_dir / "config" / "settings.json").write_text("{}", encoding="utf-8")
     (app_dir / "data").mkdir()
     (app_dir / "python").mkdir()
+    (app_dir / "runtimes").mkdir()
 
 
 def _make_new_files(new_dir: Path) -> None:
@@ -158,7 +159,8 @@ class TestReplaceAppFiles:
             app_dir / "config" / "settings.json"
         ).read_text() == "{}"  # 保留目录未动
         assert (app_dir / "data").exists()
-        assert (app_dir / "python").exists()
+        assert not (app_dir / "python").exists()
+        assert (app_dir / "runtimes").exists()
 
     def test_replace_failure_restores_app(self, updater, tmp_path, monkeypatch):
         """替换过程中出错时，app_dir 必须回滚到更新前状态。
@@ -898,7 +900,12 @@ class TestRunReplacementExceptionGuard:
         app_dir = tmp_path / "app"
         app_dir.mkdir()
 
-        updater.run_replacement(zp, app_dir, ready_filename="updater.ready")
+        updater.run_replacement(
+            zp,
+            app_dir,
+            ready_filename="updater.ready",
+            launch_entry="VibeOCR.exe",
+        )
 
         ready = app_dir / "data" / "cache" / "update" / "updater.ready"
         assert not ready.exists(), "无效更新包不能触发主程序退出"
@@ -923,7 +930,11 @@ class TestRunReplacementExceptionGuard:
             raise RuntimeError("stop after handshake")
 
         monkeypatch.setattr(updater, "extract_zip", stop_after_ready)
-        assert updater.run_replacement(zp, app_dir) == 1
+        assert updater.run_replacement(
+            zp,
+            app_dir,
+            launch_entry="VibeOCR.exe",
+        ) == 1
         assert ready_seen == [True]
 
     def test_uncaught_exception_returns_1_and_logs(
@@ -947,7 +958,11 @@ class TestRunReplacementExceptionGuard:
         monkeypatch.setattr(updater, "verify_sha256", _boom)
 
         updater.setup_logging(app_dir, "updater.log")
-        assert updater.run_replacement(zp, app_dir) == 1
+        assert updater.run_replacement(
+            zp,
+            app_dir,
+            launch_entry="VibeOCR.exe",
+        ) == 1
 
         log_file = app_dir / "data" / "logs" / "updater.log"
         assert log_file.exists()

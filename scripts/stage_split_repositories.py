@@ -93,12 +93,15 @@ SPECS = {
             "apps/vibeocr-pyside",
             "resources",
             "tests/managers",
+            "tests/conftest.py",
+            "tests/fakes",
             "tests/pyside",
             "tests/ui",
             "tests/views",
             "tests/widgets",
             "tests/workers",
             "tests/utils",
+            "tests/qt_responsiveness.py",
             "tests/release_layout/test_pyside_frozen_startup.py",
             "tests/release_layout/test_pyside_stdio.py",
             "scripts/compile_ui.py",
@@ -130,6 +133,8 @@ SPECS = {
             "scripts/build_winui_release.ps1",
             "scripts/verify_winui_artifact.ps1",
             "scripts/benchmark_winui_startup.ps1",
+            "scripts/update_replacer.py",
+            "scripts/updater_main.py",
             "scripts/package_product_release.py",
             "tests/runtime/test_bind_component_releases.py",
             "tests/runtime/test_package_product_release.py",
@@ -161,6 +166,7 @@ def _copy(relative: str, destination: Path) -> None:
             target,
             ignore=shutil.ignore_patterns(
                 "__pycache__",
+                ".venv",
                 ".pytest_cache",
                 "bin",
                 "obj",
@@ -249,7 +255,9 @@ def _write_common(
             "[tool.pytest.ini_options]\n"
             f"{pythonpath_line}"
             'testpaths = ["tests"]\n'
-            'addopts = "-m \'not slow\'"\n\n'
+            'addopts = "-m \'not slow\'"\n'
+            'asyncio_mode = "auto"\n'
+            'markers = ["slow: long-running integration or performance test"]\n\n'
             "[tool.ruff]\n"
             'target-version = "py313"\n'
             'line-length = 88\n\n'
@@ -412,10 +420,10 @@ def _ci_workflow(name: str) -> str:
             "          gh release download v0.7.0 --repo FelixJI/vibeocr-backend "
             "--pattern \"vibeocr_backend-*.whl\" --dir .feed\n"
             "          python -m pip install --upgrade pip\n"
-            "          python -m pip install pytest pytest-qt "
+            "          python -m pip install pytest pytest-asyncio pytest-qt "
             "--find-links .feed ./apps/vibeocr-pyside\n"
-            "          python -m pytest tests/managers tests/pyside "
-            "tests/views tests/widgets"
+            "          python -m pytest\n"
+            "          ./scripts/build-release.ps1"
         )
     else:
         commands = (
@@ -451,7 +459,8 @@ def _ci_workflow(name: str) -> str:
             "          dotnet test tests/dotnet/VibeOCR.Platform.Tests/"
             "VibeOCR.Platform.Tests.csproj -c Release --no-restore\n"
             "          dotnet test tests/dotnet/VibeOCR.App.Tests/"
-            "VibeOCR.App.Tests.csproj -c Release --no-restore"
+            "VibeOCR.App.Tests.csproj -c Release --no-restore\n"
+            "          ./scripts/build-release.ps1"
         )
     return (
         "name: CI\n\n"
@@ -637,11 +646,11 @@ python (Join-Path $root 'scripts/build_runtime_installer.py') `
   --backend-version 0.7.0
 if ($LASTEXITCODE -ne 0) { throw 'Runtime installer build failed' }
 $backendWheel = Get-ChildItem -LiteralPath $build -Filter 'vibeocr_backend-0.7.0-*.whl' |
-  Select-Object -Single
+  Select-Object -First 1
 $protocolWheel = Get-ChildItem -LiteralPath $protocol -Filter 'vibeocr_runtime_contracts-2.0.0-*.whl' |
-  Select-Object -Single
+  Select-Object -First 1
 $installerArchive = Get-ChildItem -LiteralPath $build -Filter 'vibeocr-runtime-installer-0.7.0.zip' |
-  Select-Object -Single
+  Select-Object -First 1
 python (Join-Path $root 'scripts/build_runtime_manifest.py') `
   --backend-wheel $backendWheel.FullName `
   --protocol-wheel $protocolWheel.FullName `
@@ -700,15 +709,17 @@ if (-not (Test-Path -LiteralPath $lock -PathType Leaf)) {
 }
 python -m pip install build==1.5.0 hatchling==1.27.0 pyinstaller==6.21.0
 python -m pip install `
-  (Get-ChildItem $protocol -Filter 'vibeocr_runtime_contracts-2.0.0-*.whl' | Select-Object -Single).FullName `
-  (Get-ChildItem $protocol -Filter 'vibeocr_runtime_client-2.0.0-*.whl' | Select-Object -Single).FullName `
-  (Get-ChildItem $backend -Filter 'vibeocr_backend-0.7.0-*.whl' | Select-Object -Single).FullName
+  (Get-ChildItem $protocol -Filter 'vibeocr_runtime_contracts-2.0.0-*.whl' | Select-Object -First 1).FullName `
+  (Get-ChildItem $protocol -Filter 'vibeocr_runtime_client-2.0.0-*.whl' | Select-Object -First 1).FullName `
+  (Get-ChildItem $backend -Filter 'vibeocr_backend-0.7.0-*.whl' | Select-Object -First 1).FullName
 if ($LASTEXITCODE -ne 0) { throw 'verified upstream wheel install failed' }
 python -m build --wheel --no-isolation (Join-Path $root 'apps/vibeocr-pyside') --outdir $build
 if ($LASTEXITCODE -ne 0) { throw 'Classic wheel build failed' }
 python -m pip install --force-reinstall --no-deps `
-  (Get-ChildItem $build -Filter 'vibeocr_classic-0.7.0-*.whl' | Select-Object -Single).FullName
+  (Get-ChildItem $build -Filter 'vibeocr_classic-0.7.0-*.whl' | Select-Object -First 1).FullName
 if ($LASTEXITCODE -ne 0) { throw 'Classic wheel install failed' }
+python -m pip install pyside6==6.11.1 qasync==0.28.0 numpy==2.5.1 pymupdf==1.28.0
+if ($LASTEXITCODE -ne 0) { throw 'Classic runtime dependency install failed' }
 $dist = Join-Path $build 'dist'
 python -m PyInstaller --noconfirm --clean --onedir --windowed `
   --name VibeOCR --distpath $dist --workpath (Join-Path $build 'pyinstaller') `
@@ -717,10 +728,20 @@ python -m PyInstaller --noconfirm --clean --onedir --windowed `
   --collect-submodules vibeocr.runtime_client `
   --collect-submodules vibeocr.runtime_contracts `
   --collect-submodules vibeocr.backend `
+  --collect-data vibeocr.runtime_contracts `
+  --collect-data vibeocr.backend `
   --add-data "$root/resources;resources" `
   (Join-Path $root 'scripts/classic_release_entry.py')
 if ($LASTEXITCODE -ne 0) { throw 'Classic PyInstaller build failed' }
 $product = Join-Path $dist 'VibeOCR'
+python -m PyInstaller --noconfirm --clean --onefile --windowed `
+  --name updater --distpath (Join-Path $build 'updater-dist') `
+  --workpath (Join-Path $build 'updater-work') `
+  --specpath (Join-Path $build 'updater-spec') `
+  (Join-Path $root 'scripts/updater_main.py')
+if ($LASTEXITCODE -ne 0) { throw 'Classic updater build failed' }
+Copy-Item -LiteralPath (Join-Path $build 'updater-dist/updater.exe') `
+  -Destination $product
 Copy-Item -LiteralPath (Join-Path $root 'LICENSE') -Destination $product
 Copy-Item -LiteralPath (Join-Path $root 'CHANGELOG.md') -Destination $product
 $zip = Join-Path $artifacts 'VibeOCR-Classic-v0.7.0-win64.zip'
@@ -730,6 +751,8 @@ python (Join-Path $root 'scripts/package_product_release.py') `
   --component-lock $lock --protocol-release-dir $protocol `
   --backend-release-dir $backend --output $zip
 if ($LASTEXITCODE -ne 0) { throw 'Classic product binding failed' }
+python (Join-Path $root 'scripts/verify_pyside_artifact.py') $zip
+if ($LASTEXITCODE -ne 0) { throw 'Classic artifact verification failed' }
 Copy-Item -LiteralPath $lock -Destination $artifacts
 python (Join-Path $root 'scripts/build_release_checksums.py') $artifacts `
   --sidecar-for $zip
@@ -777,6 +800,8 @@ $lock = Join-Path $root 'component-lock.json'
 if (-not (Test-Path -LiteralPath $lock -PathType Leaf)) {
     throw 'component-lock.json is required'
 }
+python -m pip install pyinstaller==6.21.0
+if ($LASTEXITCODE -ne 0) { throw 'updater build dependency install failed' }
 dotnet restore (Join-Path $root 'src/dotnet/VibeOCR.App/VibeOCR.App.csproj') --locked-mode
 if ($LASTEXITCODE -ne 0) { throw 'Next restore failed' }
 dotnet restore (Join-Path $root 'src/dotnet/VibeOCR.Bootstrapper/VibeOCR.Bootstrapper.csproj') --locked-mode
@@ -788,6 +813,14 @@ if ($LASTEXITCODE -ne 0) { throw 'Next publish failed' }
 dotnet publish (Join-Path $root 'src/dotnet/VibeOCR.Bootstrapper/VibeOCR.Bootstrapper.csproj') `
   -c Release --self-contained false --no-restore -o $product
 if ($LASTEXITCODE -ne 0) { throw 'Next bootstrapper publish failed' }
+python -m PyInstaller --noconfirm --clean --onefile --windowed `
+  --name updater --distpath (Join-Path $build 'updater-dist') `
+  --workpath (Join-Path $build 'updater-work') `
+  --specpath (Join-Path $build 'updater-spec') `
+  (Join-Path $root 'scripts/updater_main.py')
+if ($LASTEXITCODE -ne 0) { throw 'Next updater build failed' }
+Copy-Item -LiteralPath (Join-Path $build 'updater-dist/updater.exe') `
+  -Destination $product
 Copy-Item -LiteralPath (Join-Path $root 'LICENSE') -Destination $product
 Copy-Item -LiteralPath (Join-Path $root 'CHANGELOG.md') -Destination $product
 $zip = Join-Path $artifacts 'VibeOCR-Next-v0.1.0-preview.1-win64.zip'
@@ -798,6 +831,8 @@ python (Join-Path $root 'scripts/package_product_release.py') `
   --component-lock $lock --protocol-release-dir $protocol `
   --backend-release-dir $backend --output $zip
 if ($LASTEXITCODE -ne 0) { throw 'Next product binding failed' }
+& (Join-Path $root 'scripts/verify_winui_artifact.ps1') -Artifact $zip
+if ($LASTEXITCODE -ne 0) { throw 'Next artifact verification failed' }
 Copy-Item -LiteralPath $lock -Destination $artifacts
 python (Join-Path $root 'scripts/build_release_checksums.py') $artifacts `
   --sidecar-for $zip

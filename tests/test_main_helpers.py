@@ -145,6 +145,33 @@ class TestCheckProductionDependencies:
         assert "win-x64-cpu" in captured.out
         assert "not-installed" in captured.out
 
+    def test_frozen_t6_uses_only_existing_bound_smoke_python(
+        self, monkeypatch, tmp_path
+    ):
+        smoke_python = tmp_path / "python.exe"
+        smoke_python.write_bytes(b"MZ")
+        client = MagicMock()
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        monkeypatch.setenv("VIBEOCR_SELF_TEST_SMOKE", "t6")
+        monkeypatch.setenv("VIBEOCR_SELF_TEST_PYTHON", str(smoke_python))
+        monkeypatch.setattr("vibeocr.classic.main.RuntimeInstallerClient", client)
+
+        assert check_production_dependencies() is True
+        client.assert_not_called()
+
+    def test_source_t6_cannot_bypass_installer(self, monkeypatch, tmp_path):
+        smoke_python = tmp_path / "python.exe"
+        smoke_python.write_bytes(b"MZ")
+        client = MagicMock()
+        client.return_value.inspect.return_value = MagicMock(ready=False)
+        monkeypatch.delattr(sys, "frozen", raising=False)
+        monkeypatch.setenv("VIBEOCR_SELF_TEST_SMOKE", "t6")
+        monkeypatch.setenv("VIBEOCR_SELF_TEST_PYTHON", str(smoke_python))
+        monkeypatch.setattr("vibeocr.classic.main.RuntimeInstallerClient", client)
+
+        assert check_production_dependencies() is False
+        client.assert_called_once()
+
 
 class TestCleanupLeftoverOldExes:
     """_cleanup_leftover_old_exes：清理 .old 残留（异常绝不阻断启动）。"""

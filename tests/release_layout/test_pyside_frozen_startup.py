@@ -71,6 +71,14 @@ def test_frozen_startup_smoke_requires_t6_in_isolated_environment(
         return SimpleNamespace(returncode=0, stderr="")
 
     monkeypatch.setattr(verifier.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        verifier,
+        "_prepare_smoke_python",
+        lambda root: (
+            Path(sys.executable),
+            root / ".smoke-runtime/site-packages",
+        ),
+    )
 
     verifier._verify_frozen_startup(tmp_path)
 
@@ -80,7 +88,9 @@ def test_frozen_startup_smoke_requires_t6_in_isolated_environment(
     assert captured["env"]["PYTHONIOENCODING"] == "utf-8"
     assert captured["env"]["PYTHONUTF8"] == "1"
     assert captured["env"]["VIBEOCR_SELF_TEST_PYTHON"] == sys.executable
-    assert "PYTHONPATH" not in captured["env"]
+    smoke_pythonpath = Path(captured["env"]["PYTHONPATH"])
+    assert ".smoke-runtime" in smoke_pythonpath.parts
+    assert smoke_pythonpath.parts[-1] == "site-packages"
     assert "PYTHONHOME" not in captured["env"]
     assert "VIRTUAL_ENV" not in captured["env"]
     assert "VIBEOCR_REPOSITORY_ROOT" not in captured["env"]
@@ -107,6 +117,11 @@ def test_frozen_startup_smoke_rejects_trace_that_stops_at_t3(
         return SimpleNamespace(returncode=0, stderr="")
 
     monkeypatch.setattr(verifier.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        verifier,
+        "_prepare_smoke_python",
+        lambda root: (Path(sys.executable), root / ".smoke-runtime/site-packages"),
+    )
 
     with pytest.raises(RuntimeError, match="did not reach T6"):
         verifier._verify_frozen_startup(tmp_path)
@@ -139,6 +154,11 @@ def test_frozen_startup_smoke_rejects_supervisor_loaded_outside_artifact(
         return SimpleNamespace(returncode=0, stderr="")
 
     monkeypatch.setattr(verifier.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        verifier,
+        "_prepare_smoke_python",
+        lambda root: (Path(sys.executable), root / ".smoke-runtime/site-packages"),
+    )
 
     with pytest.raises(RuntimeError, match="outside extracted artifact"):
         verifier._verify_frozen_startup(tmp_path)
@@ -153,6 +173,11 @@ def test_frozen_startup_smoke_rejects_missing_trace(
         verifier.subprocess,
         "run",
         lambda *args, **kwargs: SimpleNamespace(returncode=0, stderr=""),
+    )
+    monkeypatch.setattr(
+        verifier,
+        "_prepare_smoke_python",
+        lambda root: (Path(sys.executable), root / ".smoke-runtime/site-packages"),
     )
 
     with pytest.raises(RuntimeError, match="produced no trace"):

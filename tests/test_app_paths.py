@@ -45,7 +45,7 @@ class TestResolveAppPaths:
         paths = resolve_app_paths(install, profile="production")
         assert paths.install_root == install.resolve()
         assert paths.data_root == (install / "data").resolve()
-        assert paths.runtime_root == (install / "python").resolve()
+        assert paths.runtime_root == (install / "runtimes").resolve()
         assert paths.model_cache_root == (install / "models").resolve()
         assert paths.output_root == (install / "output").resolve()
         assert paths.config_file == (install / "config" / "app_settings.json").resolve()
@@ -56,7 +56,7 @@ class TestResolveAppPaths:
         paths = resolve_app_paths(install, profile="winui-dev")
         dev = install / "data" / "profiles" / "winui-dev"
         assert paths.data_root == dev.resolve()
-        assert paths.runtime_root == (dev / "python").resolve()
+        assert paths.runtime_root == (dev / "runtimes").resolve()
         assert paths.model_cache_root == (dev / "models").resolve()
         assert paths.output_root == (dev / "output").resolve()
         # config_file 也在旁路 profile 下

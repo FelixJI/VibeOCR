@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,7 @@ def _bound_client(tmp_path: Path, *, executable_name: str = "renamed.exe"):
     manifest.write_text(
         json.dumps(
             {
+                "backend_version": "0.7.0",
                 "installer": {
                     "executable_sha256": hashlib.sha256(b"installer").hexdigest()
                 }
@@ -31,6 +33,7 @@ def _bound_client(tmp_path: Path, *, executable_name: str = "renamed.exe"):
         json.dumps(
             {
                 "backend": {
+                    "profile": "win-x64-cpu",
                     "runtime_manifest_sha256": hashlib.sha256(
                         manifest.read_bytes()
                     ).hexdigest()
@@ -75,3 +78,24 @@ def test_explicit_layout_environment_is_forwarded(
     )
     arguments = client._arguments("inspect")
     assert arguments[arguments.index("--layout-manifest") + 1] == str(marker.resolve())
+
+
+def test_frozen_t6_inspect_does_not_spawn_installer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _bound_client(tmp_path)
+    smoke_python = tmp_path / "python.exe"
+    smoke_python.write_bytes(b"MZ")
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setenv("VIBEOCR_SELF_TEST_SMOKE", "t6")
+    monkeypatch.setenv("VIBEOCR_SELF_TEST_PYTHON", str(smoke_python))
+    monkeypatch.setattr(
+        "vibeocr.classic.runtime_installation.subprocess.Popen",
+        lambda *args, **kwargs: pytest.fail("T6 inspect must not spawn installer"),
+    )
+
+    inspection = client.inspect()
+
+    assert inspection.ready
+    assert inspection.profile == "win-x64-cpu"

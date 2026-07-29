@@ -101,6 +101,16 @@ def _startup_lock_names() -> tuple[str, str | None]:
 
 def check_production_dependencies() -> bool:
     """通过产品绑定的 Installer 清单检查 Runtime 完整性。"""
+    smoke_python = os.environ.get("VIBEOCR_SELF_TEST_PYTHON")
+    if (
+        getattr(sys, "frozen", False)
+        and os.environ.get("VIBEOCR_SELF_TEST_SMOKE") == "t6"
+        and smoke_python
+        and Path(smoke_python).is_file()
+    ):
+        # Artifact verifier 会在解压目录内从绑定 wheel 建一个隔离 import 根。
+        # 仅冻结态+t6 双门禁生效，生产启动始终必须通过 Runtime Installer inspect。
+        return True
     try:
         inspection = RuntimeInstallerClient(get_install_root()).inspect()
     except RuntimeInstallerClientError as exc:

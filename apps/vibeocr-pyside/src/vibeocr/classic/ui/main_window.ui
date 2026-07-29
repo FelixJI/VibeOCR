@@ -840,10 +840,10 @@
               <item>
                <widget class="QPushButton" name="btnReinstallPython">
                 <property name="toolTip">
-                 <string>删除 python/ 目录后重新下载安装 Python 运行时及 OCR 依赖。仅删除 python/，不影响配置、模型缓存和日志。</string>
+                 <string>校验并修复绑定版本的完整 Runtime profile，不执行逐包依赖变更。</string>
                 </property>
                 <property name="text">
-                 <string>重装 Python 运行时</string>
+                 <string>修复 Runtime</string>
                 </property>
                </widget>
               </item>

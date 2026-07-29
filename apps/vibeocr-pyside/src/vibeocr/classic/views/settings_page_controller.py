@@ -1329,13 +1329,12 @@ class SettingsPageController:
         dialog.show()
 
     def _on_reinstall_python(self) -> None:
-        """重装 Python 运行时按钮：确认后弹 BackendChoiceDialog(reinstall_python=True)"""
+        """修复完整 Runtime profile，底层统一调用 Runtime Installer repair。"""
         reply = QMessageBox.question(
             None,
-            "确认重装 Python 运行时",
-            "将删除 python/ 目录（含所有 OCR 依赖）后重新下载安装 Python 运行时。\n\n"
-            "删除范围：仅 python/ 目录。\n"
-            "不受影响：用户配置、模型缓存、日志、机器检测缓存。\n\n"
+            "确认修复 Runtime",
+            "将校验绑定版本的完整 Runtime profile，并重建损坏或缺失的内容。\n\n"
+            "不会执行逐包 pip 变更，也不会修改用户配置、模型缓存和日志。\n\n"
             "是否继续？",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,

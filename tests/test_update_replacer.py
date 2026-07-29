@@ -164,6 +164,7 @@ class TestRunReplacementNoCleanup:
                 app_dir,
                 self_exe_names=("VibeOCR.exe",),  # 仅避让主程序（新路径）
                 ready_filename="updater.ready",
+                launch_entry="VibeOCR.exe",
             )
 
         # 关键断言：cleanup 未被调用，tmp/zip/sha256 仍在
@@ -216,13 +217,18 @@ class TestRunReplacementNoVerifyZip:
         monkeypatch.setattr("sys.argv", [str(staging_updater)])
 
         with pytest.raises(SystemExit):
-            replacer.run_replacement(zip_path, app_dir, self_exe_names=("VibeOCR.exe",))
+            replacer.run_replacement(
+                zip_path,
+                app_dir,
+                self_exe_names=("VibeOCR.exe",),
+                launch_entry="VibeOCR.exe",
+            )
 
         assert not verify_zip_called, "run_replacement 不应调用 verify_zip"
 
 
 class TestUpdaterMainSelfExeNames:
-    """updater_main.main 同时避让旧 UI 和新的 WinUI 正式入口。"""
+    """updater_main.main 只避让 updater 自身与调用产品的显式入口。"""
 
     def test_staging_path_excludes_updater_exe(self, replacer, monkeypatch, tmp_path):
         """新路径无需避让 updater 自身，但要覆盖新旧应用入口。"""
@@ -243,11 +249,14 @@ class TestUpdaterMainSelfExeNames:
         staging.mkdir(parents=True)
         monkeypatch.setattr("sys.argv", [str(staging / "updater.exe"),
                                           "--update", str(tmp_path / "x.zip"),
-                                          "--app-dir", str(app_dir)])
+                                          "--app-dir", str(app_dir),
+                                          "--entry", "VibeOCR.exe"])
 
         captured = {}
         def fake_run_replacement(zip_p, app_d, **kwargs):
             captured["self_exe_names"] = kwargs.get("self_exe_names")
+            captured["launch_entry"] = kwargs.get("launch_entry")
+            captured["launch_args"] = kwargs.get("launch_args")
             return 0
         # 注意：updater_main 内 ``run_replacement``/``setup_logging`` 是
         # ``from update_replacer import ...`` 绑入的模块全局名，import 时已固定引用，
@@ -258,11 +267,9 @@ class TestUpdaterMainSelfExeNames:
 
         updater_main.main()
 
-        assert captured["self_exe_names"] == (
-            "VibeOCR.exe",
-            "VibeOCR.WinUI.exe",
-            "VibeOCR.Bootstrapper.exe",
-        )
+        assert captured["self_exe_names"] == ("VibeOCR.exe",)
+        assert captured["launch_entry"] == "VibeOCR.exe"
+        assert captured["launch_args"] == ()
 
     def test_old_path_includes_updater_exe(self, replacer, monkeypatch, tmp_path):
         """旧路径还需避让 app_dir 中正在运行的 updater。"""
@@ -281,11 +288,16 @@ class TestUpdaterMainSelfExeNames:
         (app_dir / "updater.exe").write_bytes(b"old")
         monkeypatch.setattr("sys.argv", [str(app_dir / "updater.exe"),
                                           "--update", str(tmp_path / "x.zip"),
-                                          "--app-dir", str(app_dir)])
+                                          "--app-dir", str(app_dir),
+                                          "--entry", "VibeOCR.Bootstrapper.exe",
+                                          "--entry-arg=--profile",
+                                          "--entry-arg=production"])
 
         captured = {}
         def fake_run_replacement(zip_p, app_d, **kwargs):
             captured["self_exe_names"] = kwargs.get("self_exe_names")
+            captured["launch_entry"] = kwargs.get("launch_entry")
+            captured["launch_args"] = kwargs.get("launch_args")
             return 0
         # 同上：patch updater_main 模块全局（from-import 绑定于 import 时已固定）。
         monkeypatch.setattr(updater_main, "run_replacement", fake_run_replacement)
@@ -295,10 +307,10 @@ class TestUpdaterMainSelfExeNames:
 
         assert captured["self_exe_names"] == (
             "updater.exe",
-            "VibeOCR.exe",
-            "VibeOCR.WinUI.exe",
             "VibeOCR.Bootstrapper.exe",
         )
+        assert captured["launch_entry"] == "VibeOCR.Bootstrapper.exe"
+        assert captured["launch_args"] == ("--profile", "production")
 
 
 class TestProductionRelaunch:
@@ -320,7 +332,18 @@ class TestProductionRelaunch:
 
         monkeypatch.setattr(replacer.subprocess, "Popen", fake_popen)
 
-        replacer.launch_app(app_dir)
+        health_file = app_dir / "data/cache/update/startup.healthy"
+        replacer.launch_app(
+            app_dir,
+            "VibeOCR.Bootstrapper.exe",
+            entry_args=(
+                "--profile",
+                "production",
+                "--health-file",
+                str(health_file),
+            ),
+            health_file=health_file,
+        )
 
         assert calls[0][0][0] == [
             str(bootstrapper),
@@ -330,7 +353,7 @@ class TestProductionRelaunch:
             str(app_dir / "data/cache/update/startup.healthy"),
         ]
 
-    def test_launch_falls_back_to_classic_without_winui_arguments(
+    def test_launches_explicit_classic_without_winui_arguments(
         self, replacer, monkeypatch, tmp_path
     ):
         app_dir = tmp_path / "app"
@@ -344,7 +367,7 @@ class TestProductionRelaunch:
             lambda *args, **kwargs: calls.append((args, kwargs)),
         )
 
-        replacer.launch_app(app_dir)
+        replacer.launch_app(app_dir, "VibeOCR.exe")
 
         assert calls == [
             (
@@ -354,7 +377,7 @@ class TestProductionRelaunch:
         ]
         assert not (app_dir / "data/cache/update/startup.healthy").exists()
 
-    def test_missing_entrypoint_reports_all_supported_candidates(
+    def test_missing_explicit_entrypoint_does_not_fall_back(
         self, replacer, tmp_path
     ):
         app_dir = tmp_path / "app"
@@ -362,11 +385,11 @@ class TestProductionRelaunch:
         (app_dir / "VibeOCR.WinUI.exe").write_bytes(b"not a formal entry")
 
         with pytest.raises(FileNotFoundError) as exc_info:
-            replacer.launch_app(app_dir)
+            replacer.launch_app(app_dir, "VibeOCR.Bootstrapper.exe")
 
         message = str(exc_info.value)
         assert "VibeOCR.Bootstrapper.exe" in message
-        assert "VibeOCR.exe" in message
+        assert "VibeOCR.exe" not in message
 
     def test_failure_never_relaunches_legacy_ui(
         self, replacer, monkeypatch, tmp_path
@@ -381,6 +404,7 @@ class TestProductionRelaunch:
         assert replacer.run_replacement(
             zip_path,
             app_dir,
+            launch_entry="VibeOCR.exe",
             on_failure=notices.append,
         ) == 1
         assert launches == []

@@ -13,12 +13,34 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 
+function Get-Sha256 {
+    param([Parameter(Mandatory = $true)][string]$LiteralPath)
+
+    $stream = [System.IO.File]::OpenRead($LiteralPath)
+    try {
+        $sha256 = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            return ([System.BitConverter]::ToString(
+                $sha256.ComputeHash($stream)
+            )).Replace('-', '').ToLowerInvariant()
+        } finally {
+            $sha256.Dispose()
+        }
+    } finally {
+        $stream.Dispose()
+    }
+}
+
 if ($Artifact -and (Test-Path $Artifact -PathType Leaf) -and $Artifact.EndsWith('.zip')) {
     # 用 [guid]::NewGuid() 而非 New-Guid cmdlet：本脚本经 powershell.exe（Windows PS
     # 5.1）被 bump_version.py 调起，cmdlet 自动加载在 Win Server 2025 runner 上偶发
     # 失败（release v0.4.33 "New-Guid not recognized"）。直接调 .NET Guid 不依赖
     # 模块发现，PS 5.1 与 7+ 行为一致。同 build_winui_release.ps1 的 Get-FileHash 修复。
-    $extract = Join-Path $env:TEMP "VibeOCR-verify-$([guid]::NewGuid().ToString())"
+    $tempRoot = [System.IO.Path]::GetTempPath()
+    if ([string]::IsNullOrWhiteSpace($tempRoot)) {
+        $tempRoot = (Get-Location).Path
+    }
+    $extract = Join-Path $tempRoot "VibeOCR-verify-$([guid]::NewGuid().ToString())"
     Expand-Archive -Path $Artifact -DestinationPath $extract -Force
     $rootEntries = @(Get-ChildItem -LiteralPath $extract -Force)
     if ($rootEntries.Count -eq 1 -and $rootEntries[0].PSIsContainer) {
@@ -51,9 +73,10 @@ $requiredFiles = @(
     'Views\QrCodePage.xbf',
     'Views\RecognitionPage.xbf',
     'Views\SettingsPage.xbf',
-    'supervisor\vibeocr\backend\supervisor\main.py',
-    'product-manifest.json',
-    'contracts\v2\golden\golden.json',
+    'component-lock.json',
+    'product-release-manifest.json',
+    'backend\runtime-manifest.json',
+    'runtime-installer\vibeocr-runtime-installer.exe',
     'CHANGELOG.md',
     'LICENSE'
 )
@@ -66,7 +89,7 @@ foreach ($relative in $requiredFiles) {
     }
 }
 
-$manifestPath = Join-Path $root 'product-manifest.json'
+$manifestPath = Join-Path $root 'product-release-manifest.json'
 if (Test-Path $manifestPath -PathType Leaf) {
     $manifest = $null
     try {
@@ -75,54 +98,68 @@ if (Test-Path $manifestPath -PathType Leaf) {
         $errors.Add("product manifest is invalid JSON: $($_.Exception.Message)")
     }
     if ($null -ne $manifest) {
-        if ($manifest.frontend -ne 'winui') {
-            $errors.Add("product manifest frontend must be winui")
+        if ($manifest.frontend -ne 'next') {
+            $errors.Add("product release manifest frontend must be next")
         }
-        if ($manifest.protocol_major -ne 2) {
-            $errors.Add("product manifest protocol_major must be 2")
-        }
-        if ($manifest.supervisor_module -ne 'vibeocr.backend.supervisor.main') {
-            $errors.Add("product manifest supervisor_module must be vibeocr.backend.supervisor.main")
-        }
-        if ($manifest.backend_version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
-            $errors.Add("product manifest backend_version is invalid")
-        } elseif ($manifest.backend_wheel -notlike "vibeocr_backend-$($manifest.backend_version)-*") {
-            $errors.Add("product manifest backend_wheel does not match backend_version")
-        }
-        $records = @($manifest.python_wheels)
-        if ($records.Count -ne 3) {
-            $errors.Add("expected 3 WinUI runtime wheels, found $($records.Count)")
-        }
-        $expectedWheelPrefixes = @(
-            'vibeocr_runtime_contracts-',
-            'vibeocr_runtime_client-',
-            'vibeocr_backend-'
-        )
-        foreach ($prefix in $expectedWheelPrefixes) {
-            if (@($records | Where-Object { $_.file -like "$prefix*" }).Count -ne 1) {
-                $errors.Add("expected exactly one WinUI runtime wheel matching $prefix")
-            }
+        $records = @($manifest.files.psobject.Properties)
+        if ($records.Count -eq 0) {
+            $errors.Add("product release manifest has no file closure")
         }
         foreach ($record in $records) {
-            $wheelPath = Join-Path (Join-Path $root 'backend') $record.file
-            if (-not (Test-Path $wheelPath -PathType Leaf)) {
-                $errors.Add("bound runtime wheel missing: $($record.file)")
+            $boundPath = Join-Path $root $record.Name
+            if (-not (Test-Path $boundPath -PathType Leaf)) {
+                $errors.Add("bound product file missing: $($record.Name)")
                 continue
             }
-            $bytes = [IO.File]::ReadAllBytes($wheelPath)
-            $hashBytes = [Security.Cryptography.SHA256]::Create().ComputeHash($bytes)
-            $actualHash = -join ($hashBytes | ForEach-Object { $_.ToString('x2') })
-            if ($actualHash -ne $record.sha256) {
-                $errors.Add("bound runtime wheel hash mismatch: $($record.file)")
+            $actualHash = Get-Sha256 -LiteralPath $boundPath
+            if ($actualHash -ne $record.Value.sha256) {
+                $errors.Add("bound product file hash mismatch: $($record.Name)")
+            }
+            if ((Get-Item -LiteralPath $boundPath).Length -ne $record.Value.size) {
+                $errors.Add("bound product file size mismatch: $($record.Name)")
             }
         }
-        $manifestBackendRecord = @(
-            $records | Where-Object { $_.file -eq $manifest.backend_wheel }
+
+        $lockPath = Join-Path $root 'component-lock.json'
+        $lock = Get-Content -LiteralPath $lockPath -Raw | ConvertFrom-Json
+        $lockHash = Get-Sha256 -LiteralPath $lockPath
+        if ($lockHash -ne $manifest.component_lock_sha256) {
+            $errors.Add("embedded component lock hash mismatch")
+        }
+        $requiredCapabilities = @($lock.required_capabilities | Sort-Object)
+        $expectedCapabilities = @(
+            'export.document.v1',
+            'ocr.recognition.v2',
+            'pdf.edit.v2',
+            'qrcode.v2',
+            'runtime.settings.v2'
         )
-        if ($manifestBackendRecord.Count -ne 1) {
-            $errors.Add("product manifest backend_wheel must identify one bound wheel")
-        } elseif ($manifestBackendRecord[0].sha256 -ne $manifest.backend_sha256) {
-            $errors.Add("product manifest backend_sha256 does not match bound wheel")
+        if (($requiredCapabilities -join "`n") -ne ($expectedCapabilities -join "`n")) {
+            $errors.Add("Next component lock capability set is incomplete")
+        }
+
+        $runtimeManifestPath = Join-Path $root 'backend\runtime-manifest.json'
+        $runtimeManifest = Get-Content -LiteralPath $runtimeManifestPath -Raw | ConvertFrom-Json
+        $runtimeManifestHash = Get-Sha256 -LiteralPath $runtimeManifestPath
+        if ($runtimeManifestHash -ne $lock.backend.runtime_manifest_sha256) {
+            $errors.Add("bound runtime manifest hash mismatch")
+        }
+        $backendWheelPath = Join-Path (Join-Path $root 'backend') $runtimeManifest.backend_wheel
+        if (-not (Test-Path $backendWheelPath -PathType Leaf)) {
+            $errors.Add("bound backend wheel is missing")
+        } else {
+            $backendHash = Get-Sha256 -LiteralPath $backendWheelPath
+            if ($backendHash -ne $lock.backend.artifact_sha256 -or
+                $backendHash -ne $runtimeManifest.backend_sha256) {
+                $errors.Add("bound backend wheel hash mismatch")
+            }
+        }
+        $installerPath = Join-Path $root 'runtime-installer\vibeocr-runtime-installer.exe'
+        if (Test-Path $installerPath -PathType Leaf) {
+            $installerHash = Get-Sha256 -LiteralPath $installerPath
+            if ($installerHash -ne $runtimeManifest.installer.executable_sha256) {
+                $errors.Add("extracted Runtime Installer hash mismatch")
+            }
         }
     }
 }

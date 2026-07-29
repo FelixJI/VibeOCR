@@ -90,6 +90,14 @@ internal sealed class GitHubUpdateSource(
         startInfo.ArgumentList.Add(packagePath);
         startInfo.ArgumentList.Add("--app-dir");
         startInfo.ArgumentList.Add(_installRoot);
+        startInfo.ArgumentList.Add("--entry");
+        startInfo.ArgumentList.Add("VibeOCR.Bootstrapper.exe");
+        startInfo.ArgumentList.Add("--entry-arg=--profile");
+        startInfo.ArgumentList.Add("--entry-arg=production");
+        startInfo.ArgumentList.Add("--entry-arg=--health-file");
+        startInfo.ArgumentList.Add("--entry-arg=" + readyFile);
+        startInfo.ArgumentList.Add("--health-file");
+        startInfo.ArgumentList.Add(readyFile);
         using Process process = Process.Start(startInfo)
             ?? throw new InvalidOperationException("Failed to start the independent updater.");
 

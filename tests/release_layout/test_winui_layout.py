@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import subprocess
+import zipfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parents[2]
@@ -61,8 +62,7 @@ def _build_layout(root: Path, *, forbidden: list[str] | None = None) -> None:
         "Views/QrCodePage.xbf",
         "Views/RecognitionPage.xbf",
         "Views/SettingsPage.xbf",
-        "supervisor/vibeocr/backend/supervisor/main.py",
-        "contracts/v2/golden/golden.json",
+        "runtime-installer/vibeocr-runtime-installer.exe",
         "CHANGELOG.md",
         "LICENSE",
     ):
@@ -81,20 +81,62 @@ def _build_layout(root: Path, *, forbidden: list[str] | None = None) -> None:
         )
 
     backend_record = wheel_records[-1]
-    manifest = {
-        "frontend": "winui",
-        "frontend_version": FIXTURE_VERSION,
+    installer = root / "runtime-installer/vibeocr-runtime-installer.exe"
+    runtime_manifest = {
         "backend_version": FIXTURE_VERSION,
         "backend_wheel": backend_record["file"],
         "backend_sha256": backend_record["sha256"],
-        "supervisor_module": "vibeocr.backend.supervisor.main",
-        "python_wheels": wheel_records,
-        "protocol_major": 2,
-        "protocol_version": FIXTURE_VERSION,
-        "source_commit": "0" * 40,
+        "installer": {
+            "executable_sha256": hashlib.sha256(installer.read_bytes()).hexdigest()
+        },
     }
-    (root / "product-manifest.json").write_text(
-        json.dumps(manifest), encoding="utf-8"
+    runtime_manifest_path = root / "backend/runtime-manifest.json"
+    runtime_manifest_path.write_text(
+        json.dumps(runtime_manifest), encoding="utf-8"
+    )
+    component_lock = {
+        "protocol": {
+            "repository": "FelixJI/vibeocr-protocol",
+            "version": "2.0.0",
+            "manifest_sha256": "0" * 64,
+        },
+        "backend": {
+            "repository": "FelixJI/vibeocr-backend",
+            "version": FIXTURE_VERSION,
+            "artifact_sha256": backend_record["sha256"],
+            "runtime_manifest_sha256": hashlib.sha256(
+                runtime_manifest_path.read_bytes()
+            ).hexdigest(),
+        },
+        "required_capabilities": [
+            "export.document.v1",
+            "ocr.recognition.v2",
+            "pdf.edit.v2",
+            "qrcode.v2",
+            "runtime.settings.v2",
+        ],
+    }
+    component_lock_path = root / "component-lock.json"
+    component_lock_path.write_text(json.dumps(component_lock), encoding="utf-8")
+
+    files = {}
+    for path in root.rglob("*"):
+        if path.is_file():
+            relative = path.relative_to(root).as_posix()
+            content = path.read_bytes()
+            files[relative] = {
+                "sha256": hashlib.sha256(content).hexdigest(),
+                "size": len(content),
+            }
+    product_manifest = {
+        "frontend": "next",
+        "component_lock_sha256": hashlib.sha256(
+            component_lock_path.read_bytes()
+        ).hexdigest(),
+        "files": files,
+    }
+    (root / "product-release-manifest.json").write_text(
+        json.dumps(product_manifest), encoding="utf-8"
     )
     for entry in forbidden or []:
         target = root / entry
@@ -105,6 +147,18 @@ def test_clean_layout_passes(tmp_path: Path) -> None:
     root = tmp_path / "release"
     _build_layout(root)
     code, output = _run_verifier(root)
+    assert code == 0, output
+
+
+def test_clean_zip_layout_passes(tmp_path: Path) -> None:
+    root = tmp_path / "release"
+    _build_layout(root)
+    archive = tmp_path / "release.zip"
+    with zipfile.ZipFile(archive, "w") as bundle:
+        for path in root.rglob("*"):
+            if path.is_file():
+                bundle.write(path, Path("VibeOCR.Next") / path.relative_to(root))
+    code, output = _run_verifier(archive)
     assert code == 0, output
 
 
@@ -183,46 +237,48 @@ def test_self_contained_runtime_rejected(tmp_path: Path) -> None:
 def test_invalid_product_manifest_is_rejected(tmp_path: Path) -> None:
     root = tmp_path / "release"
     _build_layout(root)
-    (root / "product-manifest.json").write_text("not-json", encoding="utf-8")
+    (root / "product-release-manifest.json").write_text(
+        "not-json", encoding="utf-8"
+    )
     code, output = _run_verifier(root)
     assert code == 1, output
     assert "product manifest is invalid JSON" in output
 
 
-def test_protocol_v1_manifest_is_rejected(tmp_path: Path) -> None:
+def test_incomplete_capability_set_is_rejected(tmp_path: Path) -> None:
     root = tmp_path / "release"
     _build_layout(root)
-    manifest_path = root / "product-manifest.json"
+    lock_path = root / "component-lock.json"
+    lock = json.loads(lock_path.read_text(encoding="utf-8"))
+    lock["required_capabilities"].remove("qrcode.v2")
+    lock_path.write_text(json.dumps(lock), encoding="utf-8")
+    code, output = _run_verifier(root)
+    assert code == 1, output
+    assert "capability set is incomplete" in output
+
+
+def test_wrong_product_frontend_is_rejected(tmp_path: Path) -> None:
+    root = tmp_path / "release"
+    _build_layout(root)
+    manifest_path = root / "product-release-manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    manifest["protocol_major"] = 1
+    manifest["frontend"] = "classic"
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     code, output = _run_verifier(root)
     assert code == 1, output
-    assert "protocol_major must be 2" in output
+    assert "product release manifest frontend" in output
 
 
-def test_legacy_supervisor_module_is_rejected(tmp_path: Path) -> None:
+def test_backend_hash_must_match_bound_wheel(tmp_path: Path) -> None:
     root = tmp_path / "release"
     _build_layout(root)
-    manifest_path = root / "product-manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    manifest["supervisor_module"] = "vibeocr.supervisor.main"
-    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    lock_path = root / "component-lock.json"
+    lock = json.loads(lock_path.read_text(encoding="utf-8"))
+    lock["backend"]["artifact_sha256"] = "f" * 64
+    lock_path.write_text(json.dumps(lock), encoding="utf-8")
     code, output = _run_verifier(root)
     assert code == 1, output
-    assert "supervisor_module" in output
-
-
-def test_backend_version_must_match_bound_wheel(tmp_path: Path) -> None:
-    root = tmp_path / "release"
-    _build_layout(root)
-    manifest_path = root / "product-manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    manifest["backend_version"] = "9.9.9"
-    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
-    code, output = _run_verifier(root)
-    assert code == 1, output
-    assert "backend_wheel" in output
+    assert "bound backend wheel hash mismatch" in output
 
 
 def test_legacy_backend_layout_is_rejected(tmp_path: Path) -> None:
@@ -236,10 +292,10 @@ def test_legacy_backend_layout_is_rejected(tmp_path: Path) -> None:
     assert "legacy backend entry present" in output
 
 
-def test_runtime_wheel_hash_mismatch_is_rejected(tmp_path: Path) -> None:
+def test_product_file_hash_mismatch_is_rejected(tmp_path: Path) -> None:
     root = tmp_path / "release"
     _build_layout(root)
     (root / "backend" / RUNTIME_WHEELS[0]).write_bytes(b"tampered")
     code, output = _run_verifier(root)
     assert code == 1, output
-    assert "bound runtime wheel hash mismatch" in output
+    assert "bound product file hash mismatch" in output

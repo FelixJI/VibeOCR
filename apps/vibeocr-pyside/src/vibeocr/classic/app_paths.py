@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
 # 正式 profile 下的子目录名（相对 install_root）
 CONFIG_DIR = "config"
-RUNTIME_DIR = "python"
+RUNTIME_DIR = "runtimes"
 MODEL_CACHE_DIR = "models"
 OUTPUT_DIR = "output"
 DATA_DIR = "data"
@@ -58,7 +58,7 @@ class AppPaths:
     Attributes:
         install_root: 安装根目录（exe 所在目录或源码根）。
         data_root: 数据根目录（用户数据、缓存）。
-        runtime_root: 嵌入式 Python 运行时目录。
+        runtime_root: 内容寻址 Runtime 存储根目录。
         model_cache_root: 模型缓存目录。
         output_root: 输出目录（OCR/PDF 产物）。
         config_file: 主配置文件路径。

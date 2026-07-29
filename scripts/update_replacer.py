@@ -1,12 +1,6 @@
 """VibeOCR 更新替换逻辑（共享模块）
 
-被两个调用方复用：
-1. ``scripts/updater_main.py`` —— 独立 updater.exe（新架构首选替换器）。
-   updater 自动判断新旧路径（``_detect_self_exe_names``）决定 ``self_exe_names``。
-2. ``apps/vibeocr-pyside/src/vibeocr/classic/main.py`` —— 复用本模块的
-   ``cleanup_leftover_old_exes`` 做后台残留清理
-   （主程序启动时 daemon 线程调用）；``update_replacer`` 内的工具函数（``_busy_remove`` 等）
-   也可被主程序侧动态 import 复用。
+由独立 updater.exe 和产品启动后的后台残留清理共同复用。
 
 设计约束（重要）：
 - **纯 stdlib**，不依赖 vibeocr 任何模块。原因：updater.exe 用 PyInstaller ``--onefile``
@@ -42,10 +36,17 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-# 更新时保留的目录
-# - python/data/config: 运行时依赖、缓存与用户配置，跨版本必须保留
-# - logs: 主程序运行日志（vibeocr.log 历史轮转文件），替换会丢失用户排查现场
-_PRESERVE_DIRS = {"python", "data", "config", "logs"}
+# 只保留用户数据、内容寻址 Runtime、锁与状态；旧的产品内 python/ 不再保留。
+_PRESERVE_DIRS = {
+    "config",
+    "data",
+    "locks",
+    "logs",
+    "models",
+    "output",
+    "runtimes",
+    "state",
+}
 
 logger = logging.getLogger("updater")
 
@@ -323,8 +324,8 @@ def _detect_self_exe_names(app_dir: Path) -> tuple[str, ...]:
 
     非 Windows：无 PE 映射锁，始终返回空元组。
 
-    注意：``VibeOCR.exe`` 的避让由调用方（``updater_main.main``）始终拼入
-    ``self_exe_names``，本函数只决定 ``updater.exe``。详见架构设计文档 §4.2.1。
+    产品正式入口的避让由调用方显式拼入 ``self_exe_names``；本函数只判断
+    updater 自身是否位于 app_dir。
 
     Args:
         app_dir: 应用安装目录（由 ``--app-dir`` 参数传入）。
@@ -366,11 +367,10 @@ def rename_locked_self_exe(app_dir: Path, self_name: str) -> None:
 
     Args:
         app_dir: 应用安装目录。
-        self_name: 要避让的 exe 文件名，如 ``"updater.exe"`` 或 ``"VibeOCR.exe"``。
+        self_name: 要避让的 exe 文件名。
             新架构下 ``self_exe_names`` 由 ``_detect_self_exe_names`` 自动判断：
             旧路径（过渡期，updater 在 app_dir）需避让 ``updater.exe``；
-            新路径（暂存目录运行）无需避让。``VibeOCR.exe`` 避让始终保留作容错
-           （旧主程序 ``_force_quit`` 后锁可能未及时释放）。仅处理 Windows。
+            新路径（暂存目录运行）无需避让；产品入口由调用方额外传入。
     """
     if os.name != "nt":
         return
@@ -405,24 +405,9 @@ def replace_app_files(
         app_dir: 应用安装目录。
         self_exe_names: 替换前需「改名避让」的运行中 exe 列表。
             新架构由 ``_detect_self_exe_names`` 判断：旧路径含 ``updater.exe``，
-            新路径为空；``updater_main`` 始终拼入 ``VibeOCR.exe`` 作容错。
+            新路径为空；调用方另行加入自身产品入口。
     """
     logger.info("替换应用文件...")
-
-    # 记录旧 version.json 的 dep_versions（约束）与 dep_locked_versions（锁定版基准）。
-    # 两者都用于依赖同步：约束变化反映 pyproject 显式改版；锁定版变化反映 uv.lock
-    # 在下界内升级（如 mineru 3.4.0→3.4.2，约束 >=3.4.0 不变）。后者仅靠约束比对
-    # 会漏掉，故同步把锁定版基准一并传入 _sync_dependencies 比较。
-    old_version_json = app_dir / "version.json"
-    old_deps: dict = {}
-    old_locked: dict = {}
-    if old_version_json.exists():
-        try:
-            old_data = json.loads(old_version_json.read_text(encoding="utf-8"))
-            old_deps = old_data.get("dep_versions", {})
-            old_locked = old_data.get("dep_locked_versions", {})
-        except Exception:
-            pass
 
     # 运行中的 exe 必须先改名，否则下面 rmtree 删它必然失败
     with _StageTimer("改名避让运行中 exe"):
@@ -511,16 +496,6 @@ def replace_app_files(
 
     # 4) 复制成功，清理备份
     shutil.rmtree(backup_dir, ignore_errors=True)
-
-    # 5) 检查 AI 依赖版本变化（写待同步标记，由新版主程序启动时执行）
-    new_version_json = app_dir / "version.json"
-    if new_version_json.exists():
-        with _StageTimer("依赖版本同步（写标记）"):
-            try:
-                new_data = json.loads(new_version_json.read_text(encoding="utf-8"))
-                _sync_dependencies(old_deps, new_data, app_dir, old_locked)
-            except Exception as e:
-                logger.warning(f"检查依赖版本失败: {e}")
 
     return True
 
@@ -659,7 +634,7 @@ def _safe_remove_running_exe(path: Path, *, label: str = "") -> None:
        （``rename_locked_self_exe`` 开头会清残留 ``.old``）兜底。
 
     Args:
-        path: 要删除的 exe（通常是 ``<app>/updater.exe.old`` 或 ``VibeOCR.exe.old``）。
+        path: 要删除的 ``*.exe.old`` 文件。
         label: 日志里的人类可读名，缺省用文件名。
     """
     if not path.exists():
@@ -697,7 +672,7 @@ def _safe_remove_running_exe(path: Path, *, label: str = "") -> None:
 def cleanup_leftover_old_exes(app_dir: Path) -> None:
     """清理上次更新残留的 ``*.exe.old``（主程序启动入口）。
 
-    背景：updater.exe / VibeOCR.exe 更新时会把运行中的自己改名为 ``.old`` 后继续运行，
+    背景：updater 和产品入口更新时会把运行中的自己改名为 ``.old`` 后继续运行，
     Windows 禁止删运行中 exe（PE 映射锁），所以改名后的旧进程映像在 updater 的
     cleanup 阶段**必然删不掉**。updater 侧已有 ``MoveFileEx(MOVEFILE_DELAY_UNTIL_REBOOT)``
     标记重启清理，但：
@@ -713,23 +688,17 @@ def cleanup_leftover_old_exes(app_dir: Path) -> None:
     行为一致（含 MoveFileEx 降级）。非 Windows 直接 no-op（无残留）。
 
     Args:
-        app_dir: 应用安装目录（``<app>/updater.exe.old`` / ``VibeOCR.exe.old`` 在此）。
+        app_dir: 包含 ``*.exe.old`` 的应用安装目录。
     """
     if os.name != "nt" or not app_dir.is_dir():
         return
-    for exe_name in (
-        "updater.exe",
-        "VibeOCR.exe",
-        "VibeOCR.WinUI.exe",
-        "VibeOCR.Bootstrapper.exe",
-    ):
-        old_exe = app_dir / f"{exe_name}.old"
+    for old_exe in app_dir.glob("*.exe.old"):
         if old_exe.exists():
             _safe_remove_running_exe(old_exe, label=old_exe.name)
 
 
 # ---------------------------------------------------------------------------
-# 依赖同步（写标记，由新版主程序启动时执行）
+# 旧依赖同步兼容 helper（生产更新路径不再调用）
 # ---------------------------------------------------------------------------
 
 
@@ -924,82 +893,48 @@ def cleanup(zip_path: Path, tmp_dir: Path | None) -> None:
     # zip_path 形如 <app>/data/cache/update/VibeOCR-vX-win64.zip，向上回溯到 app_dir。
     app_dir = zip_path.parents[3] if len(zip_path.parents) >= 4 else None
     if app_dir is not None and os.name == "nt":
-        for exe_name in (
-            "updater.exe",
-            "VibeOCR.exe",
-            "VibeOCR.WinUI.exe",
-            "VibeOCR.Bootstrapper.exe",
-        ):
-            old_exe = app_dir / f"{exe_name}.old"
+        for old_exe in app_dir.glob("*.exe.old"):
             if old_exe.exists():
                 _safe_remove_running_exe(old_exe, label=old_exe.name)
 
 
-def launch_app(app_dir: Path, exe_name: str = "") -> None:
-    """启动新版正式入口；WinUI 等待健康信号，Classic 直接启动。
+def launch_app(
+    app_dir: Path,
+    exe_name: str,
+    *,
+    entry_args: tuple[str, ...] = (),
+    health_file: Path | None = None,
+) -> None:
+    """启动调用方明确指定的新版正式入口。
 
-    Windows 发行物同时存在两种合法布局：
-
-    - WinUI Next：``VibeOCR.Bootstrapper.exe``（必须通过 Bootstrapper 启动）；
-    - PySide6 Classic：``VibeOCR.exe``（当前默认 release）。
-
-    默认优先 Bootstrapper，避免混合目录中绕过 WinUI 的先决条件检查；仅当它不存在
-    时回退到 Classic。``VibeOCR.WinUI.exe`` 不属于可直启的正式入口。
+    更新器是跨产品的纯机制，不猜测 Classic 或 Next 的入口，也不在一个产品失败时
+    回退启动另一个产品。入口名称由各产品在启动 updater 时通过 ``--entry`` 绑定。
     """
-    if exe_name:
-        candidates = (exe_name,)
-    elif os.name == "nt":
-        candidates = ("VibeOCR.Bootstrapper.exe", "VibeOCR.exe")
-    else:
-        candidates = ("VibeOCR",)
+    if not exe_name or Path(exe_name).name != exe_name:
+        raise ValueError("正式启动入口必须是单个文件名")
+    exe_path = app_dir / exe_name
+    if not exe_path.is_file():
+        raise FileNotFoundError(f"未找到正式启动入口: {exe_path}")
 
-    exe_path = next(
-        (
-            app_dir / candidate
-            for candidate in candidates
-            if (app_dir / candidate).is_file()
-        ),
-        None,
-    )
-    if exe_path is None:
-        searched = ", ".join(str(app_dir / candidate) for candidate in candidates)
-        raise FileNotFoundError(f"未找到正式启动入口（已检查: {searched}）")
-
-    is_winui_bootstrapper = (
-        os.name == "nt" and exe_path.name.casefold() == "vibeocr.bootstrapper.exe"
-    )
-    if not is_winui_bootstrapper:
-        logger.info("启动 Classic 正式入口: %s", exe_path)
-        subprocess.Popen(
-            [str(exe_path)],
-            creationflags=0x8 if os.name == "nt" else 0,
-            cwd=str(app_dir),
-        )
-        return
-
-    health_file = app_dir / "data" / "cache" / "update" / "startup.healthy"
-    health_file.parent.mkdir(parents=True, exist_ok=True)
-    health_file.unlink(missing_ok=True)
-    command = [
-        str(exe_path),
-        "--profile",
-        "production",
-        "--health-file",
-        str(health_file),
-    ]
-    logger.info("通过正式入口启动 production profile: %s", exe_path)
+    command = [str(exe_path), *entry_args]
+    if health_file is not None:
+        health_file.parent.mkdir(parents=True, exist_ok=True)
+        health_file.unlink(missing_ok=True)
+    logger.info("启动产品正式入口: %s", command)
     subprocess.Popen(
         command,
         creationflags=0x8 if os.name == "nt" else 0,
         cwd=str(app_dir),
     )
+    if health_file is None:
+        return
     deadline = time.monotonic() + 30.0
     while time.monotonic() < deadline:
         if health_file.is_file():
-            logger.info("WinUI startup.healthy 已确认")
+            logger.info("产品启动健康信号已确认: %s", health_file)
             return
         time.sleep(0.1)
-    raise TimeoutError("WinUI 未在 30 秒内发布 startup.healthy；已进入修复流程。")
+    raise TimeoutError(f"产品未在 30 秒内发布健康信号: {health_file}")
 
 
 # ---------------------------------------------------------------------------
@@ -1012,6 +947,9 @@ def run_replacement(
     app_dir: Path,
     self_exe_names: tuple[str, ...] = ("updater.exe",),
     ready_filename: str = "updater.ready",
+    launch_entry: str = "",
+    launch_args: tuple[str, ...] = (),
+    launch_health_file: Path | None = None,
     on_failure: Callable[[str], None] | None = None,
 ) -> int:
     """替换流程统一入口：校验 → 写就绪信号 → 解压 → 替换 → 清理 → 启动。
@@ -1021,6 +959,9 @@ def run_replacement(
         app_dir: 应用安装目录。
         self_exe_names: 替换前需改名避让的运行中 exe（见 replace_app_files）。
         ready_filename: 就绪信号文件名（见 signal_ready），由调用方区分路径来源。
+        launch_entry: 替换完成后必须启动的产品专属入口文件名。
+        launch_args: 原样传给产品入口的参数。
+        launch_health_file: 可选健康信号路径；提供时等待该文件出现。
         on_failure: 可选的失败通知回调。替换流程在任何阶段失败时调用，传入面向用户
             的提示文案。替换器以 ``console=False``（windowed）运行，stdout 不可见，
             仅写日志文件的话用户无法感知失败（历史问题：「应用关了什么都没发生」）。
@@ -1041,6 +982,8 @@ def run_replacement(
     # （download_update 只清 update 目录里的「文件」，不清子目录，残留 tmp/ 会越积越多）。
     new_files_dir: Path | None = None
     try:
+        if not launch_entry or Path(launch_entry).name != launch_entry:
+            raise ValueError("必须提供单个文件名形式的产品启动入口")
         # verify_zip(testzip) 已移交旧主程序端（递送时确保 zip 可读，可安全抽取 updater）。
         # 此处仅做 verify_sha256（更强，且由新代码校验自己要部署的包——黄金法则）。
         with _StageTimer("校验 SHA256"):
@@ -1078,7 +1021,12 @@ def run_replacement(
         # （见 main.py _cleanup_update_artifacts）。updater 关键路径到此结束——
         # 启动主程序后立即 os._exit，不再做任何 I/O 密集的删除。
         with _StageTimer("启动新版主程序"):
-            launch_app(app_dir)
+            launch_app(
+                app_dir,
+                launch_entry,
+                entry_args=launch_args,
+                health_file=launch_health_file,
+            )
 
         logger.info("更新完成!")
         # 落盘进度记录（success=True）。必须在 os._exit 之前——os._exit 跳过 finally，

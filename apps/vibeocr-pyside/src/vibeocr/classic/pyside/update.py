@@ -808,7 +808,14 @@ class UpdateService:
 
         return await self._handshake_launch(
             exe_path=staged_updater,
-            extra_args=["--update", str(zip_path), "--app-dir", str(self._app_dir)],
+            extra_args=[
+                "--update",
+                str(zip_path),
+                "--app-dir",
+                str(self._app_dir),
+                "--entry",
+                "VibeOCR.exe",
+            ],
             ready_filename="updater.ready",
             label="updater.exe (staged)",
         )
