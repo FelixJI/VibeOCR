@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "source_commit": "eb8b6a6715599332ccf331dabf02468d7b1df40c",
+  "mapping": [
+    {
+      "current": "packages/vibeocr-contracts-py/src/vibeocr/contracts/**",
+      "owner": "FelixJI/vibeocr-protocol",
+      "target": "src/vibeocr/runtime_contracts/**"
+    },
+    {
+      "current": "packages/vibeocr-contracts-py/src/vibeocr/protocol/**",
+      "owner": "FelixJI/vibeocr-protocol",
+      "target": "src/vibeocr/runtime_contracts/**"
+    },
+    {
+      "current": "packages/vibeocr-client-py/src/vibeocr/client/**",
+      "owner": "FelixJI/vibeocr-protocol",
+      "target": "src/vibeocr/runtime_client/**"
+    },
+    {
+      "current": "packages/vibeocr-client-py/src/vibeocr/supervisor/**",
+      "owner": "FelixJI/vibeocr-protocol",
+      "target": "src/vibeocr/runtime_client/**"
+    },
+    {
+      "current": "packages/vibeocr-client-py/src/vibeocr/{application,core,ipc,migration,models,tables,utils}/**",
+      "owner": "FelixJI/vibeocr-backend",
+      "target": "src/vibeocr/backend/**"
+    },
+    {
+      "current": "packages/vibeocr-client-py/src/vibeocr/{dependency_bootstrap.py,dependency_profiles.json,env_manager.py,network_detector.py,python_path_manager.py}",
+      "owner": "FelixJI/vibeocr-backend",
+      "target": "src/vibeocr/backend/runtime/**"
+    },
+    {
+      "current": "packages/vibeocr-client-py/src/vibeocr/services/{__init__.py,env_config.py,text_block_processor.py}",
+      "owner": "FelixJI/vibeocr-backend",
+      "target": "src/vibeocr/backend/services/**"
+    },
+    {
+      "current": "packages/vibeocr-backend/src/vibeocr/**",
+      "owner": "FelixJI/vibeocr-backend",
+      "target": "src/vibeocr/backend/**"
+    },
+    {
+      "current": "apps/vibeocr-pyside/src/vibeocr/**",
+      "owner": "FelixJI/vibeocr-classic",
+      "target": "src/vibeocr/classic/**"
+    },
+    {
+      "current": "packages/vibeocr-client-py/src/vibeocr/{app_paths.py,build_manifest.py,logging_context.py,machine_cache.py,pipeline_status.py}",
+      "owner": "FelixJI/vibeocr-classic",
+      "target": "src/vibeocr/classic/**"
+    },
+    {
+      "current": "packages/vibeocr-client-py/src/vibeocr/services/update_service.py",
+      "owner": "FelixJI/vibeocr-classic",
+      "target": "src/vibeocr/classic/update/**"
+    },
+    {
+      "current": "packages/vibeocr-client-py/src/vibeocr/workers/**",
+      "owner": "FelixJI/vibeocr-classic",
+      "target": "src/vibeocr/classic/workers/**"
+    },
+    {
+      "current": "src/dotnet/VibeOCR.Contracts/**",
+      "owner": "FelixJI/vibeocr-protocol",
+      "target": "src/VibeOCR.Runtime.Contracts/**"
+    },
+    {
+      "current": "src/dotnet/VibeOCR.{App,Platform,Bootstrapper}/**",
+      "owner": "FelixJI/vibeocr-next",
+      "target": "src/VibeOCR.Next*/**"
+    }
+  ]
+}

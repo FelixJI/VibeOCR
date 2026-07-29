@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "repository": "FelixJI/vibeocr-protocol",
+  "initial_version": "2.0.0",
+  "python_namespaces": [
+    "vibeocr.runtime_contracts",
+    "vibeocr.runtime_client"
+  ],
+  "dotnet_namespaces": [
+    "VibeOCR.Runtime.Contracts",
+    "VibeOCR.Runtime.Client"
+  ],
+  "current_source_patterns": [
+    "packages/vibeocr-contracts-py/**",
+    "packages/vibeocr-client-py/src/vibeocr/client/**",
+    "packages/vibeocr-client-py/src/vibeocr/supervisor/**",
+    "src/dotnet/VibeOCR.Contracts/**"
+  ],
+  "forbidden_dependencies": [
+    "vibeocr.backend",
+    "vibeocr.classic",
+    "VibeOCR.Next"
+  ]
+}

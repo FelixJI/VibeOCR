@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "repository": "FelixJI/vibeocr-next",
+  "initial_version": "0.1.0-preview.1",
+  "dotnet_namespaces": [
+    "VibeOCR.Next"
+  ],
+  "current_source_patterns": [
+    "src/dotnet/VibeOCR.App/**",
+    "src/dotnet/VibeOCR.Platform/**",
+    "src/dotnet/VibeOCR.Bootstrapper/**"
+  ],
+  "forbidden_dependencies": [
+    "vibeocr.backend"
+  ]
+}

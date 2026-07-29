@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "repository": "FelixJI/vibeocr-classic",
+  "initial_version": "0.7.0",
+  "python_namespaces": [
+    "vibeocr.classic"
+  ],
+  "current_source_patterns": [
+    "apps/vibeocr-pyside/**",
+    "packages/vibeocr-client-py/src/vibeocr/workers/**",
+    "packages/vibeocr-client-py/src/vibeocr/services/update_service.py",
+    "packages/vibeocr-client-py/src/vibeocr/app_paths.py",
+    "packages/vibeocr-client-py/src/vibeocr/build_manifest.py",
+    "packages/vibeocr-client-py/src/vibeocr/logging_context.py",
+    "packages/vibeocr-client-py/src/vibeocr/machine_cache.py",
+    "packages/vibeocr-client-py/src/vibeocr/pipeline_status.py"
+  ],
+  "forbidden_dependencies": [
+    "vibeocr.backend"
+  ]
+}
