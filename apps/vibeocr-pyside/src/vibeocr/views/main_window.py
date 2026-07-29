@@ -2026,6 +2026,21 @@ class MainWindow(QMainWindow):
         """设置系统托盘图标（由 main.py 调用）"""
         self._tray_icon = tray_icon
 
+    def prewarm_result_webengine(self) -> None:
+        """预热单次识别结果页 WebEngine，避免首次截图结果前主界面闪烁。
+
+        由 ``main.py:launch_application`` 在窗口 ``show()`` + splash 收尾后经
+        ``QTimer.singleShot(0, ...)`` 调度，在启动空闲片段触发。转发到
+        ``SingleRecognitionTab._result_widget.prewarm_webengine``，把 Chromium
+        冷启动成本从「首次结果渲染时」前移到「用户已看到界面、尚未首次截图」。
+        ``_closing`` 为真时跳过；``_result_widget`` 缺失时静默返回（防御性 getattr）。
+        """
+        if self._closing:
+            return
+        rw = getattr(getattr(self._single_tab, "_result_widget", None), "prewarm_webengine", None)
+        if rw is not None:
+            rw()
+
     def apply_app_settings(self) -> None:
         """应用当前设置到工具栏等组件"""
         if not self._app_settings:

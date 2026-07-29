@@ -1347,6 +1347,20 @@ class ResultViewWidget(QWidget):
         layout.addWidget(self._web_view)
         return self._web_view
 
+    def prewarm_webengine(self) -> None:
+        """窗口显示后预热 WebEngine，避免首次截图结果前主界面闪烁。
+
+        首次结果渲染会在 GUI 线程里惰性创建 QWebEngineView（Chromium 冷启动）+
+        ``layout.addWidget`` 触发父级重排，导致主窗口多次闪烁。本方法在主窗口
+        ``show()`` 之后的空闲片段（由 ``MainWindow`` 经 ``QTimer.singleShot``
+        调度）提前调用幂等的 ``_ensure_web_view``，把冷启动成本前移到「用户已看到
+        界面、尚未首次截图」的时刻。``_ensure_web_view`` 已创建即 return，故可
+        安全重复调用；``_closing`` 为真时直接跳过（关闭中无需预热）。
+        """
+        if self._closing:
+            return
+        self._ensure_web_view()
+
     def _on_copy_text(self) -> None:
         """复制选中文本/全部文本/表格到剪贴板。
 

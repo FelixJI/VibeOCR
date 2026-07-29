@@ -167,3 +167,24 @@ class TestCleanupLeftoverOldExes:
 
         # 不应抛异常（被 except 吞掉）
         _cleanup_leftover_old_exes()
+
+
+class TestLaunchPrewarmScheduling:
+    """launch_application 应在窗口 show + splash 收尾后调度 WebEngine 预热。
+
+    见 .superpowers/sdd/fix-task2-brief.md（Task 2）：完整启动单测成本过高，
+    这里用源码级断言确认预热调度存在（brief 明确允许的尽力而为方案）。
+    """
+
+    def test_launch_application_schedules_prewarm_after_splash(self):
+        """launch_application 源码应包含 QTimer.singleShot(0, window.prewarm_result_webengine)。"""
+        import inspect
+
+        from vibeocr import main as main_module
+
+        source = inspect.getsource(main_module.launch_application)
+        # 调度预热：singleShot(0, ...) 在下一个事件循环空转触发。
+        assert "singleShot(0, window.prewarm_result_webengine)" in source, (
+            "launch_application 应在窗口显示 + splash 收尾后用 "
+            "QTimer.singleShot(0, window.prewarm_result_webengine) 调度预热"
+        )

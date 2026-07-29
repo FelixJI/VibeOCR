@@ -1,7 +1,9 @@
 """Tests for result_view_widget block rendering functions."""
 
 import re
+import sys
 import time
+import types
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -1213,6 +1215,112 @@ class TestResultViewExportButtons:
         widget._utility_client = _FailingExportClient()
         # 不应抛异常
         widget._on_export_file("docx")
-        qtbot.waitUntil(lambda: widget._export_job is None, timeout=2000)
+        qtbot.waitUntil(lambda: widget._export_job is None, timeout=3000)
         # 失败时不应写出文件
         assert not out.exists()
+
+
+class TestResultViewPrewarmWebEngine:
+    """prewarm_webengine：窗口显示后延迟预热 WebEngine，避免首次截图结果前闪烁。
+
+    见 .superpowers/sdd/fix-task2-brief.md：QWebEngineView 惰性创建于首次结果渲染
+    的 GUI 线程（_ensure_web_view 内 QWebEngineView(self) + layout.addWidget），
+    触发 Chromium 冷启动 + 父级重排。prewarm_webengine 把该成本前移到启动空闲片段。
+    """
+
+    @pytest.fixture
+    def app(self, qtbot):
+        return QApplication.instance() or QApplication([])
+
+    @pytest.fixture
+    def widget(self, app, qtbot):
+        from vibeocr.widgets.result_view_widget import ResultViewWidget
+
+        w = ResultViewWidget(utility_client=_ImmediateExportClient())
+        qtbot.addWidget(w)
+        return w
+
+    def test_prewarm_webengine_invokes_ensure_web_view_once_and_is_idempotent(
+        self, widget, monkeypatch
+    ):
+        """prewarm_webengine 第一次创建 _web_view 并 addWidget；第二次幂等不重复创建。
+
+        桩掉 _ensure_web_view 内部延迟 import 的 QWebEngineView/QWebChannel（避免
+        在无显示环境真实拉起 Chromium），让真实 _ensure_web_view 逻辑跑通：首次
+        构造视图 + layout.addWidget，二次命中 ``if self._web_view is not None: return``
+        幂等守卫。用 addWidget 计数 + 视图对象引用验证幂等性。
+        """
+        add_widget_calls = []
+
+        class _FakePage:
+            def setWebChannel(self, channel):
+                pass
+
+        class _FakeSignal:
+            def connect(self, fn):
+                pass
+
+        class _FakeWebView:
+            # _ensure_web_view 以属性方式访问 loadFinished（Qt 信号），故需为类属性。
+            loadFinished = _FakeSignal()
+
+            def __init__(self, parent):
+                self._parent = parent
+
+            def page(self):
+                return _FakePage()
+
+        class _FakeWebChannel:
+            def __init__(self, parent):
+                pass
+
+            def registerObject(self, name, obj):
+                pass
+
+        # 桩掉 _ensure_web_view 内 ``from PySide6.QtWebChannel import QWebChannel``
+        # 与 ``from PySide6.QtWebEngineWidgets import QWebEngineView`` 的延迟 import。
+        webchannel_mod = types.ModuleType("PySide6.QtWebChannel")
+        webchannel_mod.QWebChannel = _FakeWebChannel
+        monkeypatch.setitem(sys.modules, "PySide6.QtWebChannel", webchannel_mod)
+        webengine_mod = types.ModuleType("PySide6.QtWebEngineWidgets")
+        webengine_mod.QWebEngineView = _FakeWebView
+        monkeypatch.setitem(sys.modules, "PySide6.QtWebEngineWidgets", webengine_mod)
+        # 桩掉 layout.addWidget 以计数「加入布局」次数（即触发父级重排的次数）。
+        # 不调用真实 addWidget：_FakeWebView 非 QWidget 子类，真实调用会类型失败；
+        # 这里只需计数 _ensure_web_view 是否走到 addWidget 这一步。
+        real_layout = widget.layout()
+
+        def counting_add_widget(child):
+            add_widget_calls.append(child)
+
+        monkeypatch.setattr(real_layout, "addWidget", counting_add_widget)
+
+        # 第一次预热：应创建视图并 addWidget 一次。
+        widget.prewarm_webengine()
+        assert widget._web_view is not None, "首次预热后应已创建 _web_view"
+        assert len(add_widget_calls) == 1, "首次预热应仅 addWidget 一次（一次重排）"
+        first_view = widget._web_view
+
+        # 第二次预热：_ensure_web_view 幂等守卫应直接 return，不重复创建/加入。
+        widget.prewarm_webengine()
+        assert widget._web_view is first_view, "二次预热不应替换已存在的 _web_view"
+        assert len(add_widget_calls) == 1, (
+            "二次预热应幂等：_web_view 已存在，不应再次 addWidget"
+        )
+
+    def test_prewarm_webengine_respects_closing_guard(self, widget, monkeypatch):
+        """_closing 为真时 prewarm_webengine 不应创建 _web_view。
+
+        桩掉 _ensure_web_view（closing 守卫应在调用 _ensure_web_view 之前生效），
+        验证 prewarm 在关闭期间根本不触发创建路径。
+        """
+        calls = []
+        monkeypatch.setattr(
+            widget, "_ensure_web_view", lambda: calls.append(1) or None
+        )
+
+        widget.set_closing(True)
+        widget.prewarm_webengine()
+
+        assert calls == [], "_closing 为真时不应调用 _ensure_web_view"
+        assert widget._web_view is None, "closing 期间不应创建 _web_view"

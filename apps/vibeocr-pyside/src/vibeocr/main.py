@@ -592,6 +592,12 @@ def launch_application() -> int:
         splash.finish(window)
         splash.close()
 
+    # 窗口已可见后延迟预热结果页 WebEngine：把 Chromium 冷启动成本
+    # 从「首次截图显示结果时」前移到「启动空闲片段」，避免首次结果前的多次闪烁。
+    from PySide6.QtCore import QTimer
+
+    QTimer.singleShot(0, window.prewarm_result_webengine)
+
     # 第二实例通知提到前台时，恢复并激活主窗口。
     guard.raise_requested.connect(window.bring_to_front)
 
