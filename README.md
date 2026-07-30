@@ -1,3 +1,11 @@
+> [!IMPORTANT]
+> **本仓库已停止开发并迁移到四个独立仓库。**
+> 普通用户请前往 [VibeOCR Classic Releases](https://github.com/FelixJI/vibeocr-classic/releases)；
+> WinUI 预览版位于 [VibeOCR Next](https://github.com/FelixJI/vibeocr-next)；
+> Runtime 实现与公共协议分别位于 [vibeocr-backend](https://github.com/FelixJI/vibeocr-backend)
+> 和 [vibeocr-protocol](https://github.com/FelixJI/vibeocr-protocol)。
+> 旧版应用**不会自动跨仓升级**，请手动下载新仓发布包。完整映射见 [MIGRATION.md](MIGRATION.md)。
+
 <p align="center">
   <img src="resources/icon_256.png" width="140" alt="VibeOCR" />
 </p>
